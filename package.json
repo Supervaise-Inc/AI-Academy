@@ -9,7 +9,9 @@
     "build": "npm --prefix frontend run build",
     "start": "npm --prefix backend start",
     "test": "npm --prefix backend test",
-    "validate:lessons": "node tools/validate-lessons.mjs"
+    "validate:lessons": "node tools/validate-lessons.mjs",
+    "build:notebooks": "node tools/build-notebooks.mjs",
+    "test:notebooks": "python3 tools/test-notebooks.py --syntax"
   },
   "devDependencies": {
     "concurrently": "^9.0.1"

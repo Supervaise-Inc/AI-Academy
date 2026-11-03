@@ -290,12 +290,19 @@ class Component extends DCLogic {
       sec: 1,
       // Week lesson plan (backend/content/week-NN.md) shown instead of the built-in Week 7 lesson
       plan: { status: this.props.week ? 'loading' : 'none', data: null, view: null },
+      nb: null, // Colab notebook for the built-in Week 7 lab
     };
     this.toggleTheme = this.toggleTheme.bind(this);
     this.onScroll = this.onScroll.bind(this);
   }
   componentDidMount() {
     this.loadPlan();
+    if (!this.props.week || Number(this.props.week) === 7) {
+      session
+        .api('/notebooks/week-07')
+        .then((nb) => this.setState({ nb }))
+        .catch(() => {});
+    }
     this._unbindTheme = bindThemeSync(this);
     try {
       document.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
@@ -402,6 +409,8 @@ class Component extends DCLogic {
       ...this.renderVals0(),
       ...this.hkVals(),
       planNode: this.planNode(),
+      nbColab: this.state.nb && this.state.nb.colabUrl,
+      nbDownload: this.state.nb && session.apiUrl(this.state.nb.downloadUrl),
       ctxWeek: 'Week ' + wk.week + ' of ' + TOTAL_WEEKS,
       ctxTerm: wk.termLabel,
     };
@@ -2311,9 +2320,16 @@ function template(v) {
                     </div>
                   </details>
                   <div className="actions">
-                    <DcLink className="solidbtn" href="#">
-                      {'Open Laboratory 3 notebook'}
-                    </DcLink>{' '}
+                    {v.nbColab ? (
+                      <a className="solidbtn" href={v.nbColab} target="_blank" rel="noopener noreferrer">
+                        {'Open Laboratory 3 in Colab'}
+                      </a>
+                    ) : null}{' '}
+                    {v.nbDownload ? (
+                      <a className={v.nbColab ? 'textlink' : 'solidbtn'} href={v.nbDownload} download>
+                        {'Download notebook (.ipynb)'}
+                      </a>
+                    ) : null}{' '}
                     <DcLink className="textlink" href="#">
                       {'View marking rubric'}
                     </DcLink>

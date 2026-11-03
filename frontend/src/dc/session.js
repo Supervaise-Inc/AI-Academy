@@ -4,6 +4,9 @@ const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') + '/api
 const THEME_KEY = 'supervaise-theme';
 const THEME_EVENT = 'supervaise-theme-change';
 
+// Absolute URL for a server path such as "/api/notebooks/week-01/download" (honours VITE_API_URL).
+export const apiUrl = (p) => (import.meta.env.VITE_API_URL || '').replace(/\/$/, '') + p;
+
 export class ApiError extends Error {
   constructor(message, status) {
     super(message);

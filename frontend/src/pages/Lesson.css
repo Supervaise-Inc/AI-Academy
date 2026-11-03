@@ -35,7 +35,7 @@
   /* ---- layout system: one centred container, three intentional widths ----
      reading (--measure): headings, prose, lists, callouts, metadata, quiz, references
      wide / code (100% of container = --wide): rail, utility row, figure frames, code block */
-  .lw{--gutter:clamp(16px,4vw,48px);--measure:37rem;--wide:60rem;--s1:8px;--s2:12px;--s3:16px;--s4:24px;--s5:40px;--s6:64px;box-sizing:border-box;width:100%;min-width:0;max-width:calc(var(--wide) + 2 * var(--gutter));margin-inline:auto;padding-inline:var(--gutter)}
+  .lw{--gutter:clamp(16px,4vw,48px);--measure:60rem;--wide:60rem;--s1:8px;--s2:12px;--s3:16px;--s4:24px;--s5:40px;--s6:64px;box-sizing:border-box;width:100%;min-width:0;max-width:calc(var(--wide) + 2 * var(--gutter));margin-inline:auto;padding-inline:var(--gutter)}
   .lw :is(.lhead,.outc,.sec-h,.sec-sub,.h3,.prose,.plist,.take,.fig-t,.fig-i,.fig-ill,.disc,.labmeta,.labobj,.lgrp,.actions,.note,.quiz,.refs){max-width:var(--measure)}
   .lw :is(.utilrow,.rail,.fig-body,.codebox){width:100%;max-width:100%;min-width:0}
   .lw p,.lw li,.lw dd{overflow-wrap:break-word}

@@ -18,7 +18,11 @@ const call = (p, { method = 'GET', body, cookie } = {}) =>
 
 before(async () => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aia-'));
-  const config = loadConfig({ JWT_SECRET: 'x'.repeat(40), EDUCATOR_EMAILS: 'prof@school.edu', FRONTEND_DIST: path.join(dir, 'none') });
+  fs.mkdirSync(path.join(dir, 'nb'));
+  fs.writeFileSync(path.join(dir, 'nb', 'week-02.ipynb'), JSON.stringify({ cells: [], nbformat: 4 }));
+  fs.mkdirSync(path.join(dir, 'content'));
+  fs.writeFileSync(path.join(dir, 'content', 'week-02.md'), '# Week 2 — Test\n\n**Term:** Prelim (Weeks 1–5)\n');
+  const config = loadConfig({ JWT_SECRET: 'x'.repeat(40), EDUCATOR_EMAILS: 'prof@school.edu', FRONTEND_DIST: path.join(dir, 'none'), NOTEBOOKS_DIR: path.join(dir, 'nb'), CONTENT_DIR: path.join(dir, 'content'), COLAB_REPO: 'acme/academy', COLAB_BRANCH: 'main' });
   const app = createApp({ db: createDb(dir), config });
   await new Promise((r) => (server = app.listen(0, r)));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -76,4 +80,23 @@ test('unknown api route is JSON 404', async () => {
   const res = await call('/api/nope');
   assert.equal(res.status, 404);
   assert.ok((await res.json()).error);
+});
+
+test('notebooks: info, Colab link, download, 404, auth', async () => {
+  assert.equal((await call('/api/notebooks/week-02')).status, 401);
+  const c = cookieOf(await call('/api/auth/register', { method: 'POST', body: { name: 'N', email: 'n@n.co', password: 'longenough1' } }));
+  let res = await call('/api/notebooks/week-02', { cookie: c });
+  assert.equal(res.status, 200);
+  const info = await res.json();
+  assert.equal(info.colabUrl, 'https://colab.research.google.com/github/acme/academy/blob/main/notebooks/week-02.ipynb');
+  assert.equal(info.downloadUrl, '/api/notebooks/week-02/download');
+  res = await call('/api/notebooks/week-02/download', { cookie: c });
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-disposition') || '', /week-02\.ipynb/);
+  assert.equal((await res.json()).nbformat, 4);
+  assert.equal((await call('/api/notebooks/week-03', { cookie: c })).status, 404);
+  assert.equal((await call('/api/notebooks/..%2Fsecret/download', { cookie: c })).status, 404);
+  // the lesson response carries the notebook info too
+  const lesson = await (await call('/api/content/week-02', { cookie: c })).json();
+  assert.equal(lesson.notebook.downloadUrl, '/api/notebooks/week-02/download');
 });

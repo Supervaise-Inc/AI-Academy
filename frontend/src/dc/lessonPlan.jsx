@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Widget, HookFigure } from './lessonWidgets.jsx';
-import { navigate } from './session.js';
+import { navigate, apiUrl } from './session.js';
 
 // Renders a lesson written in Markdown (backend/content/week-NN.md) with the same type system and
 // components as the built-in Week 7 lesson: hero, hook figure, section rail, outcomes, takeaway, lab, check.
@@ -238,6 +238,7 @@ export function prepare(markdown) {
     used.add(id);
     const isTake = /^Key takeaway/i.test(title);
     const isLab = /^Lab/i.test(title);
+    const isStudy = /^Study plan/i.test(title);
     const sec = document.createElement('section');
     sec.className = 'sec';
     sec.id = id;
@@ -248,6 +249,7 @@ export function prepare(markdown) {
     if (label || !hasRailMarks) view.rail.push({ id, label: label || title });
 
     let firstPara = true;
+    let nbPlaced = false;
     nodes.forEach((el) => {
       const tag = el.tagName;
       if (tag === 'P') {
@@ -276,6 +278,13 @@ export function prepare(markdown) {
         return;
       }
       sec.appendChild(el);
+      // the Colab notebook card goes right after the first paragraph of the lab (or study plan) section
+      if ((isLab || isStudy) && !nbPlaced && tag === 'P') {
+        const host = document.createElement('div');
+        host.className = 'nb-host';
+        sec.appendChild(host);
+        nbPlaced = true;
+      }
     });
     out.appendChild(sec);
   });
@@ -466,11 +475,39 @@ export function PlanView({ plan, view }) {
       ) : null}
 
       <article ref={article} className="wp-prose" dangerouslySetInnerHTML={{ __html: view.html }} />
+      {plan.notebook && article.current
+        ? [...article.current.querySelectorAll('.nb-host')].map((h, i) => createPortal(<NotebookCard nb={plan.notebook} week={plan.title} />, h, 'nb' + i))
+        : null}
       {hosts.map((h) => {
         const w = view.widgets[Number(h.getAttribute('data-w'))];
         return w ? createPortal(<Widget kind={w.kind} spec={w.spec} error={w.error} fig={w.fig} />, h, h.getAttribute('data-w')) : null;
       })}
     </div>
+  );
+}
+
+// "Open in Colab" / "Download" card shown at the start of a lesson's lab.
+export function NotebookCard({ nb, week }) {
+  return (
+    <aside className="nb-card" aria-label="Notebook for this lab">
+      <div className="nb-text">
+        <div className="nb-t">Do this lab in your own notebook</div>
+        <p className="nb-p">
+          Open the hands-on notebook in Google Colab. It runs on Google's computers, so there is nothing to install. Choose <strong>File → Save a copy in Drive</strong> first, so your changes are yours. You need a Google account.
+        </p>
+      </div>
+      <div className="nb-actions">
+        {nb.colabUrl ? (
+          <a className="nb-btn" href={nb.colabUrl} target="_blank" rel="noopener noreferrer" aria-label={`Open the notebook for ${week} in Google Colab (opens in a new tab)`}>
+            Open in Colab
+          </a>
+        ) : null}
+        <a className={'nb-btn' + (nb.colabUrl ? ' ghost' : '')} href={apiUrl(nb.downloadUrl)} download>
+          Download .ipynb
+        </a>
+      </div>
+      {!nb.colabUrl ? <p className="nb-p small">To use Colab, go to colab.research.google.com, choose <strong>Upload</strong>, and select the file you downloaded.</p> : null}
+    </aside>
   );
 }
 

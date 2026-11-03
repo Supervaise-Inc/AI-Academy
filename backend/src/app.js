@@ -14,7 +14,7 @@ const STATE_KEY = /^[a-z0-9-]{1,40}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export function createApp({ db, config }) {
-  const { contentDir, jwtSecret, isProd, corsOrigins, educatorEmails, frontendDist, sameSite, secure, trustProxy } = config;
+  const { contentDir, notebooksDir, colabRepo, colabBranch, jwtSecret, isProd, corsOrigins, educatorEmails, frontendDist, sameSite, secure, trustProxy } = config;
   const app = express();
   if (trustProxy) app.set('trust proxy', 1);
   app.disable('x-powered-by');
@@ -149,7 +149,28 @@ export function createApp({ db, config }) {
     if (!SLUG.test(req.params.slug) || !fs.existsSync(path.join(contentDir, `${req.params.slug}.md`))) {
       return res.status(404).json({ error: 'That lesson plan does not exist.' });
     }
-    res.json(readWeek(req.params.slug));
+    res.json({ ...readWeek(req.params.slug), notebook: notebookInfo(req.params.slug) });
+  });
+
+  // Hands-on Jupyter notebooks (notebooks/week-NN.ipynb). Students open them in Google Colab from the public
+  // GitHub copy, or download the file and upload it to Colab themselves.
+  const notebookFile = (slug) => path.join(notebooksDir, `${slug}.ipynb`);
+  function notebookInfo(slug) {
+    if (!SLUG.test(slug) || !fs.existsSync(notebookFile(slug))) return null;
+    return {
+      colabUrl: colabRepo ? `https://colab.research.google.com/github/${colabRepo}/blob/${colabBranch}/notebooks/${slug}.ipynb` : null,
+      downloadUrl: `/api/notebooks/${slug}/download`,
+    };
+  }
+  api.get('/notebooks/:slug', requireAuth, (req, res) => {
+    const info = notebookInfo(req.params.slug);
+    if (!info) return res.status(404).json({ error: 'There is no notebook for that week yet.' });
+    res.json({ slug: req.params.slug, ...info });
+  });
+  api.get('/notebooks/:slug/download', requireAuth, (req, res) => {
+    if (!notebookInfo(req.params.slug)) return res.status(404).json({ error: 'There is no notebook for that week yet.' });
+    res.type('application/x-ipynb+json');
+    res.download(notebookFile(req.params.slug), `${req.params.slug}.ipynb`);
   });
 
   app.use('/api', api);

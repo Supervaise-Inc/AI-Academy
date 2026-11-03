@@ -270,7 +270,9 @@
 
   /* ---- easier to read: a slightly larger type scale for lesson plans ---- */
   .lp-root{--fs-body:18.5px;--fs-body-ui:17.5px;--fs-detail:16.5px;--fs-sec-lede:20px;--fs-h3:20.5px;--fs-lede:clamp(20px,1.7vw,23px);--fs-h2:clamp(26px,2.2vw,31px);--lh-body:1.7}
-  .lp-root{--measure:41rem}
+  /* same reading width as the built-in Week 7 lesson: text runs as wide as the figures (60rem, or the page if narrower) */
+  .lp-root{--measure:60rem}
+  .lw .wp-prose :is(.lsteps,.exercise){max-width:var(--measure)}
   .lp-root .rail a{font-size:14px}
   .lp-root .hk-lab,.lp-root .hook-k{font-size:14px}
   .lp-root .hook-cap{font-size:var(--fs-detail)}
@@ -326,3 +328,16 @@
   .wp-prose .ex-badge{display:inline-flex;align-items:center;margin:0 10px 4px 0;padding:3px 12px;border-radius:999px;background:var(--amber);color:#1a1200;font-family:'Plus Jakarta Sans',system-ui,sans-serif;font-size:13.5px;font-weight:800;letter-spacing:.02em;line-height:1.4;vertical-align:1px}
   .wp-prose .exercise code,.wp-prose .exercise .icode{background:var(--card-bg)}
   @media (max-width:760px){.lw .wp-prose .lsteps ~ .codebox{width:100%;max-width:100%}.wp-prose .lsteps > li{padding-left:46px}.wp-prose .lsteps + .codebox,.wp-prose .lsteps ~ .codebox,.wp-prose .lsteps ~ p.prose:not(.exercise),.wp-prose p.exercise,.wp-prose .lsteps ~ p.exercise{margin-left:0;max-width:none}}
+
+  /* "Open in Colab" card at the start of a lab */
+  .wp-prose .nb-card{display:flex;flex-wrap:wrap;gap:14px 24px;align-items:center;justify-content:space-between;margin:var(--s3) 0 var(--s4);padding:18px 22px;border-radius:14px;border:1px solid var(--accent-soft-border);background:var(--accent-soft-bg)}
+  .wp-prose .nb-text{flex:1 1 360px;min-width:0}
+  .wp-prose .nb-t{font-size:var(--fs-h3);font-weight:700;color:var(--text);margin:0 0 4px}
+  .wp-prose .nb-p{margin:0;font-size:var(--fs-detail);line-height:1.55;color:var(--text2)}
+  .wp-prose .nb-p.small{flex-basis:100%;font-size:14.5px}
+  .wp-prose .nb-actions{display:flex;flex-wrap:wrap;gap:10px}
+  .wp-prose .nb-btn{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 22px;border-radius:10px;background:var(--accent-cta-bg);color:var(--accent-cta-text);font-weight:800;font-size:15.5px;text-decoration:none;transition:transform .2s ease,box-shadow .2s ease}
+  .wp-prose .nb-btn:hover{transform:translateY(-1px);box-shadow:0 6px 18px var(--accent-glow-soft);color:var(--accent-cta-text)}
+  .wp-prose .nb-btn.ghost{background:var(--card-bg);color:var(--text);border:1px solid var(--card-border)}
+  .wp-prose .nb-btn.ghost:hover{color:var(--text);box-shadow:none}
+  .wp-prose .nb-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}

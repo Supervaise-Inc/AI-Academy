@@ -24,6 +24,10 @@ export function loadConfig(env = process.env) {
     corsOrigins: list(env.CORS_ORIGIN),
     educatorEmails: list(env.EDUCATOR_EMAILS).map((e) => e.toLowerCase()),
     contentDir: path.resolve(root, env.CONTENT_DIR || './content'),
+    notebooksDir: path.resolve(root, env.NOTEBOOKS_DIR || '../notebooks'),
+    // "Open in Colab" links point at the public GitHub copy of the notebooks. Set COLAB_REPO to "" to hide the button.
+    colabRepo: env.COLAB_REPO === undefined ? 'Supervaise-Inc/AI-Academy' : env.COLAB_REPO.trim(),
+    colabBranch: (env.COLAB_BRANCH || 'main').trim(),
     dataDir: path.resolve(root, env.DATA_DIR || './data'),
     frontendDist: path.resolve(root, env.FRONTEND_DIST || '../frontend/dist'),
     sameSite,

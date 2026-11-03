@@ -53,6 +53,15 @@ Pick a week in the **Course Map** and press **Open lesson**. It opens the **Less
 - A week with no file shows "Week N lesson not published yet". Week 7 keeps the lesson that came with the design (it has no `week-07.md`). Opening **Lesson Workspace** from the sidebar (no week) also shows that built-in Week 7 lesson.
 - Everything in a `week-NN.md` file is shown to every signed-in user.
 
+## Lesson notebooks (Google Colab)
+
+Every lesson has a hands-on Jupyter notebook, `notebooks/week-NN.ipynb`. In the lesson page the lab (or study-plan) section shows **Open in Colab** and **Download .ipynb** buttons. Students click **Open in Colab**: the notebook opens in a new tab and runs on Google's servers, with nothing to install, and they choose **File → Save a copy in Drive** to keep their own copy. They need a Google account. The notebooks are written for Colab, so they may `pip install` and download small public models; they do not run on the offline DGX Spark.
+
+- **How the button works:** the server builds the link `https://colab.research.google.com/github/<COLAB_REPO>/blob/<COLAB_BRANCH>/notebooks/week-NN.ipynb`. The default is `Supervaise-Inc/AI-Academy` on `main`. **Colab reads the notebooks from GitHub, so they must be pushed to that branch of a public repository** (a private repository asks each student to sign in to GitHub). Set `COLAB_REPO` and `COLAB_BRANCH` in `backend/.env` to point elsewhere, or set `COLAB_REPO=` (empty) to show only the download button, which students can upload to Colab by hand.
+- **Write or edit a notebook:** edit `notebooks/src/week-NN.py` (a plain Python file in "percent format"), then run `npm run build:notebooks` to regenerate the `.ipynb` files and `npm run test:notebooks` to check that every code cell compiles. The format and rules are in [docs/NOTEBOOK_FORMAT.md](docs/NOTEBOOK_FORMAT.md). Commit the generated `.ipynb` files, because Colab opens those.
+- **Exam weeks (5, 10, 15, 20) and Week 19** have practice notebooks with computed exercises instead of a lab.
+- **API:** `GET /api/notebooks/:slug` returns the Colab link and download path, and `GET /api/notebooks/:slug/download` returns the file.
+
 ## Repository layout
 
 ```
@@ -97,6 +106,8 @@ Copy `backend/.env.example` to `backend/.env` and edit it. The file is optional 
 | `PORT` | no | Default `4000`. |
 | `EDUCATOR_EMAILS` | no | Comma-separated emails. Anyone who signs up with one of these becomes an educator. |
 | `CONTENT_DIR` | no | Folder of weekly lessons. Default `backend/content`. |
+| `NOTEBOOKS_DIR` | no | Folder of the Colab notebooks. Default `../notebooks`. |
+| `COLAB_REPO` / `COLAB_BRANCH` | no | GitHub repository and branch the "Open in Colab" buttons use. Default `Supervaise-Inc/AI-Academy` and `main`. Empty `COLAB_REPO` hides the button. |
 | `DATA_DIR` | no | Folder for `db.json` (users and saved progress). Default `backend/data`. Put it on persistent storage. |
 | `FRONTEND_DIST` | no | Folder of the built frontend to serve. Default `../frontend/dist`. |
 | `TRUST_PROXY` | no | `1` when behind nginx, Render, Railway, Fly, etc. |
@@ -210,6 +221,8 @@ All routes are under `/api`. Bodies are JSON.
 | PUT | `/me/theme` | `{ theme: "light" \| "dark" }` |
 | GET | `/content` | List of weekly lessons (title, term) |
 | GET | `/content/:slug` | One lesson, e.g. `week-01`, as Markdown (404 if not written yet) |
+| GET | `/notebooks/:slug` | Colab link and download path for a week's notebook (404 if none) |
+| GET | `/notebooks/:slug/download` | The `.ipynb` file |
 | GET / PUT | `/state/:key` | The signed-in user's saved state for a page. PUT body `{ data: {…} }`. |
 
 ## Notes on how the pages were built

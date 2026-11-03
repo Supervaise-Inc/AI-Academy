@@ -11,12 +11,13 @@ RUN npm run build
 
 # --- run the API + serve the built frontend ---
 FROM node:20-alpine
-ENV NODE_ENV=production DATA_DIR=/data FRONTEND_DIST=/app/frontend/dist TRUST_PROXY=1 PORT=4000
+ENV NODE_ENV=production DATA_DIR=/data FRONTEND_DIST=/app/frontend/dist NOTEBOOKS_DIR=/app/notebooks TRUST_PROXY=1 PORT=4000
 WORKDIR /app/backend
 COPY backend/package*.json ./
 RUN npm ci --omit=dev
 COPY backend ./
 COPY --from=web /app/frontend/dist /app/frontend/dist
+COPY notebooks /app/notebooks
 RUN mkdir -p /data && chown -R node:node /data
 VOLUME /data
 USER node
