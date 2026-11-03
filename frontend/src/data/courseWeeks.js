@@ -62,7 +62,8 @@ function build(w) {
   const wed = dateOf(n);
   const sat = dateOf(n, 3);
   const due = `${longDate(sat)}, ${DUE_TIME}`;
-  const lessonHref = n === CURRENT_WEEK ? '/lesson' : `/lesson/${n}`;
+  // Always a week address: the bare /lesson address opens the lesson library instead of a lesson.
+  const lessonHref = `/lesson/${n}`;
   const lessonTitle = w.lessonTitle || w.title;
   const activities = [];
   const sessions = [];
@@ -117,6 +118,9 @@ function build(w) {
     title: w.title,
     short: w.short,
     exam: !!w.exam,
+    covers: w.covers || '',
+    lab: w.lab || null,
+    kc: w.kc || 0,
     lessonHref,
     lessonCard: { heading: `Week ${n} ${w.exam ? 'review' : 'lesson' + (w.lab ? ' and laboratory' : '')}`, cta: w.exam ? 'Continue: review lesson →' : `Continue: Lesson ${n}.1 →` },
     activities,

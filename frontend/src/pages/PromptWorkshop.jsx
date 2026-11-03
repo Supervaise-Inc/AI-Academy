@@ -925,23 +925,7 @@ function template(v) {
               </div>
               <div style={{ minWidth: '0' }}>
                 <div style={{ fontSize: '13px', fontWeight: '700', color: '#FFFFFF', lineHeight: '1.3' }}>{v.userName}</div>
-                <div style={{ fontSize: '11.5px', color: '#9BA3AF', lineHeight: '1.4' }}>{'Student · Section A'}</div>
-                <div style={{ marginTop: '6px' }}>
-                  <span
-                    style={{
-                      display: 'inline-block',
-                      padding: '2px 8px',
-                      borderRadius: '999px',
-                      background: 'var(--surface2)',
-                      color: '#9BA3AF',
-                      fontSize: '11px',
-                      fontWeight: '700',
-                      lineHeight: '1.5',
-                    }}
-                  >
-                    {'Week 7 of 20'}
-                  </span>
-                </div>
+                <div style={{ fontSize: '11.5px', color: '#9BA3AF', lineHeight: '1.4' }}>{'Student'}</div>
               </div>
             </div>
             <DcLink className="navlink" href="Landing.dc.html" onClick={v.signOut} style={{ color: '#7C857A' }}>

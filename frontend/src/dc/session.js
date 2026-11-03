@@ -56,8 +56,12 @@ export const setNavigate = (fn) => {
   navigateFn = fn;
 };
 export const navigate = (to) => navigateFn && navigateFn(to);
+// After a sign-out the page you were on bounces you to the landing page and asks to be remembered. That is not a
+// deep link, so it is ignored until someone signs in again (otherwise the next person, say an instructor, would be
+// sent to the previous student's page).
+let signedOut = false;
 export const setAfterLogin = (path) => {
-  afterLogin = path;
+  if (!signedOut) afterLogin = path;
 };
 
 function applyTheme(user) {
@@ -74,6 +78,7 @@ export async function init() {
   try {
     const { user } = await api('/auth/me');
     applyTheme(user);
+    if (user) signedOut = false;
     set({ ready: true, user });
   } catch (e) {
     set({ ready: true, user: null });
@@ -83,17 +88,21 @@ export async function init() {
 export async function login(email, password) {
   const { user } = await api('/auth/login', { method: 'POST', body: { email, password } });
   applyTheme(user);
+  signedOut = false;
   set({ user });
   return user;
 }
 
 export async function register({ name, email, password }) {
   const { user } = await api('/auth/register', { method: 'POST', body: { name, email, password } });
+  signedOut = false;
   set({ user });
   return user;
 }
 
 export async function logout() {
+  signedOut = true;
+  afterLogin = null;
   try {
     await api('/auth/logout', { method: 'POST' });
   } finally {

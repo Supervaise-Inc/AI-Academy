@@ -7,6 +7,8 @@ import DCLogic from '../dc/DCLogic.jsx';
 import DcLink from '../dc/DcLink.jsx';
 import { css } from '../dc/css.js';
 import pageCss from './Educator.css?inline';
+import { Monitor, SectionBar, SectionCompare } from './EducatorMonitor.jsx';
+import { STUDENTS, SECTIONS, UNASSIGNED, STATUS_RANK, sectionName } from './educatorRoster.js';
 
 const THEME_KEY = 'supervaise-theme';
 const THEME_EVENT = 'supervaise-theme-change';
@@ -63,6 +65,7 @@ function themeVals(dark) {
 const TABS = [
   {
     key: 'overview',
+    hero: 'hx-blue',
     icon: '●',
     label: 'Overview',
     title: 'Section A overview',
@@ -70,13 +73,15 @@ const TABS = [
   },
   {
     key: 'perf',
+    hero: 'hx-rose',
     icon: '◉',
-    label: 'Student Performance',
-    title: 'Student performance',
-    sub: 'Completion, topic strength and who may need support',
+    label: 'Student Monitor',
+    title: 'Student monitor',
+    sub: 'Completion, activity and who may need support, by section',
   },
   {
     key: 'grade',
+    hero: 'hx-amber',
     icon: '✓',
     label: 'Cohort Grading',
     title: 'Cohort grading',
@@ -84,6 +89,7 @@ const TABS = [
   },
   {
     key: 'dgx',
+    hero: 'hx-violet',
     icon: '▣',
     label: 'Laboratory Compute',
     title: 'Laboratory compute allocation',
@@ -91,12 +97,44 @@ const TABS = [
   },
   {
     key: 'profile',
+    hero: 'hx-cyan',
     icon: '✦',
     label: 'Profile & Credentials',
     title: 'Profile & credentials',
     sub: 'What learners see about the instructor',
   },
 ];
+// Header icon for each tab (24x24, drawn with the page's stroke style).
+const HERO_ICONS = {
+  overview: <path d="M5 20V10M12 20V4M19 20v-7" />,
+  perf: (
+    <>
+      <circle cx="9" cy="8.5" r="3.2" />
+      <path d="M3.5 19.5c.4-3.2 2.6-5 5.5-5s5.1 1.8 5.5 5" />
+      <path d="M15.5 5.6a3.2 3.2 0 0 1 0 5.8M17.5 14.9c1.9.6 3.1 2.2 3.4 4.6" />
+    </>
+  ),
+  grade: (
+    <>
+      <rect x="5" y="4" width="14" height="17" rx="2.4" />
+      <path d="M9 4V3h6v1M8.5 12.5l2.2 2.2 4.3-4.6M8.5 18h7" />
+    </>
+  ),
+  dgx: (
+    <>
+      <rect x="6" y="6" width="12" height="12" rx="2.2" />
+      <rect x="9.5" y="9.5" width="5" height="5" rx="1" />
+      <path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" />
+    </>
+  ),
+  profile: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="2.6" />
+      <circle cx="9" cy="11" r="2.2" />
+      <path d="M5.8 16c.5-1.7 1.7-2.6 3.2-2.6s2.7.9 3.2 2.6M14.5 10h4M14.5 13.5h3" />
+    </>
+  ),
+};
 const RUBRIC = [
   {
     name: 'Concept answers (Q1a, Q1b)',
@@ -142,120 +180,6 @@ const LEVELS = [
   { key: 'nw', label: 'Needs work', f: 0.3 },
 ];
 const ptsFor = (c, li) => (li === null || li === undefined ? 0 : Math.round(c.pts * LEVELS[li].f));
-const STUDENTS = [
-  {
-    id: 'kb',
-    name: 'K. Bautista',
-    ini: 'KB',
-    when: '13 Oct, 20:41 PHT',
-    sub: true,
-    preset: [0, 0, 0, 1, 0, 0, 0],
-    graded: true,
-    prog: 34,
-    labs: '6/6',
-    kc: '6/7',
-    prelim: 'Passed',
-    status: 'on',
-  },
-  {
-    id: 'lg',
-    name: 'L. Garcia',
-    ini: 'LG',
-    when: '13 Oct, 22:05 PHT',
-    sub: true,
-    preset: [0, 1, 0, 0, 1, 0, 0],
-    graded: true,
-    prog: 32,
-    labs: '6/6',
-    kc: '6/7',
-    prelim: 'Passed',
-    status: 'on',
-  },
-  {
-    id: 'am',
-    name: 'A. Mendoza',
-    ini: 'AM',
-    when: '14 Oct, 09:12 PHT',
-    sub: true,
-    preset: null,
-    graded: false,
-    prog: 33,
-    labs: '6/6',
-    kc: '6/7',
-    prelim: 'Passed',
-    status: 'on',
-  },
-  {
-    id: 'pr',
-    name: 'P. Reyes',
-    ini: 'PR',
-    when: '14 Oct, 14:30 PHT',
-    sub: true,
-    preset: null,
-    graded: false,
-    prog: 30,
-    labs: '6/6',
-    kc: '4/7',
-    prelim: 'Passed',
-    status: 'support',
-    flag: 'Knowledge check mean 54%',
-  },
-  {
-    id: 'dv',
-    name: 'D. Villanueva',
-    ini: 'DV',
-    when: '14 Oct, 23:58 PHT',
-    sub: true,
-    preset: null,
-    graded: false,
-    prog: 31,
-    labs: '5/6',
-    kc: '6/7',
-    prelim: 'Passed',
-    status: 'watch',
-    flag: '1 laboratory late',
-  },
-  {
-    id: 'rd',
-    name: 'R. Dela Cruz',
-    ini: 'RD',
-    when: '15 Oct, 07:45 PHT',
-    sub: true,
-    preset: null,
-    graded: false,
-    prog: 29,
-    labs: '6/6',
-    kc: '5/7',
-    prelim: 'Retake',
-    status: 'watch',
-    flag: 'Preliminary exam retake',
-  },
-  {
-    id: 'ms',
-    name: 'M. Santos',
-    ini: 'MS',
-    when: 'Not submitted · due 16 Oct, 11:59 PM PHT',
-    sub: false,
-    prog: 32,
-    labs: '5/6',
-    kc: '6/7',
-    prelim: 'Passed',
-    status: 'on',
-  },
-  {
-    id: 'ja',
-    name: 'J. Alcantara',
-    ini: 'JA',
-    when: 'Not submitted · due 16 Oct, 11:59 PM PHT',
-    sub: false,
-    prog: 27,
-    labs: '4/6',
-    kc: '5/7',
-    prelim: 'Passed',
-    status: 'support',
-    flag: '2 laboratories late',
-  },
-];
 const SESSIONS = [
   {
     id: 'l31',
@@ -294,16 +218,11 @@ const SESSIONS = [
 const MEMS = [1, 2, 4, 6, 8],
   GROUPS = [1, 2, 3],
   LENS = [1, 2, 3];
-const CAP = 128,
-  SEATS = 28;
+const CAP = 128;
 
 class Component extends DCLogic {
   constructor(props) {
     super(props);
-    const grades = {};
-    STUDENTS.forEach((s) => {
-      if (s.sub) grades[s.id] = { levels: s.preset ? s.preset.slice() : [null, null, null, null, null, null, null], saved: !!s.graded };
-    });
     const plan = {};
     SESSIONS.forEach((s) => {
       plan[s.id] = { mem: s.mem, groups: s.groups, len: s.len, requested: false };
@@ -314,7 +233,10 @@ class Component extends DCLogic {
       filter: 'all',
       qFilter: 'todo',
       sel: 'am',
-      grades,
+      section: 'A',
+      moves: {},
+      qSearch: '',
+      grades: {},
       reminded: {},
       ses: 'l31',
       plan,
@@ -338,29 +260,48 @@ class Component extends DCLogic {
       ? { bg: 'var(--accent-soft-bg)', fg: 'var(--accent-soft-text)', border: 'var(--accent-soft-border)' }
       : { bg: 'var(--surface2)', fg: 'var(--text2)', border: 'var(--surface2-border)' };
   }
-  total(id) {
-    const g = this.state.grades[id];
-    return g ? RUBRIC.reduce((a, c, i) => a + ptsFor(c, g.levels[i]), 0) : 0;
+  all() {
+    const mv = this.state.moves || {};
+    if (this._allMv !== mv) {
+      this._allMv = mv;
+      this._all = STUDENTS.map((s) => (mv[s.id] ? { ...s, section: mv[s.id] } : s));
+    }
+    return this._all;
   }
-  complete(id) {
-    const g = this.state.grades[id];
-    return !!g && g.levels.every((l) => l !== null && l !== undefined);
+  pool(all = this.all()) {
+    const sec = this.state.section;
+    return sec === 'all' ? all : all.filter((s) => s.section === sec);
+  }
+  gradeOf(s) {
+    return this.state.grades[s.id] || { levels: s.preset ? s.preset.slice() : [null, null, null, null, null, null, null], saved: !!s.graded };
+  }
+  total(s) {
+    const g = this.gradeOf(s);
+    return RUBRIC.reduce((a, c, i) => a + ptsFor(c, g.levels[i]), 0);
+  }
+  complete(s) {
+    return this.gradeOf(s).levels.every((l) => l !== null && l !== undefined);
   }
   statusOf(s) {
     if (!s.sub) return { status: 'Not started', sBg: 'var(--surface2)', sFg: 'var(--text3)' };
-    if (this.state.grades[s.id].saved)
-      return { status: this.total(s.id) + ' pts', sBg: 'var(--accent-soft-bg)', sFg: 'var(--accent-soft-text)' };
+    if (this.gradeOf(s).saved) return { status: this.total(s) + ' pts', sBg: 'var(--accent-soft-bg)', sFg: 'var(--accent-soft-text)' };
     return { status: 'Submitted', sBg: 'var(--amber-soft-bg)', sFg: 'var(--amber-text)' };
   }
+  selStudent(pool = this.pool()) {
+    return pool.find((s) => s.id === this.state.sel) || pool.find((s) => s.sub && !this.gradeOf(s).saved) || pool[0] || null;
+  }
   setLevel(ci, li) {
+    const s = this.selStudent();
+    if (!s) return;
     const grades = Object.assign({}, this.state.grades);
-    const g = { levels: grades[this.state.sel].levels.slice(), saved: false };
+    const g = { levels: this.gradeOf(s).levels.slice(), saved: false };
     g.levels[ci] = li;
-    grades[this.state.sel] = g;
+    grades[s.id] = g;
     this.setState({ grades });
   }
   nextUngraded() {
-    const order = STUDENTS.filter((s) => s.sub && !this.state.grades[s.id].saved && s.id !== this.state.sel);
+    const cur = this.selStudent();
+    const order = this.pool().filter((x) => x.sub && !this.gradeOf(x).saved && (!cur || x.id !== cur.id));
     if (order.length) this.setState({ sel: order[0].id, qFilter: 'todo' });
   }
   hkVals() {
@@ -396,6 +337,7 @@ class Component extends DCLogic {
       dark = st.theme === 'dark';
     const tab = TABS.find((t) => t.key === st.tab);
     const tabs = TABS.map((t) => ({
+      key: t.key,
       icon: t.icon,
       label: t.label,
       go: () => this.setState({ tab: t.key }),
@@ -404,62 +346,49 @@ class Component extends DCLogic {
       shadow: t.key === st.tab ? 'inset 2px 0 0 #8FD400' : 'none',
     }));
 
-    const statusChip = {
-      on: ['On track', 'var(--accent-soft-bg)', 'var(--accent-soft-text)', 'var(--accent-soft-border)'],
-      watch: ['Watch', 'var(--amber-soft-bg)', 'var(--amber-text)', 'var(--amber-soft-border)'],
-      support: ['Needs support', 'var(--red-soft-bg)', 'var(--red-text)', 'var(--red-border)'],
-    };
-    const roster = STUDENTS.filter((s) => st.filter === 'all' || (st.filter === 'flag' ? s.status !== 'on' : s.status === 'on')).map(
-      (s) => {
-        const c = statusChip[s.status];
-        return {
-          name: s.name,
-          ini: s.ini,
-          prog: s.prog + '%',
-          labs: s.labs,
-          kc: s.kc,
-          prelim: s.prelim,
-          prelimColor: s.prelim === 'Passed' ? 'var(--accent-soft-text)' : 'var(--amber-text)',
-          status: c[0],
-          sBg: c[1],
-          sFg: c[2],
-          sBorder: c[3],
-        };
-      }
-    );
-    const filters = [
-      ['all', 'All'],
-      ['flag', 'Flagged'],
-      ['on', 'On track'],
-    ].map(([k, l]) => {
-      const c = this.chip(st.filter === k);
-      return { label: l, bg: c.bg, fg: c.fg, border: c.border, pick: () => this.setState({ filter: k }) };
-    });
-    const atRisk = STUDENTS.filter((s) => s.flag).map((s) => ({
-      name: s.name,
-      flag: s.flag,
-      color: s.status === 'support' ? 'var(--red-text)' : 'var(--amber-text)',
+    const all = this.all(),
+      pool = this.pool(all);
+    const secName = st.section === 'all' ? 'All sections' : sectionName(st.section);
+    const secInfo = SECTIONS.find((x) => x.id === st.section);
+    const submitted = pool.filter((x) => x.sub).length;
+    const toGrade = pool.filter((x) => x.sub && !this.gradeOf(x).saved).length;
+    const notSub = pool.length - submitted;
+    const flaggedN = pool.filter((x) => x.status !== 'on').length;
+    const passRate = pool.length ? Math.round((100 * pool.filter((x) => x.prelim === 'Passed').length) / pool.length) : 0;
+    const largest = Math.max(1, ...SECTIONS.map((x) => all.filter((y) => y.section === x.id).length));
+    const seats = Math.max(1, st.section === 'all' ? largest : pool.length);
+    const learnersLabel = pool.length + (pool.length === 1 ? ' learner' : ' learners');
+    const atRiskAll = pool.filter((x) => x.flag).sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || b.active - a.active);
+    const atRisk = atRiskAll.slice(0, 6).map((x) => ({
+      name: x.name + (st.section === 'all' ? ' · ' + (x.section === UNASSIGNED ? 'no section' : 'Section ' + x.section) : ''),
+      flag: x.flag,
+      color: x.status === 'support' ? 'var(--red-text)' : 'var(--amber-text)',
     }));
+    const atRiskMore = atRiskAll.length > 6 ? '+ ' + (atRiskAll.length - 6) + ' more in Student Monitor' : '';
 
-    const qList = STUDENTS.filter(
-      (s) => st.qFilter === 'all' || (st.qFilter === 'todo' ? !s.sub || !st.grades[s.id].saved : s.sub && st.grades[s.id].saved)
+    const sel = this.selStudent(pool);
+    const g = sel && sel.sub ? this.gradeOf(sel) : null;
+    const needle = (st.qSearch || '').trim().toLowerCase();
+    const qList = pool.filter(
+      (x) =>
+        (!needle || x.name.toLowerCase().includes(needle)) &&
+        (st.qFilter === 'all' || (st.qFilter === 'todo' ? !x.sub || !this.gradeOf(x).saved : x.sub && this.gradeOf(x).saved))
     );
-    const queue = qList.map((s) => {
-      const x = this.statusOf(s);
-      const on = s.id === st.sel;
+    const queue = qList.map((x) => {
+      const y = this.statusOf(x);
+      const on = sel && x.id === sel.id;
       return {
-        name: s.name,
-        ini: s.ini,
-        when: s.sub ? 'Submitted ' + s.when : s.when,
-        status: x.status,
-        sBg: x.sBg,
-        sFg: x.sFg,
+        name: x.name,
+        ini: x.ini,
+        when: x.sub ? 'Submitted ' + x.when : x.when,
+        status: y.status,
+        sBg: y.sBg,
+        sFg: y.sFg,
         bg: on ? 'var(--accent-ghost-bg)' : 'transparent',
         border: on ? 'var(--accent-soft-border)' : 'transparent',
-        pick: () => this.setState({ sel: s.id }),
+        pick: () => this.setState({ sel: x.id }),
       };
     });
-    const toGrade = STUDENTS.filter((s) => s.sub && !st.grades[s.id].saved).length;
     const qFilters = [
       ['todo', 'Needs action'],
       ['done', 'Graded'],
@@ -469,8 +398,6 @@ class Component extends DCLogic {
       return { label: l, bg: c.bg, fg: c.fg, border: c.border, pick: () => this.setState({ qFilter: k }) };
     });
 
-    const sel = STUDENTS.find((s) => s.id === st.sel);
-    const g = sel.sub ? st.grades[sel.id] : null;
     const rubric = RUBRIC.map((c, ci) => {
       const lv = LEVELS.map((lv, li) => {
         const on = g && g.levels[ci] === li;
@@ -499,8 +426,8 @@ class Component extends DCLogic {
         l2: lv[2],
       };
     });
-    const total = sel.sub ? this.total(sel.id) : 0;
-    const done = sel.sub && this.complete(sel.id);
+    const total = sel && sel.sub ? this.total(sel) : 0;
+    const done = !!(sel && sel.sub && this.complete(sel));
     let feedback = 'Choose a level for each criterion to draft feedback.';
     if (done) {
       const strong = RUBRIC.filter((c, i) => g.levels[i] === 0).map((c) => c.name.split(' (')[0].toLowerCase());
@@ -514,7 +441,7 @@ class Component extends DCLogic {
 
     const ses = SESSIONS.find((s) => s.id === st.ses),
       p = st.plan[ses.id];
-    const concurrent = Math.ceil(SEATS / p.groups);
+    const concurrent = Math.ceil(seats / p.groups);
     const demand = concurrent * p.mem + ses.reserve;
     const util = demand / CAP;
     const utilColor = util > 1 ? 'var(--red-text)' : util > 0.85 ? 'var(--amber-text)' : 'var(--accent-soft-text)';
@@ -558,7 +485,9 @@ class Component extends DCLogic {
       ...themeVals(dark),
       toggleTheme: this.toggleTheme,
       tabs,
-      pageTitle: tab.title,
+      heroCls: tab.hero,
+      heroIcon: HERO_ICONS[tab.key],
+      pageTitle: st.tab === 'overview' ? secName + ' overview' : tab.title,
       pageSub: tab.sub,
       tOverview: st.tab === 'overview',
       tPerf: st.tab === 'perf',
@@ -569,6 +498,31 @@ class Component extends DCLogic {
       goPerf: () => this.setState({ tab: 'perf' }),
       toGradeCount: toGrade,
       atRisk,
+      atRiskMore,
+      secName,
+      learnersLabel,
+      learnerCount: pool.length,
+      flaggedN,
+      notSub,
+      submitted,
+      passRate: passRate + '%',
+      scheduleNote: (secInfo ? secInfo.room : 'All sections') + ' · ' + secName + ', ' + learnersLabel,
+      submittedNote: '10% of final grade · 11:59 PM PHT · ' + submitted + ' of ' + pool.length + ' submitted',
+      sectionList: SECTIONS.map((x) => x.id).join(', '),
+      showSectionBar: st.tab !== 'profile',
+      all,
+      section: st.section,
+      pickSection: (id) => this.setState({ section: id }),
+      gradedOf: (x) => this.gradeOf(x).saved,
+      moveLearners: (ids, sec) => {
+        const moves = Object.assign({}, st.moves);
+        ids.forEach((id) => (moves[id] = sec));
+        this.setState({ moves });
+      },
+      gradeLearner: (id) => this.setState({ tab: 'grade', sel: id, qFilter: 'all', qSearch: '' }),
+      pool,
+      qSearch: st.qSearch || '',
+      setQSearch: (e) => this.setState({ qSearch: e.target.value }),
       weekBars: [62, 70, 75, 81, 88, 90, 54].map((v, i) => ({
         wk: i + 1,
         h: v + '%',
@@ -579,24 +533,28 @@ class Component extends DCLogic {
         { name: 'Hard vs soft attention', pct: '61%', color: 'var(--amber)' },
         { name: 'Scaled dot-product calculation', pct: '47%', color: 'var(--red-text)' },
       ],
-      filters,
-      roster,
       qFilters,
       queue,
-      queueNote: toGrade
-        ? toGrade + ' submission(s) waiting · 2 learners have not submitted'
-        : 'All submissions graded · 2 learners have not submitted',
-      selHasSub: !!sel.sub,
-      selNoSub: !sel.sub,
-      selName: sel.name,
-      selWhen: sel.when,
+      queueNote: !pool.length
+        ? 'No learners in ' + secName + ' yet'
+        : (toGrade ? toGrade + ' submission(s) waiting' : 'All submissions graded') +
+          ' · ' +
+          notSub +
+          (notSub === 1 ? ' learner has' : ' learners have') +
+          ' not submitted' +
+          (queue.length < pool.length ? ' · showing ' + queue.length + ' of ' + pool.length : ''),
+      selNone: !sel,
+      selHasSub: !!(sel && sel.sub),
+      selNoSub: !!(sel && !sel.sub),
+      selName: sel ? sel.name : '',
+      selWhen: sel ? sel.when : '',
       rubric,
       total,
       totalColor: total >= 85 ? 'var(--accent-soft-text)' : total >= 70 ? 'var(--amber-text)' : 'var(--text)',
       totalNote: g && g.saved ? 'Saved' : done ? 'Ready to save' : 'In progress',
       feedback,
       saveGrade: () => {
-        if (!done) return;
+        if (!done || !sel) return;
         const grades = Object.assign({}, st.grades);
         grades[sel.id] = { levels: g.levels.slice(), saved: true };
         this.setState({ grades });
@@ -604,15 +562,16 @@ class Component extends DCLogic {
       saveLabel: g && g.saved ? '✓ Grade saved' : done ? 'Save grade' : 'Score every criterion',
       nextUngraded: () => this.nextUngraded(),
       remind: () => {
+        if (!sel) return;
         const r = Object.assign({}, st.reminded);
         r[sel.id] = true;
         this.setState({ reminded: r });
       },
-      remindLabel: st.reminded[sel.id] ? '✓ Reminder queued (preview)' : 'Send reminder',
+      remindLabel: sel && st.reminded[sel.id] ? '✓ Reminder queued (preview)' : 'Send reminder',
       queuedCount: SESSIONS.filter((s) => st.plan[s.id].requested).length,
       sessions,
       sesName: ses.name,
-      sesNote: ses.when + ' · ' + ses.note,
+      sesNote: ses.when + ' · ' + ses.note + ' · planning for ' + seats + ' learners' + (st.section === 'all' ? ' (largest section)' : ' in ' + secName),
       memOpts: opt(MEMS, p.mem, 'mem', (v) => v + ' GB'),
       grpOpts: opt(GROUPS, p.groups, 'groups', (v) => String(v)),
       lenOpts: opt(LENS, p.len, 'len', (v) => v + ' h'),
@@ -718,7 +677,7 @@ function template(v) {
               </div>
               <div style={{ minWidth: '0' }}>
                 <div style={{ fontSize: '13px', fontWeight: '700', color: '#FFFFFF', lineHeight: '1.3' }}>{v.userName}</div>
-                <div style={{ fontSize: '11.5px', color: '#9BA3AF', lineHeight: '1.4' }}>{'Instructor · Section A'}</div>
+                <div style={{ fontSize: '11.5px', color: '#9BA3AF', lineHeight: '1.4' }}>{'Instructor'}</div>
               </div>
             </div>
             <DcLink className="navlink" href="Landing.dc.html" onClick={v.signOut} style={{ color: '#7C857A' }}>
@@ -735,8 +694,8 @@ function template(v) {
                 <span className="ctx-i">{'Second Semester'}</span> <span className="ctx-s" aria-hidden="true"></span>{' '}
                 <span className="ctx-i ctx-now">{'Week 7 of 20'}</span> <span className="ctx-s" aria-hidden="true"></span>{' '}
                 <span className="ctx-i">{'Midterm Term'}</span> <span className="ctx-s" aria-hidden="true"></span>{' '}
-                <span className="ctx-i">{'Section A'}</span> <span className="ctx-s" aria-hidden="true"></span>{' '}
-                <span className="ctx-i">{'28 learners'}</span>
+                <span className="ctx-i">{v.secName}</span> <span className="ctx-s" aria-hidden="true"></span>{' '}
+                <span className="ctx-i">{v.learnersLabel}</span>
               </div>
               <div className="hkbar" role="toolbar" aria-label="Course tools" onKeyDown={v.hkKey}>
                 <div className="hk-scrim" style={css(`display:${v.hkScrim}`)} onClick={v.hkClose}></div>
@@ -762,7 +721,7 @@ function template(v) {
                         <span className="hkt">{'08:00'}</span>
                         <span className="hkd">
                           <b>{'Lecture 7.1: Attention mechanisms'}</b>
-                          <span className="hkm">{'Room CS‑204 · Section A, 28 learners'}</span>
+                          <span className="hkm">{v.scheduleNote}</span>
                         </span>
                       </li>
                       <li>
@@ -805,7 +764,7 @@ function template(v) {
                         <span className="hkt">{'16 Oct'}</span>
                         <span className="hkd">
                           <b>{'Laboratory 3 Part 1 submissions close'}</b>
-                          <span className="hkm">{'10% of final grade · 11:59 PM PHT · 26 of 28 submitted'}</span>
+                          <span className="hkm">{v.submittedNote}</span>
                         </span>
                       </li>
                       <li>
@@ -847,21 +806,21 @@ function template(v) {
                       <li>
                         <span className="hkt">{'Today'}</span>
                         <span className="hkd">
-                          <b>{'4 submissions awaiting grading'}</b>
+                          <b>{v.toGradeCount + ' submissions awaiting grading'}</b>
                           <span className="hkm">{'Laboratory 3 Part 1 · Open the Cohort Grading tab'}</span>
                         </span>
                       </li>
                       <li>
                         <span className="hkt">{'Today'}</span>
                         <span className="hkd">
-                          <b>{'2 learners have not submitted'}</b>
+                          <b>{v.notSub + ' learners have not submitted'}</b>
                           <span className="hkm">{'Send reminder before 16 October 2026, 11:59 PM PHT'}</span>
                         </span>
                       </li>
                       <li>
                         <span className="hkt">{'Week 7'}</span>
                         <span className="hkd">
-                          <b>{'4 learners flagged for follow-up'}</b>
+                          <b>{v.flaggedN + ' learners flagged for follow-up'}</b>
                           <span className="hkm">{'Schedule consultation with learners needing support'}</span>
                         </span>
                       </li>
@@ -926,8 +885,8 @@ function template(v) {
                       </span>
                     </div>
                     <div className="setrow">
-                      <span className="setlab">{'Teaching section'}</span>
-                      <span className="setval">{'Section A'}</span>
+                      <span className="setlab">{'Sections'}</span>
+                      <span className="setval">{v.sectionList}</span>
                     </div>
                     <DcLink className="hkpop-f" href="#">
                       {'Account and privacy settings'}
@@ -936,7 +895,7 @@ function template(v) {
                 </div>
               </div>
             </div>
-            <header className="hx hx-blue">
+            <header className={'hx ' + v.heroCls}>
               <div className="hx-body">
                 <div className="eyebrow" style={{ marginBottom: 'var(--s2)' }}>
                   {'Faculty console'}
@@ -948,18 +907,30 @@ function template(v) {
               </div>
               <div className="hx-ico">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M5 20V10M12 20V4M19 20v-7"></path>
+                  {v.heroIcon}
                 </svg>
               </div>
             </header>
+            {v.showSectionBar ? <SectionBar all={v.all} value={v.section} onPick={v.pickSection} /> : null}
             {v.tOverview ? (
               <>
                 <div className="sect">
                   <div className="sect-h">
+                    <h2 className="sect-t">{'Sections'}</h2>
+                    <span className="sect-n">{'Choose a row to open that section'}</span>
+                  </div>
+                  <SectionCompare all={v.all} gradedOf={v.gradedOf} value={v.section} onPick={v.pickSection} />
+                </div>
+                <div className="sect">
+                  <div className="sect-h">
                     <h2 className="sect-t">{'Requires your attention'}</h2>
                     <span className="sect-n">
+                      {v.secName}
+                      {' · '}
                       {v.toGradeCount}
-                      {' submissions awaiting grading · 4 learners flagged'}
+                      {' submissions awaiting grading · '}
+                      {v.flaggedN}
+                      {' learners flagged'}
                     </span>
                   </div>
                   <div className="g2" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1fr)', gap: '18px' }}>
@@ -976,13 +947,21 @@ function template(v) {
                           </div>
                         </React.Fragment>
                       ))}
+                      {v.atRiskMore ? (
+                        <div className="secnote" style={{ paddingTop: '8px' }}>
+                          {v.atRiskMore}
+                        </div>
+                      ) : null}
+                      {!v.atRisk.length ? <div className="secnote">{'No learners are flagged in this section.'}</div> : null}
                     </div>
                     <div className="card" style={{ padding: '22px' }}>
                       <div style={{ fontSize: '16px', fontWeight: '600', marginBottom: '10px' }}>{'Grading queue'}</div>
                       <div style={{ fontSize: '15px', color: 'var(--text2)', marginBottom: '14px' }}>
                         {'Laboratory 3 Part 1 has '}
                         {v.toGradeCount}
-                        {' submissions awaiting grading. Two learners have not submitted.'}
+                        {' submissions awaiting grading. '}
+                        {v.notSub}
+                        {' learners have not submitted.'}
                       </div>
                       <button type="button" className="solidbtn" onClick={v.goGrading} style={{ padding: '9px 16px', fontSize: '14px' }}>
                         {'Open grading queue'}
@@ -993,13 +972,13 @@ function template(v) {
                 <div className="sect">
                   <div className="sect-h">
                     <h2 className="sect-t">{'Class performance'}</h2>
-                    <span className="sect-n">{'Section A · Week 7 of 20'}</span>
+                    <span className="sect-n">{v.secName + ' · Week 7 of 20'}</span>
                   </div>
                   <div className="g4" style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: '16px' }}>
                     <div className="card kpi">
                       <div className="l">{'ENROLLED LEARNERS'}</div>
-                      <div className="v">{'28'}</div>
-                      <div style={{ fontSize: '14px', color: 'var(--text3)' }}>{'Section A'}</div>
+                      <div className="v">{v.learnerCount}</div>
+                      <div style={{ fontSize: '14px', color: 'var(--text3)' }}>{v.secName}</div>
                     </div>
                     <div className="card kpi">
                       <div className="l">{'SEMESTER PROGRESS'}</div>
@@ -1013,7 +992,7 @@ function template(v) {
                     </div>
                     <div className="card kpi">
                       <div className="l">{'PRELIMINARY EXAMINATION PASS RATE'}</div>
-                      <div className="v">{'93%'}</div>
+                      <div className="v">{v.passRate}</div>
                       <div style={{ fontSize: '14px', color: 'var(--text3)' }}>{'Midterm examination: Week 10'}</div>
                     </div>
                   </div>
@@ -1063,8 +1042,8 @@ function template(v) {
                     <div className="card kpi" style={{ padding: '22px' }}>
                       <div className="l">{'LABORATORY 3 PART 1 SUBMITTED'}</div>
                       <div className="v">
-                        {'26'}
-                        <span style={{ fontSize: '15px', color: 'var(--text3)' }}>{' of 28'}</span>
+                        {v.submitted}
+                        <span style={{ fontSize: '15px', color: 'var(--text3)' }}>{' of ' + v.learnerCount}</span>
                       </div>
                       <div style={{ fontSize: '14px', color: 'var(--amber-text)', fontWeight: '500' }}>
                         {v.toGradeCount}
@@ -1076,7 +1055,7 @@ function template(v) {
                 <div className="sect">
                   <div className="sect-h">
                     <h2 className="sect-t">{'Learner roster'}</h2>
-                    <span className="sect-n">{'28 learners · Section A'}</span>
+                    <span className="sect-n">{v.learnersLabel + ' · ' + v.secName}</span>
                   </div>
                   <div
                     className="card"
@@ -1090,10 +1069,10 @@ function template(v) {
                     }}
                   >
                     <div style={{ fontSize: '15px', color: 'var(--text2)', maxWidth: '640px' }}>
-                      {'Completion, laboratory results, knowledge checks and status are listed for every learner in Section A.'}
+                      {'Completion, laboratory results, knowledge checks, last activity and status are listed for every learner. Search, filter, sort and move learners between sections in the monitor.'}
                     </div>
                     <button type="button" className="ghostbtn" onClick={v.goPerf} style={{ padding: '9px 16px', fontSize: '14px' }}>
-                      {'Open full roster'}
+                      {'Open Student Monitor'}
                     </button>
                   </div>
                 </div>
@@ -1165,103 +1144,14 @@ function template(v) {
                     </div>
                   </div>
                 </div>
-                <div className="card" style={{ padding: '22px' }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexWrap: 'wrap',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      gap: '10px',
-                      marginBottom: '8px',
-                    }}
-                  >
-                    <div style={{ fontSize: '16px', fontWeight: '600' }}>
-                      {'Student performance '}
-                      <span style={{ fontWeight: '500', color: 'var(--text3)', fontSize: '14px' }}>{'· 8 of 28 shown'}</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                      {(v.filters || []).map((f, $index) => (
-                        <React.Fragment key={$index}>
-                          <button
-                            type="button"
-                            className="chipbtn"
-                            onClick={f?.pick}
-                            style={css(`background:${f?.bg};color:${f?.fg};border:1px solid ${f?.border}`)}
-                          >
-                            {f?.label}
-                          </button>
-                        </React.Fragment>
-                      ))}
-                      <span className="demo">{'Demo data'}</span>
-                    </div>
-                  </div>
-                  <div
-                    className="row"
-                    style={{
-                      gridTemplateColumns: 'minmax(0,1.4fr) minmax(0,1.3fr) 70px 70px 90px 120px',
-                      fontSize: '13px',
-                      fontWeight: '500',
-                      color: 'var(--text3)',
-                    }}
-                  >
-                    <span>{'Learner'}</span>
-                    <span>{'Course completion'}</span>
-                    <span>{'Labs'}</span>
-                    <span>{'Checks'}</span>
-                    <span>{'Preliminary'}</span>
-                    <span style={{ textAlign: 'right' }}>{'Status'}</span>
-                  </div>
-                  {(v.roster || []).map((r, $index) => (
-                    <React.Fragment key={$index}>
-                      <div className="row" style={{ gridTemplateColumns: 'minmax(0,1.4fr) minmax(0,1.3fr) 70px 70px 90px 120px' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '9px', minWidth: '0' }}>
-                          <span
-                            style={{
-                              width: '28px',
-                              height: '28px',
-                              flexShrink: '0',
-                              borderRadius: '999px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: '13px',
-                              fontWeight: '600',
-                              background: 'var(--surface2)',
-                              color: 'var(--text2)',
-                              border: '1px solid var(--surface2-border)',
-                            }}
-                          >
-                            {r?.ini}
-                          </span>
-                          <span style={{ fontWeight: '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {r?.name}
-                          </span>
-                        </span>{' '}
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span className="bar" style={{ flex: '1' }}>
-                            <span className="barfill" style={css(`display:block;width:${r?.prog};background:var(--accent)`)}></span>
-                          </span>
-                          <span className="mono" style={{ fontSize: '13px', color: 'var(--text3)', width: '32px' }}>
-                            {r?.prog}
-                          </span>
-                        </span>{' '}
-                        <span className="mono" style={{ fontSize: '14px' }}>
-                          {r?.labs}
-                        </span>{' '}
-                        <span className="mono" style={{ fontSize: '14px' }}>
-                          {r?.kc}
-                        </span>{' '}
-                        <span style={css(`font-size:14px;color:${r?.prelimColor};font-weight:500`)}>{r?.prelim}</span>{' '}
-                        <span style={{ textAlign: 'right' }}>
-                          <span className="badge" style={css(`background:${r?.sBg};color:${r?.sFg};border:1px solid ${r?.sBorder}`)}>
-                            {r?.status}
-                          </span>
-                        </span>
-                      </div>
-                    </React.Fragment>
-                  ))}
-                </div>
+                <Monitor
+                  students={v.pool}
+                  label={v.secName}
+                  showSection={v.section === 'all'}
+                  onMove={v.moveLearners}
+                  onGrade={v.gradeLearner}
+                  gradedOf={v.gradedOf}
+                />
               </>
             ) : null}{' '}
             {v.tGrade ? (
@@ -1278,6 +1168,7 @@ function template(v) {
                     <div style={{ fontSize: '14px', color: 'var(--text3)', marginBottom: '10px' }}>
                       {'Scaled dot-product attention · 10% of final grade · closes 16 October 2026, 11:59 PM PHT'}
                     </div>
+                    <input className="qsearch" type="search" placeholder="Search learners in this section" aria-label="Search the grading queue" value={v.qSearch} onChange={v.setQSearch} />
                     <div style={{ display: 'flex', gap: '6px', marginBottom: '10px', flexWrap: 'wrap' }}>
                       {(v.qFilters || []).map((f, $index) => (
                         <React.Fragment key={$index}>
@@ -1292,7 +1183,7 @@ function template(v) {
                         </React.Fragment>
                       ))}
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div className="qlist">
                       {(v.queue || []).map((q, $index) => (
                         <React.Fragment key={$index}>
                           <button
@@ -1444,6 +1335,9 @@ function template(v) {
                           </span>
                         </div>
                       </>
+                    ) : null}{' '}
+                    {v.selNone ? (
+                      <div className="mon-empty">{'No learners in this section yet. Assign learners in the Student Monitor tab.'}</div>
                     ) : null}{' '}
                     {v.selNoSub ? (
                       <>
@@ -1827,6 +1721,6 @@ function template(v) {
 Component.template = template;
 Component.css = pageCss;
 Component.pageKey = 'educator';
-Component.persist = ['grades', 'reminded', 'plan', 'ses'];
+Component.persist = ['grades', 'reminded', 'plan', 'ses', 'section', 'moves'];
 
 export default Component;

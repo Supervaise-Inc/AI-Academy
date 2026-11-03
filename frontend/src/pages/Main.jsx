@@ -241,7 +241,6 @@ class Component extends DCLogic {
       eyebrow: eyebrow + ' · Week ' + wk.week + ' of ' + TOTAL_WEEKS,
       scheduleHead: (isNow ? 'Today' : 'Week ' + wk.week) + ' · ' + wk.sessionsDate,
       sessionsHead: isNow ? 'Sessions today' : 'Sessions this week',
-      studentLine: 'Student · Week ' + CURRENT_WEEK,
       activities: wk.activities.map((a) => {
         const status = activityStatus(wk.week, wk.activities.indexOf(a));
         return { ...a, status, badge: BADGE[status] };
@@ -381,23 +380,7 @@ function template(v) {
               </div>
               <div style={{ minWidth: '0' }}>
                 <div style={{ fontSize: '13px', fontWeight: '700', color: '#FFFFFF', lineHeight: '1.3' }}>{v.userName}</div>
-                <div style={{ fontSize: '11.5px', color: '#9BA3AF', lineHeight: '1.4' }}>{v.studentLine}</div>
-                <div style={{ marginTop: '6px' }}>
-                  <span
-                    style={{
-                      display: 'inline-block',
-                      padding: '2px 8px',
-                      borderRadius: '999px',
-                      background: 'rgba(255,255,255,0.06)',
-                      color: '#9BA3AF',
-                      fontSize: '11px',
-                      fontWeight: '600',
-                      lineHeight: '1.5',
-                    }}
-                  >
-                    {'Module 2 of 4 in progress'}
-                  </span>
-                </div>
+                <div style={{ fontSize: '11.5px', color: '#9BA3AF', lineHeight: '1.4' }}>{'Student'}</div>
               </div>
             </div>
             <DcLink className="navlink" href="Landing.dc.html" onClick={v.signOut} style={{ color: '#7C857A' }}>
@@ -643,10 +626,10 @@ function template(v) {
             </div>
             <div className="hx-ico">
               <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="8.6"></circle>
-                <circle cx="12" cy="12" r="4.6"></circle>
-                <circle cx="12" cy="12" r="1.2" fill="currentColor"></circle>
-                <path d="M12 1.8v3M12 19.2v3M1.8 12h3M19.2 12h3"></path>
+                <rect x="3.5" y="3.5" width="7.5" height="9" rx="1.8"></rect>
+                <rect x="13" y="3.5" width="7.5" height="5.5" rx="1.8"></rect>
+                <rect x="13" y="11.5" width="7.5" height="9" rx="1.8"></rect>
+                <rect x="3.5" y="15" width="7.5" height="5.5" rx="1.8"></rect>
               </svg>
             </div>
           </header>
@@ -662,9 +645,11 @@ function template(v) {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                   {(v.activities || []).map((a, $index) => (
-                    <div
+                    <DcLink
                       key={$index}
+                      href={v.wk.lessonHref}
                       className="lift"
+                      title={'Open the Week ' + v.wk.week + ' lesson'}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -673,6 +658,8 @@ function template(v) {
                         padding: '12px 14px',
                         borderRadius: '10px',
                         border: '1px solid var(--divider)',
+                        color: 'inherit',
+                        textDecoration: 'none',
                       }}
                     >
                       <div>
@@ -682,7 +669,7 @@ function template(v) {
                       <span className="badge" style={a.badge}>
                         {a.status}
                       </span>
-                    </div>
+                    </DcLink>
                   ))}
                 </div>
               </div>

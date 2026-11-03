@@ -8,6 +8,8 @@ import DcLink from '../dc/DcLink.jsx';
 import { css } from '../dc/css.js';
 import pageCss from './Lesson.css?inline';
 import planCss from '../dc/lessonPlan.css?inline';
+import libCss from '../dc/lessonLibrary.css?inline';
+import LessonLibrary from '../dc/LessonLibrary.jsx';
 import { prepare, PlanView, PlanStatus } from '../dc/lessonPlan.jsx';
 import * as session from '../dc/session.js';
 import { TOTAL_WEEKS, getWeek } from '../data/courseWeeks.js';
@@ -291,6 +293,8 @@ class Component extends DCLogic {
       // Week lesson plan (backend/content/week-NN.md) shown instead of the built-in Week 7 lesson
       plan: { status: this.props.week ? 'loading' : 'none', data: null, view: null },
       nb: null, // Colab notebook for the built-in Week 7 lab
+      // Arriving at the Lesson Workspace from the sidebar (no week in the address) opens the lesson library over the page.
+      libOpen: !this.props.week,
     };
     this.toggleTheme = this.toggleTheme.bind(this);
     this.onScroll = this.onScroll.bind(this);
@@ -409,6 +413,8 @@ class Component extends DCLogic {
       ...this.renderVals0(),
       ...this.hkVals(),
       planNode: this.planNode(),
+      libNode: this.state.libOpen ? <LessonLibrary initialWeek={Number(this.props.week) || undefined} onClose={() => this.setState({ libOpen: false })} /> : null,
+      openLib: () => this.setState({ libOpen: true }),
       nbColab: this.state.nb && this.state.nb.colabUrl,
       nbDownload: this.state.nb && session.apiUrl(this.state.nb.downloadUrl),
       ctxWeek: 'Week ' + wk.week + ' of ' + TOTAL_WEEKS,
@@ -818,7 +824,7 @@ function template(v) {
             <span>{'◉'}</span>
             <span>{'Course Map'}</span>
           </DcLink>
-          <DcLink className="navlink active" href="Lesson.dc.html" aria-current="page">
+          <DcLink className="navlink active" href="Lesson.dc.html" aria-current="page" onClick={v.openLib}>
             <span>{'◇'}</span>
             <span>{'Lesson Workspace'}</span>
           </DcLink>
@@ -885,23 +891,7 @@ function template(v) {
               </div>
               <div style={{ minWidth: '0' }}>
                 <div style={{ fontSize: '13px', fontWeight: '700', color: '#FFFFFF', lineHeight: '1.3' }}>{v.userName}</div>
-                <div style={{ fontSize: '11.5px', color: '#9BA3AF', lineHeight: '1.4' }}>{'Student · Week 7 of 20'}</div>
-                <div style={{ marginTop: '6px' }}>
-                  <span
-                    style={{
-                      display: 'inline-block',
-                      padding: '2px 8px',
-                      borderRadius: '999px',
-                      background: 'rgba(255,255,255,0.06)',
-                      color: '#9BA3AF',
-                      fontSize: '11px',
-                      fontWeight: '700',
-                      lineHeight: '1.5',
-                    }}
-                  >
-                    {'Section A'}
-                  </span>
-                </div>
+                <div style={{ fontSize: '11.5px', color: '#9BA3AF', lineHeight: '1.4' }}>{'Student'}</div>
               </div>
             </div>
             <DcLink className="navlink" href="Landing.dc.html" onClick={v.signOut} style={{ color: '#7C857A' }}>
@@ -924,6 +914,15 @@ function template(v) {
           <div className="lw">
             <div className="utilrow" role="toolbar" aria-label="Course tools" onKeyDown={v.hkKey}>
               <div className="hk-scrim" style={css(`display:${v.hkScrim}`)} onClick={v.hkClose}></div>
+              <button type="button" className="lib-btn" onClick={v.openLib} aria-haspopup="dialog">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" width="16" height="16">
+                  <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.7" />
+                  <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.7" />
+                  <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.7" />
+                  <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.7" />
+                </svg>
+                {'All lessons'}
+              </button>
               <div className="ctx">
                 <span>{'A.Y. 2026/2027'}</span> <span className="ctx-s" aria-hidden="true"></span> <span>{'Second Semester'}</span>{' '}
                 <span className="ctx-s" aria-hidden="true"></span> <span className="ctx-now">{v.ctxWeek}</span>{' '}
@@ -2584,13 +2583,14 @@ function template(v) {
             </footer>
           </div>
         </div>
+        {v.libNode}
       </div>
     </>
   );
 }
 
 Component.template = template;
-Component.css = pageCss + planCss;
+Component.css = pageCss + planCss + libCss;
 Component.pageKey = 'lesson';
 Component.persist = ['qIndex', 'selectedOpt', 'submitted'];
 

@@ -3,7 +3,6 @@ import { NavLink, Link } from 'react-router-dom';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import * as session from '../dc/session.js';
-import { CURRENT_WEEK } from '../data/courseWeeks.js';
 import { DARK_VARS, LIGHT_VARS } from './themeVars.js';
 import { formatDateTime } from './format.js';
 import { UtilBar, SiteFooter } from './Chrome.jsx';
@@ -115,7 +114,7 @@ function Sidebar({ user }) {
             </div>
             <div className="sb-who">
               <div className="sb-name">{user ? user.name : 'Signed in'}</div>
-              <div className="sb-role">Student · Week {CURRENT_WEEK}</div>
+              <div className="sb-role">Student</div>
             </div>
           </div>
           <button type="button" className="navlink sb-out" onClick={() => session.logout().then(() => session.navigate('/'))}>
