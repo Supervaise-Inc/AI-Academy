@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import React, { Suspense, lazy, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import * as session from './dc/session.js';
 
@@ -14,6 +14,13 @@ const pages = {
   PracticeExam: () => import('./pages/PracticeExam.jsx'),
   Certificates: () => import('./pages/Certificates.jsx'),
   Educator: () => import('./pages/Educator.jsx'),
+};
+
+// Student Activities / Announcements / My grades. Plain React pages (not design-converted), so they mount without PageHost.
+const lmsPages = {
+  Activities: lazy(() => import('./lms/Activities.jsx')),
+  Announcements: lazy(() => import('./lms/Announcements.jsx')),
+  Grades: lazy(() => import('./lms/Grades.jsx')),
 };
 
 const useSession = () => useSyncExternalStore(session.subscribe, session.getSession);
@@ -99,9 +106,24 @@ export default function App() {
         <Route path="/lesson" element={guard(<LazyPage name="Lesson" />)} />
         <Route path="/lesson/:week" element={guard(<LazyPage name="Lesson" />)} />
         <Route path="/prompt-workshop" element={guard(<LazyPage name="PromptWorkshop" />)} />
+        <Route path="/prompt-workshop/:week" element={guard(<LazyPage name="PromptWorkshop" />)} />
         <Route path="/capstone" element={guard(<LazyPage name="Capstone" />)} />
         <Route path="/mock-exam" element={guard(<LazyPage name="PracticeExam" />)} />
         <Route path="/certification" element={guard(<LazyPage name="Certificates" />)} />
+        {Object.entries({ '/activities': 'Activities', '/announcements': 'Announcements', '/grades': 'Grades' }).map(([path, name]) => {
+          const Page = lmsPages[name];
+          return (
+            <Route
+              key={path}
+              path={path}
+              element={guard(
+                <Suspense fallback={<Blank />}>
+                  <Page />
+                </Suspense>,
+              )}
+            />
+          );
+        })}
         <Route path="/educator" element={guard(<LazyPage name="Educator" />, 'educator')} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

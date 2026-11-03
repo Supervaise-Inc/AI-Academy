@@ -640,6 +640,31 @@ function template(v) {
             <span>{'▲'}</span>
             <span>{'Certification Center'}</span>
           </DcLink>
+          <div
+            style={{
+              padding: '16px 10px 4px',
+              fontSize: '10.5px',
+              fontWeight: '700',
+              letterSpacing: '.12em',
+              textTransform: 'uppercase',
+              color: '#7C857A',
+              lineHeight: '1.3',
+            }}
+          >
+            {'Activities'}
+          </div>
+          <DcLink className="navlink" href="/activities">
+            <span>{'▤'}</span>
+            <span>{'Activities'}</span>
+          </DcLink>
+          <DcLink className="navlink" href="/announcements">
+            <span>{'✉'}</span>
+            <span>{'Announcements'}</span>
+          </DcLink>
+          <DcLink className="navlink" href="/grades">
+            <span>{'✓'}</span>
+            <span>{'My grades'}</span>
+          </DcLink>
           <div style={{ flex: '1' }}></div>
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', margin: '12px 0 0', paddingTop: '12px' }}>
             <div className="profilecard" style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '6px' }}>

@@ -413,6 +413,7 @@ class Component extends DCLogic {
       nbDownload: this.state.nb && session.apiUrl(this.state.nb.downloadUrl),
       ctxWeek: 'Week ' + wk.week + ' of ' + TOTAL_WEEKS,
       ctxTerm: wk.termLabel,
+      workshopHref: '/prompt-workshop/' + wk.week,
     };
   }
   renderVals0() {
@@ -821,7 +822,7 @@ function template(v) {
             <span>{'◇'}</span>
             <span>{'Lesson Workspace'}</span>
           </DcLink>
-          <DcLink className="navlink" href="PromptWorkshop.dc.html">
+          <DcLink className="navlink" href={v.workshopHref}>
             <span>{'✎'}</span>
             <span>{'Prompt Workshop'}</span>
           </DcLink>
@@ -836,6 +837,31 @@ function template(v) {
           <DcLink className="navlink" href="Certificates.dc.html">
             <span>{'▲'}</span>
             <span>{'Certification Center'}</span>
+          </DcLink>
+          <div
+            style={{
+              padding: '16px 10px 4px',
+              fontSize: '10.5px',
+              fontWeight: '700',
+              letterSpacing: '.12em',
+              textTransform: 'uppercase',
+              color: '#7C857A',
+              lineHeight: '1.3',
+            }}
+          >
+            {'Activities'}
+          </div>
+          <DcLink className="navlink" href="/activities">
+            <span>{'▤'}</span>
+            <span>{'Activities'}</span>
+          </DcLink>
+          <DcLink className="navlink" href="/announcements">
+            <span>{'✉'}</span>
+            <span>{'Announcements'}</span>
+          </DcLink>
+          <DcLink className="navlink" href="/grades">
+            <span>{'✓'}</span>
+            <span>{'My grades'}</span>
           </DcLink>
           <div className="sb-spacer" style={{ flex: '1' }}></div>
           <div className="sb-profile" style={{ borderTop: '1px solid rgba(255,255,255,0.08)', margin: '12px 0 0', paddingTop: '12px' }}>

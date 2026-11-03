@@ -6,6 +6,10 @@ import React from 'react';
 import DCLogic from '../dc/DCLogic.jsx';
 import DcLink from '../dc/DcLink.jsx';
 import { css } from '../dc/css.js';
+import * as session from '../dc/session.js';
+import { apiUrl } from '../dc/session.js';
+import { WORKSHOPS, runRules } from '../data/workshops/index.js';
+import { CURRENT_WEEK, TOTAL_WEEKS, getWeek } from '../data/courseWeeks.js';
 import pageCss from './PromptWorkshop.css?inline';
 
 const THEME_KEY = 'supervaise-theme';
@@ -113,7 +117,7 @@ const TPL_CODE =
 const CARD_NOTE =
   '## Prompt card\n\n1. Role\n2. Task\n3. Context\n4. Format\n5. Examples\n6. Constraints\n\n### Best prompts\n- Classification:\n- JSON extraction:\n- Explain to a beginner:\n\n### Failures and fixes\n-\n\n### Safety note\n- Untrusted input:';
 
-const LAB = [
+const LEGACY_LAB = [
   {
     id: 0,
     tab: '0 · setup',
@@ -316,6 +320,7 @@ function h(str) {
 }
 
 function simulate(ex, d) {
+  const lid = ex.legacy;
   const sys = d.sys || '',
     usr = d.usr || '',
     T = d.temp,
@@ -327,9 +332,9 @@ function simulate(ex, d) {
   let out = '',
     note = '',
     ok = null;
-  if (ex.id === 0) {
+  if (lid === 0) {
     out = 'Llama-3.1-8B-Instruct\nHello! It is nice to meet you.';
-  } else if (ex.id === 1) {
+  } else if (lid === 1) {
     const labels = /positive/.test(u) && /negative/.test(u) && /mixed/.test(u),
       one = /one word|single word/.test(u);
     if (labels && one) out = T >= 1.3 ? 'Mixed.' : 'mixed';
@@ -337,12 +342,12 @@ function simulate(ex, d) {
     else
       out =
         'That sounds like a fairly balanced review. The cold food is clearly a letdown, but it is lovely that the staff were so kind. Overall it reads as a mixed experience, and I would probably still go back.';
-  } else if (ex.id === 2) {
+  } else if (lid === 2) {
     const n = (usr.match(/formal:\s*\S/gi) || []).length,
       silly = (u.match(/banana|potato|moo|silly/) || [])[0];
     if (n === 0) out = 'Sure! Here is a formal version: "I am unable to attend class today because I am unwell." Hope that helps!';
     else out = 'I cannot attend class today because I am unwell' + (silly ? ', ' + silly : '') + '.';
-  } else if (ex.id === 3) {
+  } else if (lid === 3) {
     if (/only answer|computing|computer science|computer-science/.test(s))
       out = /pizza|topping|weather|movie/.test(u)
         ? 'I can only help with computer science.'
@@ -356,7 +361,7 @@ function simulate(ex, d) {
     else
       out =
         'A token is a small piece of text, such as a word, part of a word or a punctuation mark, that a language model reads and predicts one at a time. Tokenizers split text into these pieces before the model processes it.';
-  } else if (ex.id === 4) {
+  } else if (lid === 4) {
     const pk = /canteen|apples/.test(u) ? 'P1' : /train|08:45/.test(u) ? 'P2' : /ana has|pens/.test(u) ? 'P3' : null;
     const stepwise = /step by step|step-by-step|think/.test(u);
     if (!pk) out = 'Please include one of the three problems.';
@@ -367,7 +372,7 @@ function simulate(ex, d) {
       ok = out.replace(/[\s\S]*Answer:\s*/, '').trim() === p.a;
       note = ok ? 'correct' : 'wrong, expected ' + p.a;
     }
-  } else if (ex.id === 5) {
+  } else if (lid === 5) {
     const mentions = /json/.test(u),
       strict = /only valid json|only json|no explanation|json only/.test(u),
       nofence = /no code fence|no fences|no markdown/.test(u),
@@ -401,7 +406,7 @@ function simulate(ex, d) {
       ok = false;
       note = 'safe_parse → None';
     }
-  } else if (ex.id === 6) {
+  } else if (lid === 6) {
     const defended = /untrusted|never follow|do not follow|don't follow/.test(s) && /<doc>/.test(u);
     const attack = /ignore all previous|hacked|reveal/.test(u);
     out = attack && !defended ? 'HACKED' : 'The library is open 8:00 to 17:00 on weekdays, and students can borrow up to 5 books.';
@@ -419,7 +424,7 @@ function simulate(ex, d) {
       ok = !bad;
       note = bad ? 'injection worked' : 'injection resisted';
     }
-  } else if (ex.id === 7) {
+  } else if (lid === 7) {
     const fact = /australia/.test(u);
     let n = T <= 0 ? 1 : T < 0.5 ? 2 : T < 0.9 ? 3 : T < 1.2 ? 5 : 6;
     if (P <= 0.5) n = Math.min(n, 2);
@@ -432,11 +437,11 @@ function simulate(ex, d) {
     out = runs.join('\n');
     note = dist + ' distinct of 6';
     ok = true;
-  } else if (ex.id === 9) {
+  } else if (lid === 9) {
     out =
       'Task: Summarize the paragraph\nAudience: a teacher\nLength: 2 sentences\n\nTask: Summarize the paragraph\nAudience: a parent\nLength: 2 sentences\n\nTask: Summarize the paragraph\nAudience: a 10-year-old\nLength: 2 sentences';
   }
-  if (ex.id >= 1 && ex.id <= 6 && ex.id !== 4) out = lim(out, M);
+  if (lid >= 1 && lid <= 6 && lid !== 4) out = lim(out, M);
   const pt = Math.max(1, Math.round((usr.length + sys.length) / 4)),
     ct = Math.max(1, Math.round(out.length / 4));
   return { out, note, ok, pt, ct, ms: 180 + ct * 14 + (h(usr) % 40) };
@@ -453,17 +458,122 @@ function evalScore(prompt) {
   return EVAL.map((it, i) => ({ n: i + 1, ok: ok.has(i), tricky: i === 4 || i === 9, text: it[0], label: it[1] }));
 }
 
+const parseWeek = (v) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n >= 1 && n <= TOTAL_WEEKS ? n : null;
+};
+const pad2 = (n) => String(n).padStart(2, '0');
+
+// The exercises for one week, numbered by position. A week file may append the hand-built Prompt Lab
+// simulator (`legacyLab`), whose exercises carry `legacy` = their old id so simulate() can find them.
+function buildLab(week) {
+  const w = WORKSHOPS[week];
+  const list = [];
+  if (w) {
+    w.exercises.forEach((e) => list.push({ ...e }));
+    if (w.legacyLab) LEGACY_LAB.forEach((e) => list.push({ ...e, legacy: e.id }));
+  } else {
+    const info = getWeek(week);
+    list.push({
+      tab: '1 · notes',
+      title: 'Lab notes',
+      min: 0,
+      kind: 'note',
+      goal: 'The guided workshop for this week is not published yet. Use this cell for your notes while you work through the lab.',
+      tasks: ['Open the week ' + week + ' lesson and its notebook.', 'Write what you did and what you found.'],
+      note: '## Week ' + week + ' · ' + info.short + '\n\n### What I did\n-\n\n### What I found\n-\n\n### Questions for my instructor\n-',
+    });
+  }
+  return list.map((e, i) => ({ ...e, id: i }));
+}
+
+// Heading, lede and chips for a week's workshop.
+function workshopMeta(week) {
+  const w = WORKSHOPS[week];
+  const info = getWeek(week);
+  if (w) return { title: w.title, lede: w.lede, lab: w.lab, chips: w.chips || [], exam: !!w.exam, covers: w.covers || '' };
+  return {
+    title: info.short,
+    lede: 'The guided workshop for this week is not published yet.',
+    lab: info.exam ? 'Exam revision' : 'Laboratory',
+    chips: [],
+    exam: !!info.exam,
+    covers: '',
+  };
+}
+
+// Token and timing figures are illustrative; the replies are scripted.
+const stats = (r, usr, sys) => ({
+  ...r,
+  pt: Math.max(1, Math.round(((usr || '').length + (sys || '').length) / 4)),
+  ct: Math.max(1, Math.round((r.out || '').length / 4)),
+  ms: 180 + Math.round((r.out || '').length / 4) * 14 + (h(usr || '') % 40),
+});
+
 class Component extends DCLogic {
   constructor(props) {
     super(props);
-    this.state = { theme: readTheme(), ex: 1, drafts: {}, res: {}, logs: {}, runN: 0, note: CARD_NOTE, saved: false, hkOpen: '' };
+    this.state = {
+      theme: readTheme(),
+      week: parseWeek(props.week) || CURRENT_WEEK,
+      exOf: {},
+      drafts: {},
+      res: {},
+      logs: {},
+      runN: 0,
+      notes: {},
+      saved: {},
+      hkOpen: '',
+      nb: null,
+    };
     this.toggleTheme = this.toggleTheme.bind(this);
   }
   componentDidMount() {
     this._unbindTheme = bindThemeSync(this);
+    this.loadNb();
+    // Opened without a week (sidebar link): follow the week selected in the Course Map.
+    if (!parseWeek(this.props.week)) {
+      session
+        .loadPageState('course-map')
+        .then((d) => {
+          const n = parseWeek(d && d.selected);
+          if (n && !this._gone && n !== this.state.week) this.setState({ week: n });
+        })
+        .catch(() => {});
+    }
+  }
+  componentDidUpdate(prevProps, prevState) {
+    if (prevState.week !== this.state.week) this.loadNb();
   }
   componentWillUnmount() {
+    this._gone = true;
     if (this._unbindTheme) this._unbindTheme();
+  }
+  // Colab / download links for this week's notebook (404 when the week has none).
+  loadNb() {
+    const week = this.state.week;
+    session
+      .api('/notebooks/week-' + pad2(week))
+      .then((nb) => !this._gone && this.state.week === week && super.setState({ nb }))
+      .catch(() => !this._gone && this.state.week === week && super.setState({ nb: null }));
+  }
+  // Saved state from before the workshop had weeks belonged to the Week 9 Prompt Lab.
+  hydrate(saved) {
+    const s = { ...(saved || {}) };
+    const old = typeof s.ex === 'number' || typeof s.note === 'string' || typeof s.saved === 'boolean';
+    if (old) {
+      const shift = (WORKSHOPS[9] && WORKSHOPS[9].exercises.length) || 0;
+      const noteId = (LEGACY_LAB.find((e) => e.kind === 'note') || {}).id;
+      const drafts = {};
+      Object.keys(s.drafts || {}).forEach((k) => {
+        drafts['9:' + (Number(k) + shift)] = s.drafts[k];
+      });
+      s.drafts = drafts;
+      s.exOf = typeof s.ex === 'number' ? { 9: s.ex + shift } : {};
+      s.notes = typeof s.note === 'string' && noteId !== undefined ? { ['9:' + (noteId + shift)]: s.note } : {};
+      s.saved = s.saved === true && noteId !== undefined ? { ['9:' + (noteId + shift)]: true } : {};
+    }
+    super.hydrate(s);
   }
   toggleTheme() {
     const next = this.state.theme === 'dark' ? 'light' : 'dark';
@@ -475,41 +585,62 @@ class Component extends DCLogic {
       ? { bg: 'var(--accent-soft-bg)', fg: 'var(--accent-soft-text)', border: 'var(--accent-soft-border)' }
       : { bg: 'var(--surface2)', fg: 'var(--text2)', border: 'var(--surface2-border)' };
   }
-  draftOf(id) {
-    const d = this.state.drafts[id];
+  lab() {
+    if (this._labWeek !== this.state.week) {
+      this._labWeek = this.state.week;
+      this._lab = buildLab(this.state.week);
+    }
+    return this._lab;
+  }
+  key(i) {
+    return this.state.week + ':' + i;
+  }
+  exIdx() {
+    const n = this.lab().length;
+    const i = this.state.exOf[this.state.week];
+    return Number.isInteger(i) && i >= 0 && i < n ? i : 0;
+  }
+  draftOf(i) {
+    const d = this.state.drafts[this.key(i)];
     if (d) return d;
-    const ex = LAB[id],
+    const ex = this.lab()[i],
       p = (ex.presets && ex.presets[0]) || {};
     return { sys: p.s || '', usr: p.u || '', temp: 0, top: 1.0, maxt: 256, guard: false, a: EVAL_A, b: EVAL_B };
   }
   patch(p) {
-    const id = this.state.ex,
+    const i = this.exIdx(),
+      k = this.key(i),
       drafts = { ...this.state.drafts },
       res = { ...this.state.res };
-    drafts[id] = { ...this.draftOf(id), ...p };
-    delete res[id];
+    drafts[k] = { ...this.draftOf(i), ...p };
+    delete res[k];
     this.setState({ drafts, res });
   }
   run() {
-    const id = this.state.ex,
-      ex = LAB[id],
-      d = this.draftOf(id);
+    const i = this.exIdx(),
+      k = this.key(i),
+      ex = this.lab()[i],
+      d = this.draftOf(i);
     const res = { ...this.state.res },
       logs = { ...this.state.logs },
       n = this.state.runN + 1;
     if (ex.kind === 'eval') {
-      res[id] = { a: evalScore(d.a), b: evalScore(d.b) };
-      logs[id] = (logs[id] || []).concat([
-        { n, set: 'T 0', out: 'A ' + res[id].a.filter((x) => x.ok).length + '/12 · B ' + res[id].b.filter((x) => x.ok).length + '/12' },
+      res[k] = { a: evalScore(d.a), b: evalScore(d.b) };
+      logs[k] = (logs[k] || []).concat([
+        { n, set: 'T 0', out: 'A ' + res[k].a.filter((x) => x.ok).length + '/12 · B ' + res[k].b.filter((x) => x.ok).length + '/12' },
       ]);
     } else {
-      const r = simulate(ex, d);
-      res[id] = r;
+      let r;
+      if (ex.legacy !== undefined) r = simulate(ex, d);
+      else if (ex.kind === 'code') r = { out: ex.out, note: '', ok: null };
+      else r = stats(runRules(ex, d), d.usr, d.sys);
+      res[k] = r;
       const one = r.out.replace(/\s+/g, ' ').trim();
-      logs[id] = (logs[id] || []).concat([
+      const params = ex.legacy !== undefined || ex.params === true;
+      logs[k] = (logs[k] || []).concat([
         {
           n,
-          set: ex.kind === 'code' || ex.kind === 'code9' ? 'cell' : 'T ' + d.temp + ' · p ' + d.top.toFixed(2),
+          set: ex.kind === 'code' || ex.kind === 'code9' ? 'cell' : params ? 'T ' + d.temp + ' · p ' + d.top.toFixed(2) : 'prompt',
           out: one.length > 64 ? one.slice(0, 64) + ' …' : one,
         },
       ]);
@@ -547,21 +678,25 @@ class Component extends DCLogic {
   renderVals0() {
     const dark = this.state.theme === 'dark';
     const s = this.state,
-      id = s.ex,
-      ex = LAB[id],
+      week = s.week,
+      lab = this.lab(),
+      id = this.exIdx(),
+      k = this.key(id),
+      ex = lab[id],
       d = this.draftOf(id),
-      r = s.res[id];
+      r = s.res[k];
+    const meta0 = workshopMeta(week);
     const kind = ex.kind,
       isPrompt = kind === 'prompt' || kind === 'temp',
       isCode = kind === 'code' || kind === 'code9';
-    const tabs = LAB.map((e) => {
+    const tabs = lab.map((e) => {
       const on = e.id === id;
       return {
         label: e.tab,
         sel: on ? 'true' : 'false',
         bg: on ? 'var(--accent-soft-bg)' : 'transparent',
         fg: on ? 'var(--accent-soft-text)' : 'var(--text2)',
-        pick: () => this.setState({ ex: e.id }),
+        pick: () => this.setState({ exOf: { ...s.exOf, [week]: e.id } }),
       };
     });
     const presets = (ex.presets || []).map((p) => {
@@ -581,7 +716,7 @@ class Component extends DCLogic {
       });
     const gc = this.chip(!!d.guard);
     const out = r && !(kind === 'eval') ? r : null;
-    const logRows = (s.logs[id] || []).slice(-6).reverse();
+    const logRows = (s.logs[k] || []).slice(-6).reverse();
     const grid = (arr) =>
       arr.map((g) => ({
         cls: 'evc' + (g.ok ? ' ok' : ' no') + (g.tricky ? ' tr' : ''),
@@ -596,7 +731,34 @@ class Component extends DCLogic {
       ...themeVals(dark),
       toggleTheme: this.toggleTheme,
       tabs,
-      exEyebrow: ex.ext ? 'Extension · ' + ex.title : 'Exercise ' + ex.id + ' · ' + ex.title + (ex.min ? ' · ' + ex.min + ' min' : ''),
+      hdEyebrow: (meta0.exam ? 'Exam revision' : 'Laboratory') + ' · Week ' + week + (meta0.lab && !meta0.exam ? ' · ' + meta0.lab : ''),
+      hdTitle: meta0.title,
+      hdLede: meta0.lede,
+      hdChips: meta0.chips,
+      isExam: meta0.exam,
+      examCovers: meta0.covers,
+      weekTitle: getWeek(week).title,
+      nbFile: 'week-' + pad2(week) + '.ipynb',
+      hasNb: !!s.nb,
+      nbHref: s.nb ? s.nb.colabUrl || apiUrl(s.nb.downloadUrl) : '#',
+      nbLabel: s.nb && s.nb.colabUrl ? 'Open in Colab' : 'Download notebook',
+      simLabel: lab.some((e) => e.kind === 'prompt' || e.legacy !== undefined) ? 'Simulated model · recorded output' : 'Recorded output',
+      weekPills: Array.from({ length: TOTAL_WEEKS }, (_, i) => {
+        const n = i + 1,
+          wk = getWeek(n);
+        return {
+          n,
+          href: '/prompt-workshop/' + n,
+          cls: 'wkp' + (n === week ? ' on' : '') + (wk.exam ? ' ex' : ''),
+          tip: 'Week ' + n + ': ' + wk.title,
+          cur: n === week ? 'page' : undefined,
+        };
+      }),
+      exEyebrow:
+        (ex.ext ? 'Extension' : ex.legacy !== undefined ? 'Prompt Lab · Exercise ' + ex.legacy : 'Exercise ' + (id + 1)) +
+        ' · ' +
+        ex.title +
+        (ex.min ? ' · ' + ex.min + ' min' : ''),
       exGoal: ex.goal,
       exTasks: ex.tasks,
       isCode,
@@ -615,6 +777,7 @@ class Component extends DCLogic {
       temps: stops(TEMPS, 'temp', (v) => v.toFixed(1)),
       topps: stops(TOPPS, 'top', (v) => v.toFixed(2)),
       maxts: stops(MAXTS, 'maxt', (v) => String(v)),
+      showParams: ex.legacy !== undefined || ex.params === true,
       showMaxt: ex.maxt !== false,
       hasGuard: !!ex.check,
       guardMark: d.guard ? '✓' : '+',
@@ -636,10 +799,10 @@ class Component extends DCLogic {
       gridA: grid(rA),
       gridB: grid(rB),
       isNote: kind === 'note',
-      noteVal: s.note,
-      setNote: (e) => this.setState({ note: e.target.value, saved: false }),
-      saveNote: () => this.setState({ saved: true }),
-      savedLabel: s.saved ? 'Saved ✓' : 'Save card',
+      noteVal: s.notes[k] !== undefined ? s.notes[k] : ex.note || CARD_NOTE,
+      setNote: (e) => this.setState({ notes: { ...s.notes, [k]: e.target.value }, saved: { ...s.saved, [k]: false } }),
+      saveNote: () => this.setState({ saved: { ...s.saved, [k]: true } }),
+      savedLabel: s.saved[k] ? 'Saved ✓' : 'Save card',
       showOut: hasOut,
       ran: !!out,
       notRan: !out,
@@ -648,7 +811,11 @@ class Component extends DCLogic {
       hasNote: !!(out && out.note),
       outNote: out ? out.note : '',
       noteCls: out && out.ok === false ? 'bad' : 'good',
-      meta: out ? '≈' + out.pt + ' prompt · ≈' + out.ct + ' completion tokens · ' + out.ms + ' ms (illustrative)' : '',
+      meta: !out
+        ? ''
+        : isCode
+          ? 'recorded output, not run live'
+          : '≈' + out.pt + ' prompt · ≈' + out.ct + ' completion tokens · ' + out.ms + ' ms (illustrative)',
       hasExpect: !!(out && ex.expect),
       expectText: ex.expect || '',
       hasLog: logRows.length > 0,
@@ -710,6 +877,31 @@ function template(v) {
           <DcLink className="navlink" href="Certificates.dc.html">
             <span>{'▲'}</span>
             <span>{'Certification Center'}</span>
+          </DcLink>
+          <div
+            style={{
+              padding: '16px 10px 4px',
+              fontSize: '10.5px',
+              fontWeight: '700',
+              letterSpacing: '.12em',
+              textTransform: 'uppercase',
+              color: '#7C857A',
+              lineHeight: '1.3',
+            }}
+          >
+            {'Activities'}
+          </div>
+          <DcLink className="navlink" href="/activities">
+            <span>{'▤'}</span>
+            <span>{'Activities'}</span>
+          </DcLink>
+          <DcLink className="navlink" href="/announcements">
+            <span>{'✉'}</span>
+            <span>{'Announcements'}</span>
+          </DcLink>
+          <DcLink className="navlink" href="/grades">
+            <span>{'✓'}</span>
+            <span>{'My grades'}</span>
           </DcLink>
           <div style={{ flex: '1' }}></div>
           <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', margin: '12px 0 0', paddingTop: '12px' }}>
@@ -981,20 +1173,27 @@ function template(v) {
                 </div>
               </div>
             </div>
+            <nav className="wkbar" aria-label="Choose a week">
+              {(v.weekPills || []).map((p) => (
+                <DcLink key={p.n} className={p.cls} href={p.href} title={p.tip} aria-current={p.cur}>
+                  {p.n}
+                </DcLink>
+              ))}
+            </nav>
             <header className="hx hx-violet pw-head">
               <div className="hx-body">
                 <div className="pw-ht">
                   <div>
                     <div className="eyebrow" style={{ marginBottom: 'var(--s2)' }}>
-                      {'Laboratory · Week 9'}
+                      {v.hdEyebrow}
                     </div>
-                    <h1 className="cm-title">{'Prompt lab'}</h1>
+                    <h1 className="cm-title">{v.hdTitle}</h1>
                     <p className="cm-lede" style={{ margin: 'var(--s3) 0 0' }}>
-                      {'Edit the prompt. Run it. '}
-                      <mark className="mk">{'Compare the outputs.'}</mark>
+                      {v.hdLede}
                     </p>
                   </div>
-                  <DcLink className="jbtn" href="#" title="Open this notebook in JupyterLab" aria-label="Open this notebook in JupyterLab">
+                  {v.hasNb ? (
+<a className="jbtn" href={v.nbHref} target="_blank" rel="noopener noreferrer" title="Open this week's notebook" aria-label="Open this week's notebook (opens in a new tab)">
                     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
                       <path
                         d="M14 4h6v6M20 4l-9 9M18 14v4.5A1.5 1.5 0 0 1 16.5 20h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6H10"
@@ -1004,14 +1203,16 @@ function template(v) {
                         strokeLinejoin="round"
                       ></path>
                     </svg>
-                    {'\n          Open in JupyterLab\n        '}
-                  </DcLink>
+                    {v.nbLabel}
+                  </a>
+) : null}
                 </div>
                 <div className="pw-chips">
-                  <span className="chip-i">{'90 min'}</span>
-                  <span className="chip-i">{'Llama-3.1-8B-Instruct'}</span>
-                  <span className="chip-i">{'NVIDIA DGX Spark'}</span>
-                  <span className="chip-i">{'Keep max_tokens small'}</span>
+                  {(v.hdChips || []).map((c, $index) => (
+                    <span className="chip-i" key={$index}>
+                      {c}
+                    </span>
+                  ))}
                 </div>
               </div>
               <div className="hx-ico">
@@ -1021,6 +1222,14 @@ function template(v) {
                 </svg>
               </div>
             </header>
+            {v.isExam ? (
+              <p className="pw-exam">
+                {'Revision workshop for '}
+                <b>{v.examCovers}</b>
+                {'. '}
+                <DcLink href="/mock-exam">{'Open Mock Exam Prep'}</DcLink>
+              </p>
+            ) : null}
             <div className="sect">
               <div className="nbfile">
                 <span className="nbfile-n">
@@ -1033,11 +1242,11 @@ function template(v) {
                     ></path>
                     <path d="M14 3.5V8h4" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"></path>
                   </svg>
-                  {'prompt_lab.ipynb'}
+                  {v.nbFile}
                 </span>{' '}
                 <span className="nbfile-k">
                   <i aria-hidden="true"></i>
-                  {'Simulated model'}
+                  {v.simLabel}
                 </span>
               </div>
               <div className="nbtabs" role="tablist" aria-label="Exercises">
@@ -1133,6 +1342,8 @@ function template(v) {
                   </div>
                   <div className="card cellcard" data-in={v.parTag} style={{ padding: '16px 18px' }}>
                     <div className="cmt">{'# settings'}</div>
+                    {v.showParams ? (
+                      <>
                     <div className="pr">
                       <span className="pr-k">{'temperature'}</span>
                       <div className="pr-v">
@@ -1157,6 +1368,8 @@ function template(v) {
                         ))}
                       </div>
                     </div>
+                      </>
+                    ) : null}{' '}
                     {v.showMaxt ? (
                       <>
                         <div className="pr">

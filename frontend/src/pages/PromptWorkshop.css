@@ -289,3 +289,12 @@
   .hx-ico::before{content:"";position:absolute;inset:-14px;border-radius:44px;border:1.5px dashed rgba(var(--hc),.55)}
   .hx-ico svg{width:62px;height:62px;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;fill:none}
   @media (max-width:800px){.hx{grid-template-columns:minmax(0,1fr);padding:26px 22px;margin-bottom:36px}.hx-ico{display:none}}
+
+/* Week chooser and exam note (per-week workshops) */
+.wkbar{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 var(--s4)}
+.wkp{display:inline-flex;align-items:center;justify-content:center;min-width:34px;height:34px;padding:0 8px;border-radius:10px;border:1px solid var(--surface2-border);background:var(--surface2);color:var(--text2);font-size:13px;font-weight:700;text-decoration:none;line-height:1}
+.wkp:hover{border-color:var(--accent-soft-border);color:var(--text)}
+.wkp.ex{border-style:dashed}
+.wkp.on{background:var(--accent-soft-bg);border-color:var(--accent-soft-border);color:var(--accent-soft-text)}
+.pw-exam{margin:calc(-1 * var(--s3)) 0 var(--s4);color:var(--text2);font-size:14px;line-height:1.6}
+.pw-exam a{color:var(--accent-soft-text);font-weight:700}
