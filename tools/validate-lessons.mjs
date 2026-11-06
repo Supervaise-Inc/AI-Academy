@@ -153,6 +153,27 @@ function check(file) {
           if (c.maxAcc != null && r.acc > c.maxAcc) at(`check ${k + 1}: accuracy ${r.acc.toFixed(3)} > ${c.maxAcc}`);
         });
       },
+      backprop: () => {
+        const L = s.layers;
+        if (!Array.isArray(L) || L.length < 3 || L.length > 4 || L.some((n) => !(n >= 1 && n <= 4))) return at('layers must be 3–4 numbers, each 1..4');
+        if (!Array.isArray(s.weights) || s.weights.length !== L.length - 1 || s.weights.some((m, l) => m.length !== L[l + 1] || m.some((r) => r.length !== L[l]))) return at('weights must be [layer][to][from] matching layers');
+        if (!Array.isArray(s.biases) || s.biases.length !== L.length - 1 || s.biases.some((r, l) => r.length !== L[l + 1])) return at('biases must match layers');
+        if (!Array.isArray(s.inputs) || s.inputs.length !== L[0] || !Array.isArray(s.target) || s.target.length !== L[L.length - 1]) return at('inputs and target lengths must match layers');
+        const r = M.backwardNet(L, s.weights, s.biases, s.inputs, s.target, s.activation || 'sigmoid', s.outputActivation || 'sigmoid', s.loss || 'mse');
+        (s.checks || []).forEach((c, k) => {
+          const got = c.kind === 'loss' ? r.loss : c.kind === 'delta' ? r.delta[c.layer][c.unit] : c.kind === 'dW' ? r.dW[c.layer][c.unit][c.from] : null;
+          if (got == null || Math.abs(got - c.value) > (c.tol || 0.002)) at(`check ${k + 1} (${c.kind}): expected ${c.value}, computed ${got}`);
+        });
+      },
+      gradflow: () => {
+        (s.checks || []).forEach((c, k) => {
+          const n = M.gradNorms({ depth: c.depth, width: s.width || 16, act: c.activation, scale: c.scale, seed: s.seed || 5 });
+          const ratio = n[0] / n[n.length - 1];
+          if (c.maxRatio != null && ratio > c.maxRatio) at(`check ${k + 1}: ratio ${ratio.toExponential(2)} > ${c.maxRatio}`);
+          if (c.minRatio != null && ratio < c.minRatio) at(`check ${k + 1}: ratio ${ratio.toExponential(2)} < ${c.minRatio}`);
+        });
+      },
+      fold: () => { if (s.layers != null && !(s.layers >= 1 && s.layers <= 6)) at('layers must be 1..6'); },
       mlp: () => { if (!Array.isArray(s.layers) || s.layers.length < 3 || s.layers.some((n) => !(n >= 1))) at('layers must be ≥3 positive numbers'); },
       curve: () => {
         if (!(s.series || []).length || s.series.some((x) => !M.FN[x.fn])) at(`series fn must be one of ${Object.keys(M.FN).join(', ')}`);

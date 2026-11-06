@@ -80,6 +80,43 @@ function tokenize(t) {
   });
   return out;
 }
+// Real measurements from GPT-2 (small, 124 million parameters), the model used in the Week 1 lab:
+// the prompt's tokens with their token IDs, and the model's five most likely next tokens with their probabilities.
+const SAMPLES = [
+  {
+    prompt: 'The capital of France is',
+    toks: [['The', 464], [' capital', 3139], [' of', 286], [' France', 4881], [' is', 318]],
+    out: [[' the', 0.085], [' now', 0.048], [' a', 0.046], [' France', 0.032], [' Paris', 0.032]],
+    note: 'Fluent, but not the right answer: “ Paris” is only fifth. The model predicts likely words, not true ones. Week 1 · Lab Part 1.',
+  },
+  {
+    prompt: 'To make tea, first boil the',
+    toks: [['To', 2514], [' make', 787], [' tea', 8887], [',', 11], [' first', 717], [' boil', 20667], [' the', 262]],
+    out: [[' water', 0.323], [' milk', 0.104], [' tea', 0.066], [' beans', 0.033], [' sugar', 0.024]],
+    note: 'Here the context is clear, so the model is much surer: “ water” gets 32%. Week 1 · Lab Part 1.',
+  },
+  {
+    prompt: 'Once upon a time there was a',
+    toks: [['Once', 7454], [' upon', 2402], [' a', 257], [' time', 640], [' there', 612], [' was', 373], [' a', 257]],
+    out: [[' great', 0.04], [' man', 0.039], [' war', 0.012], [' woman', 0.011], [' certain', 0.011]],
+    note: 'Many continuations are fine, so no word gets more than 4%. Sampling picks among them. Week 1 · temperature and top-k.',
+  },
+  {
+    prompt: '2 + 2 =',
+    toks: [['2', 17], [' +', 1343], [' 2', 362], [' =', 796]],
+    out: [[' 3', 0.102], [' 1', 0.092], [' 2', 0.084], [' 0', 0.075], [' 4', 0.055]],
+    note: 'A small language model is not a calculator: “ 4” is only fifth. Week 1 · Lab Part 1.',
+  },
+];
+const TYPE_MS = 55;
+const HOLD_MS = 5200;
+// Seconds (after the prompt has been typed) at which each stage of the sample animation starts.
+function animTimes(x) {
+  const tok = 0.28;
+  const think = x.toks.length * tok + 0.15;
+  const out = think + 0.7;
+  return { tok, think, out, end: out + x.out.length * 0.2 + 0.7 };
+}
 function visibleFraction(r, vh) {
   if (!r || r.height <= 0) return 0;
   const seen = Math.min(r.bottom, vh) - Math.max(r.top, 0);
@@ -108,6 +145,9 @@ class Component extends DCLogic {
       panel: null,
       text: reduce ? DEMO : '',
       step: -1,
+      sample: 0,
+      typed: reduce ? 999 : 0,
+      run: 0,
       rv: reduce ? allTrue(RV_KEYS) : {},
       lit: reduce ? allTrue(NODE_KEYS) : {},
       guideH: 0,
@@ -125,6 +165,7 @@ class Component extends DCLogic {
     this._typed = false;
     this._raf = 0;
     this.onText = (e) => this.setState({ text: e.target.value });
+    this.pickSample = (i) => (this._typed ? this._play(i) : this.setState({ sample: i, typed: 999 }));
     this.onFocus = () => {
       const t = this.state.text;
       if (t !== DEMO && t.length < DEMO.length) this.setState({ text: DEMO });
@@ -162,6 +203,8 @@ class Component extends DCLogic {
   componentWillUnmount() {
     this._timers.forEach((id) => clearTimeout(id));
     if (this._stepTimer) clearInterval(this._stepTimer);
+    clearInterval(this._typeTimer);
+    clearTimeout(this._nextTimer);
     try {
       if (this._raf) cancelAnimationFrame(this._raf);
     } catch (e) {}
@@ -238,25 +281,30 @@ class Component extends DCLogic {
       return false;
     }
   }
-  // Auto-type the demo sentence the first time the tokeniser is seen; cycle the step highlight.
+  // Plays the sample: the prompt types in, its tokens pop in one by one, the model "thinks", then the output bars grow.
+  // After a pause it moves on to the next sample.
+  _play(i) {
+    clearInterval(this._typeTimer);
+    clearTimeout(this._nextTimer);
+    const x = SAMPLES[i];
+    this.setState({ sample: i, typed: 0, run: this.state.run + 1 });
+    let n = 0;
+    this._typeTimer = setInterval(() => {
+      n += 1;
+      this.setState({ typed: n });
+      if (n >= x.prompt.length) clearInterval(this._typeTimer);
+    }, TYPE_MS);
+    const total = x.prompt.length * TYPE_MS + animTimes(x).end * 1000 + HOLD_MS;
+    this._nextTimer = setTimeout(() => this._play((i + 1) % SAMPLES.length), total);
+  }
   _startDemo() {
     if (this._typed) return;
     this._typed = true;
-    if (!this._stepTimer) {
-      this._cycleSteps();
-      this._stepTimer = setInterval(() => this._cycleSteps(), STEP_MS);
-    }
     if (this._reduce) {
-      this.setState({ text: DEMO });
+      this.setState({ typed: 999 });
       return;
     }
-    let n = 0;
-    const tick = () => {
-      if (n > DEMO.length || this._inputFocused()) return;
-      this.setState({ text: DEMO.slice(0, n++) });
-      this._timers.push(setTimeout(tick, 55 + Math.random() * 60));
-    };
-    tick();
+    this._play(this.state.sample);
   }
   renderVals() {
     const text = this.state.text || '';
@@ -290,6 +338,31 @@ class Component extends DCLogic {
       chars: String(text.length),
       tokCount: String(tk.length),
       ratio: tk.length ? (text.length / tk.length).toFixed(1) : '0',
+      samples: SAMPLES.map((x, i) => ({ prompt: x.prompt, cls: i === this.state.sample ? 'chip on' : 'chip', pick: () => this.pickSample(i) })),
+      sample: (() => {
+        const x = SAMPLES[this.state.sample];
+        const chars = x.prompt.length;
+        const anim = !this._reduce && this.state.typed < 999;
+        const t0 = anim ? chars * (TYPE_MS / 1000) : 0;
+        const tm = animTimes(x);
+        const shown = Math.min(this.state.typed, chars);
+        return {
+          prompt: x.prompt.slice(0, shown),
+          typing: shown < chars,
+          note: x.note,
+          chars: String(chars),
+          count: String(x.toks.length),
+          ratio: (chars / x.toks.length).toFixed(1),
+          run: this.state.run,
+          animCls: anim || (!this._reduce && this.state.run > 0) ? 'anim' : '',
+          thinkStyle: '--td:' + (t0 + tm.think).toFixed(2) + 's',
+          full: x.prompt,
+          next: x.out[0][0],
+          nextStyle: '--td:' + (t0 + tm.out + 0.5).toFixed(2) + 's',
+          toks: x.toks.map(([t, id], k) => ({ text: t.replace(/ /g, '·'), idStr: String(id), style: 'background:' + PALETTE[hashStr(t.trim().toLowerCase()) % PALETTE.length] + ';--td:' + (t0 + k * tm.tok).toFixed(2) + 's' })),
+          out: x.out.map(([w, pr], k) => ({ word: w.replace(/^ /, '·'), pct: (pr * 100).toFixed(pr < 0.1 ? 1 : 0) + '%', style: 'width:' + Math.max(3, Math.round(pr * 100 * 2.6)) + '%;--td:' + (t0 + tm.out + k * 0.2).toFixed(2) + 's', cls: k === 0 ? 'mbar top' : 'mbar' })),
+        };
+      })(),
       steps: STEPS.map((s, i) => ({ title: s.title, body: s.body, cls: i === this.state.step ? 'act' : '' })),
       words: WORDS.map((w, i) => ({ text: w[0], after: w[1], cls: w[2] ? 'w hl' : 'w', style: '--i:' + i })),
       on: on,
@@ -803,26 +876,30 @@ function template(v) {
               <div className={`s-head rv ${v.on?.tryHead}`} data-rv="tryHead">
                 <p className="eyebrow">{'01 · Try it now'}</p>
                 <h2>{'See text the way AI does'}</h2>
-                <p className="lead">{'Type a sentence. Watch it become tokens and numbers.'}</p>
+                <p className="lead">{'Pick a prompt. See the tokens GPT-2 reads and what it predicts next.'}</p>
               </div>
               <div className="lab" data-lab="1">
-                <div className={`lab-panel rv ${v.on?.tryP1}`} data-rv="tryP1" style={{ '--d': '.12s' }}>
-                  <h3>{'Tokeniser'}</h3>
-                  <label className="fl" htmlFor="lf-t">
-                    {'Your sentence'}
-                  </label>{' '}
-                  <input
-                    id="lf-t"
-                    className="tx"
-                    type="text"
-                    value={v.text}
-                    onInput={v.onText}
-                    onChange={v.onText}
-                    onFocus={v.onFocus}
-                    autoComplete="off"
-                  />
-                  <div className="toks" aria-live="polite">
-                    {(v.tokens || []).map((tk, $index) => (
+                <div className={`lab-panel rv ${v.on?.tryP1} ${v.sample?.animCls}`} data-rv="tryP1" style={{ '--d': '.12s' }}>
+                  <h3>{'AI model'}</h3>
+                  <p className="mname">
+                    <b>{'GPT-2'}</b>
+                    {' · a language model with 124 million parameters'}
+                  </p>
+                  <span className="fl">{'Input: pick a prompt'}</span>
+                  <div className="chips">
+                    {(v.samples || []).map((c, $index) => (
+                      <button type="button" key={$index} className={c?.cls} onClick={c?.pick}>
+                        {c?.prompt}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="tx tx-ro" aria-label={v.sample?.full}>
+                    {v.sample?.prompt}
+                    <span className={v.sample?.typing ? 'caret' : 'caret idle'}></span>
+                  </div>
+                  <span className="fl">{'The model reads it as tokens, each with an ID number'}</span>
+                  <div className="toks" key={'t' + v.sample?.run}>
+                    {(v.sample?.toks || []).map((tk, $index) => (
                       <React.Fragment key={$index}>
                         <span className="tok" style={css(`${tk?.style}`)}>
                           {tk?.text}
@@ -833,32 +910,40 @@ function template(v) {
                   </div>
                   <div className="stats">
                     <div className="stat">
-                      <b>{v.chars}</b>
+                      <b>{v.sample?.chars}</b>
                       <span>{'characters'}</span>
                     </div>
                     <div className="stat">
-                      <b>{v.tokCount}</b>
+                      <b>{v.sample?.count}</b>
                       <span>{'tokens'}</span>
                     </div>
                     <div className="stat">
-                      <b>{v.ratio}</b>
+                      <b>{v.sample?.ratio}</b>
                       <span>{'chars per token'}</span>
                     </div>
                   </div>
                 </div>
-                <div className={`lab-panel rv ${v.on?.tryP2}`} data-rv="tryP2" style={{ '--d': '.24s' }}>
-                  <h3>{'How every model reads'}</h3>
-                  <ol className="steps">
-                    {(v.steps || []).map((st, $index) => (
-                      <React.Fragment key={$index}>
-                        <li className={st?.cls}>
-                          <b>{st?.title}</b>
-                          <span>{st?.body}</span>
-                        </li>
-                      </React.Fragment>
+                <div className={`lab-panel rv ${v.on?.tryP2} ${v.sample?.animCls}`} data-rv="tryP2" style={{ '--d': '.24s' }}>
+                  <h3>{'Output'}</h3>
+                  <div className="mout" key={'o' + v.sample?.run} aria-live="polite">
+                    <p className="mq">
+                      {'GPT-2’s five most likely next tokens after '}
+                      <b>{'“' + (v.sample?.prompt || '') + '”'}</b>
+                    </p>
+                    {(v.sample?.out || []).map((pr, $index) => (
+                      <div className={pr?.cls} key={$index}>
+                        <span className="mw">{pr?.word}</span>
+                        <span className="mt"><i style={css(`${pr?.style}`)}></i></span>
+                        <span className="mp">{pr?.pct}</span>
+                      </div>
                     ))}
-                  </ol>
-                  <p className="hint">{'Simplified for illustration. Taught in Week 1.'}</p>
+                  </div>
+                  <p className="cont" key={'c' + v.sample?.run}>
+                    <span className="cp">{v.sample?.full}</span>
+                    <span className="cn" style={css(`${v.sample?.nextStyle}`)}>{v.sample?.next}</span>
+                  </p>
+                  <p className="mnote">{v.sample?.note}</p>
+                  <p className="hint">{'Real output of GPT-2 small, measured in our Week 1 lab. “·” marks a space; the model scores every token in its 50,257-token vocabulary.'}</p>
                 </div>
               </div>
             </div>

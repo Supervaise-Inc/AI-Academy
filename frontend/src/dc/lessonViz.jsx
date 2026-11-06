@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -1161,4 +1161,142 @@ function Mlp({ spec, fig }) {
   );
 }
 
-export const VIZ = { network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- backprop (forward pass, backward pass, chain rule on a small network)
+function Backprop({ spec, fig }) {
+  const L = spec.layers;
+  const init = () => [spec.weights.map((m) => m.map((r) => r.slice())), spec.biases.map((r) => r.slice())];
+  const [[W, B], setWB] = useState(init);
+  const [x] = useState(spec.inputs.slice());
+  const [mode, setMode] = useState('forward');
+  const [sel, setSel] = useState([L.length - 1, 0]);
+  const [lr, setLr] = useState(spec.lr ?? 0.5);
+  const [hist, setHist] = useState([]);
+  const act = spec.activation || 'sigmoid', out = spec.outputActivation || 'sigmoid', loss = spec.loss || 'mse';
+  const r = useMemo(() => backwardNet(L, W, B, x, spec.target, act, out, loss), [L, W, B, x, spec, act, out, loss]);
+  const fmt = (n) => (Math.abs(n) < 5e-5 ? '0' : Math.abs(n) < 0.01 ? n.toExponential(1) : Number(n.toFixed(3)).toString());
+  const colW = 640 / L.length;
+  const pos = (l, j) => [colW * l + colW / 2, 30 + ((j + 0.5) * 230) / L[l]];
+  const [sl, sj] = sel;
+  const bwd = mode === 'backward';
+  const maxD = Math.max(1e-9, ...r.delta.slice(1).flat().map(Math.abs));
+  const step = () => { setHist((h) => [...h, r.loss]); setWB(([w, b]) => [w.map((m, l) => m.map((row, j) => row.map((q, i) => q - lr * r.dW[l][j][i]))), b.map((row, l) => row.map((q, j) => q - lr * r.dB[l][j]))]); };
+  const reset = () => { setWB(init()); setHist([]); };
+  const hl = sl > 0 ? (() => {
+    const l = sl, j = sj;
+    if (!bwd) return (<><p className="vz-calc">z = {W[l - 1][j].map((w, i) => `${fmt(w)}×${fmt(r.a[l - 1][i])}`).join(' + ')} + {fmt(B[l - 1][j])} = {fmt(r.z[l][j])}</p><p className="vz-calc">a = {l === L.length - 1 ? out : act}({fmt(r.z[l][j])}) = <strong>{fmt(r.a[l][j])}</strong></p></>);
+    if (l === L.length - 1) return (<><p className="vz-calc">δ = dL/dz = (a − y) × φ′(z)</p><p className="vz-calc">δ = ({fmt(r.a[l][j])} − {fmt(spec.target[j])}) × {fmt(DACT[out](r.z[l][j], r.a[l][j]))} = <strong>{fmt(r.delta[l][j])}</strong></p></>);
+    const terms = r.delta[l + 1].map((d, k) => `${fmt(W[l][k][j])}×${fmt(d)}`).join(' + ');
+    return (<><p className="vz-calc">δ = (Σ w × δ_next) × φ′(z)</p><p className="vz-calc">δ = ({terms}) × {fmt(DACT[act](r.z[l][j], r.a[l][j]))} = <strong>{fmt(r.delta[l][j])}</strong></p></>);
+  })() : <p className="wg-p">An input unit has no δ: its value is just the number you feed in ({fmt(x[sj])}).</p>;
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-tabs" role="tablist">{['forward', 'backward'].map((k) => <button key={k} type="button" role="tab" aria-selected={mode === k} className={'wg-tab' + (mode === k ? ' on' : '')} onClick={() => setMode(k)}>{k === 'forward' ? 'Forward pass →' : '← Backward pass'}</button>)}</div>
+      <svg viewBox="0 0 640 290" className="vz-netsvg" role="img" aria-label={`${mode} pass through a network with layers ${L.join(', ')}; loss ${fmt(r.loss)}`}>
+        <defs><marker id="bp-ar" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L8 4L0 8z" fill="context-stroke" /></marker></defs>
+        {W.map((m, l) => m.map((row, j) => row.map((w, i) => {
+          const [x1, y1] = pos(l, i), [x2, y2] = pos(l + 1, j);
+          const g = r.dW[l][j][i];
+          const hot = sl === l + 1 && sj === j;
+          const wid = bwd ? 0.8 + Math.min(6, (Math.abs(g) / Math.max(1e-9, ...r.dW.flat(2).map(Math.abs))) * 6) : Math.min(7, 0.8 + Math.abs(w) * 2);
+          const col = bwd ? 'var(--amber)' : w >= 0 ? 'var(--accent)' : 'var(--cyan)';
+          return <line key={`${l}-${j}-${i}`} x1={bwd ? x2 : x1} y1={bwd ? y2 : y1} x2={bwd ? x1 : x2} y2={bwd ? y1 : y2} stroke={col} strokeWidth={wid} opacity={hot ? 1 : 0.5} />;
+        })))}
+        {L.map((n, l) => Array.from({ length: n }, (_, j) => {
+          const [cx, cy] = pos(l, j);
+          const val = bwd ? (l ? r.delta[l][j] : null) : r.a[l][j];
+          const on = sl === l && sj === j;
+          const inten = bwd ? (l ? Math.abs(val) / maxD : 0) : Math.min(1, Math.abs(val));
+          return (
+            <g key={`${l}-${j}`} onClick={() => setSel([l, j])} style={{ cursor: 'pointer' }} role="button" tabIndex={0} aria-label={`Unit ${j + 1} of layer ${l + 1}`} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSel([l, j]); }}>
+              <circle cx={cx} cy={cy} r="25" fill={`color-mix(in srgb, ${bwd ? 'var(--amber)' : 'var(--accent)'} ${Math.round(inten * 60)}%, var(--card-bg))`} stroke={on ? 'var(--text)' : 'var(--surface2-border)'} strokeWidth={on ? 3 : 1.5} />
+              <text x={cx} y={cy + 4} textAnchor="middle" className="vz-lab" style={{ fontSize: 12 }}>{val == null ? fmt(x[j]) : fmt(val)}</text>
+              {l === 0 && spec.inputLabels ? <text x={cx - 38} y={cy + 4} textAnchor="end" className="vz-tick">{spec.inputLabels[j]}</text> : null}
+            </g>
+          );
+        }))}
+        {L.map((n, l) => <text key={l} x={colW * l + colW / 2} y="284" textAnchor="middle" className="vz-tick">{l === 0 ? 'input' : l === L.length - 1 ? 'output' : `hidden ${l}`}</text>)}
+        <text x="636" y="14" textAnchor="end" className="vz-tick">{bwd ? 'circle = δ = dL/dz, line thickness = |dL/dw|' : 'circle = a, line = weight'}</text>
+      </svg>
+      <div className="vz-two">
+        <div>
+          <p className="wg-p" style={{ margin: '0 0 6px' }}><strong>Prediction</strong> {fmt(r.a[L.length - 1][0])} · <strong>target</strong> {fmt(spec.target[0])} · <strong>loss</strong> {fmt(r.loss)}</p>
+          <p className="wg-p" style={{ margin: '0 0 6px' }}>Loss: {loss === 'bce' ? 'cross-entropy' : '½ (a − y)²'} · activation {act}</p>
+          {hist.length ? <p className="wg-p">Loss after each step: {[...hist.slice(1), r.loss].map((h) => fmt(h)).join(' → ')}</p> : null}
+          <Slider label="Learning rate η" min={0.1} max={3} step={0.1} value={lr} onChange={setLr} show={(q) => q.toFixed(1)} />
+          <div className="wg-row"><button type="button" className="wg-btn" onClick={step}>Update: w ← w − η·dL/dw</button><button type="button" className="wg-btn ghost" onClick={reset}>Reset</button></div>
+        </div>
+        <div aria-live="polite">
+          <p className="wg-p" style={{ margin: '0 0 6px' }}><strong>{sl === 0 ? 'Input' : `Unit ${sj + 1} of ${sl === L.length - 1 ? 'the output layer' : `hidden layer ${sl}`}`}</strong></p>
+          {hl}
+          {sl > 0 ? <p className="vz-calc">{W[sl - 1][sj].map((_, i) => `dL/dw${i + 1} = δ × a_in${i + 1} = ${fmt(r.delta[sl][sj])}×${fmt(r.a[sl - 1][i])} = ${fmt(r.dW[sl - 1][sj][i])}`).join('\n')}</p> : null}
+        </div>
+      </div>
+      <p className="wg-note">Switch to the backward pass and watch the blame travel from the loss back toward the inputs. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- gradflow (vanishing and exploding gradients by layer)
+function GradFlow({ spec, fig }) {
+  const [depth, setDepth] = useState(spec.depth ?? 10);
+  const [act, setAct] = useState(spec.activation || 'sigmoid');
+  const [scale, setScale] = useState(spec.scale ?? 1);
+  const norms = useMemo(() => gradNorms({ depth, width: spec.width || 16, act, scale, seed: spec.seed || 5 }), [depth, act, scale, spec]);
+  const lo = -8, hi = 4;
+  const lg = norms.map((n) => Math.max(lo, Math.min(hi, Math.log10(Math.max(n, 1e-30)))));
+  const ratio = norms[0] / norms[norms.length - 1];
+  const top = Math.max(...norms), bottom = Math.min(...norms);
+  const state = ratio < 0.01 ? 'Vanishing: layers near the input get almost no signal, so they barely learn.' : ratio > 100 ? 'Exploding: layers near the input get huge gradients, so the weights can jump wildly.' : top > 20 ? 'Exploding: the gradients are huge in every layer, so each update is a giant jump.' : top < 0.02 ? 'Vanishing: the gradients are tiny in every layer, so learning crawls.' : bottom < 1e-3 ? 'Vanishing in some layers: parts of the network get almost no signal.' : 'Healthy: the gradient keeps a similar, moderate size in every layer.';
+  const bw = 640 / norms.length;
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-row" style={{ marginBottom: 8 }}>
+        {['sigmoid', 'tanh', 'relu'].map((k) => <button key={k} type="button" className={'wg-chip' + (act === k ? ' on' : '')} aria-pressed={act === k} onClick={() => setAct(k)}>{k}</button>)}
+        {(spec.presets || [{ name: 'small init (0.7)', scale: 0.7 }, { name: 'Xavier (1.0)', scale: 1 }, { name: 'He (1.41)', scale: 1.41 }, { name: 'too large (2.5)', scale: 2.5 }]).map((p) => <button key={p.name} type="button" className={'wg-chip' + (p.scale === scale ? ' on' : '')} onClick={() => setScale(p.scale)}>{p.name}</button>)}
+      </div>
+      <Slider label="Depth (number of layers)" min={2} max={30} step={1} value={depth} onChange={setDepth} />
+      <Slider label="Weight scale" min={0.25} max={3} step={0.05} value={scale} onChange={setScale} show={(q) => q.toFixed(2)} />
+      <svg viewBox="0 0 640 220" className="vz-plot" role="img" aria-label={`Gradient size per layer for a ${depth}-layer ${act} network. Layer 1 over last layer ratio ${ratio.toExponential(1)}.`}>
+        {[-6, -4, -2, 0, 2, 4].map((e) => <g key={e}><line x1="40" x2="636" y1={190 - ((e - lo) / (hi - lo)) * 175} y2={190 - ((e - lo) / (hi - lo)) * 175} className="vz-grid" /><text x="36" y={194 - ((e - lo) / (hi - lo)) * 175} textAnchor="end" className="vz-tick">1e{e}</text></g>)}
+        {lg.map((g, i) => <rect key={i} x={40 + (i * 596) / norms.length + 1} width={Math.max(2, 596 / norms.length - 2)} y={190 - ((g - lo) / (hi - lo)) * 175} height={Math.max(1, ((g - lo) / (hi - lo)) * 175)} fill={g < -3 ? 'var(--cyan)' : g > 1.5 ? 'var(--amber)' : 'var(--accent)'} rx="2"><title>{`Layer ${i + 1}: ${norms[i].toExponential(2)}`}</title></rect>)}
+        <text x="40" y="212" className="vz-tick">layer 1 (next to the input)</text>
+        <text x="636" y="212" textAnchor="end" className="vz-tick">last layer (next to the loss)</text>
+      </svg>
+      <p className="wg-p" aria-live="polite"><strong>Layer 1 gradient ÷ last-layer gradient = {ratio >= 1e4 || ratio < 1e-3 ? ratio.toExponential(1) : ratio.toFixed(3)}.</strong> {state}</p>
+      <p className="wg-note">Each bar is the size (Frobenius norm) of dL/dW for one layer, on a log scale, in one random {spec.width || 16}-unit-wide network with zero biases. The weights are drawn with standard deviation scale/√(inputs). {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- fold (why depth helps: pieces double with every layer)
+function Fold({ spec, fig }) {
+  const [k, setK] = useState(spec.layers ?? 2);
+  const tent = (x) => 2 * Math.min(x, 1 - x);
+  const f = (x) => { let y = x; for (let i = 0; i < k; i++) y = tent(y); return y; };
+  const N = 600;
+  const pts = Array.from({ length: N + 1 }, (_, i) => { const x = i / N; return `${i ? 'L' : 'M'}${(20 + x * 600).toFixed(1)} ${(130 - f(x) * 110).toFixed(1)}`; }).join(' ');
+  const pieces = 2 ** k;
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Number of stacked layers" min={1} max={6} step={1} value={k} onChange={setK} />
+      <svg viewBox="0 0 640 150" className="vz-plot" role="img" aria-label={`A zig-zag function with ${pieces} straight pieces made by ${k} stacked layers`}>
+        <line x1="20" x2="620" y1="130" y2="130" className="vz-grid" />
+        <path d={pts} fill="none" stroke="var(--accent)" strokeWidth="2.4" />
+      </svg>
+      <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Straight pieces</span><span className="vz-big">{pieces}</span><span className="wg-note">2 to the power {k}</span></div>
+        <div className="out"><span className="wg-k">ReLU units, deep and narrow</span><span className="vz-big">{2 * k}</span><span className="wg-note">2 per layer</span></div>
+        <div><span className="wg-k">ReLU units, one wide layer</span><span className="vz-big">≥ {pieces - 1}</span><span className="wg-note">m units give at most m + 1 pieces</span></div>
+      </div>
+      <p className="wg-note">Each layer applies the same “tent” (two ReLU units) to the output of the layer before, which folds the line in half again. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+export const VIZ = { backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

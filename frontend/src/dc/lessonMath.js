@@ -331,3 +331,55 @@ export function trainNet({ dataset = 'xor', hidden = 4, lr = 0.5, epochs = 1000,
   for (let e = 0; e < epochs; e++) trainEpoch(net, X, Y, lr);
   return netLossAcc(net, X, Y);
 }
+
+// ---- Week 3: backpropagation and gradient flow
+// derivative of each activation written in terms of z and a = f(z)
+export const DACT = { relu: (z) => (z > 0 ? 1 : 0), tanh: (z, a) => 1 - a * a, sigmoid: (z, a) => a * (1 - a), linear: () => 1 };
+
+// Forward and backward pass. Loss is 'mse' (L = 1/2 * sum (a - y)^2) or 'bce' (needs a sigmoid output; L = -sum [y ln a + (1-y) ln(1-a)]).
+// delta[l][j] = dL/dz of unit j in layer l (layers 1..L). dW[l][j][i] = delta[l+1][j] * a[l][i]; dB[l][j] = delta[l+1][j].
+export function backwardNet(layers, W, B, inputs, target, act = 'sigmoid', outAct = 'sigmoid', loss = 'mse') {
+  const { a, z } = forwardNet(layers, W, B, inputs, act, outAct);
+  const L = layers.length - 1;
+  const out = a[L];
+  let lossV = 0;
+  if (loss === 'bce') lossV = out.reduce((s, p, j) => s - (target[j] * Math.log(p) + (1 - target[j]) * Math.log(1 - p)), 0);
+  else lossV = out.reduce((s, p, j) => s + 0.5 * (p - target[j]) ** 2, 0);
+  const delta = Array(L + 1).fill(null);
+  delta[L] = out.map((p, j) => (loss === 'bce' && outAct === 'sigmoid' ? p - target[j] : (p - target[j]) * DACT[outAct](z[L][j], p)));
+  for (let l = L - 1; l >= 1; l--) delta[l] = Array.from({ length: layers[l] }, (_, i) => {
+    let s = 0;
+    for (let j = 0; j < layers[l + 1]; j++) s += W[l][j][i] * delta[l + 1][j];
+    return s * DACT[act](z[l][i], a[l][i]);
+  });
+  const dW = W.map((m, l) => m.map((row, j) => row.map((_, i) => delta[l + 1][j] * a[l][i])));
+  const dB = B.map((r, l) => r.map((_, j) => delta[l + 1][j]));
+  return { a, z, loss: lossV, delta, dW, dB };
+}
+
+// Gradient size per layer of a random deep network (width units per layer, `depth` weight layers, biases 0).
+// Weights ~ N(0, (scale^2 / width)); the loss is the sum of the outputs, so the gradient entering the last layer is 1.
+// Returns the Frobenius norm of dL/dW for each weight layer, from layer 1 (nearest the input) to layer `depth`.
+export function gradNorms({ depth = 10, width = 16, act = 'sigmoid', scale = 1, seed = 5 }) {
+  const r = mulberry32(seed);
+  const gauss = () => { let u = 0, v = 0; while (u === 0) u = r(); while (v === 0) v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+  const layers = [width, ...Array(depth - 1).fill(width), 1];
+  const W = layers.slice(1).map((n, l) => Array.from({ length: n }, () => Array.from({ length: layers[l] }, () => (gauss() * scale) / Math.sqrt(layers[l]))));
+  const B = layers.slice(1).map((n) => Array(n).fill(0));
+  const x = Array.from({ length: width }, () => gauss());
+  const { a, z } = forwardNet(layers, W, B, x, act, 'linear');
+  const L = layers.length - 1;
+  let delta = [1];
+  const norms = Array(L);
+  for (let l = L; l >= 1; l--) {
+    let s = 0;
+    for (let j = 0; j < layers[l]; j++) for (let i = 0; i < layers[l - 1]; i++) s += (delta[j] * a[l - 1][i]) ** 2;
+    norms[l - 1] = Math.sqrt(s);
+    if (l > 1) delta = Array.from({ length: layers[l - 1] }, (_, i) => {
+      let t = 0;
+      for (let j = 0; j < layers[l]; j++) t += W[l - 1][j][i] * delta[j];
+      return t * DACT[act](z[l - 1][i], a[l - 1][i]);
+    });
+  }
+  return norms;
+}

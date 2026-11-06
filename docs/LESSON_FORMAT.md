@@ -203,6 +203,15 @@ Use it whenever a lesson introduces a formula: every symbol is a `{t, id}` term 
 ### `mlp` (count the parameters of a stack of layers)
 `{ "type": "mlp", "title": "…", "intro": "…", "layers": [784,128,10], "note": "…" }`. Sliders change the hidden widths; a table shows weights (in × out), biases and parameters per layer and the total. Measured: [784,128,10] has 101,770 parameters.
 
+### `backprop` (forward pass, backward pass and the chain rule on a small network)
+`{ "type": "backprop", "title": "…", "intro": "…", "layers": [2,2,1], "weights": [[[..],[..]],[[..]]], "biases": [[..],[..]], "inputs": [1,0.5], "target": [1], "activation": "sigmoid|tanh|relu|linear", "outputActivation": "sigmoid", "loss": "mse|bce", "lr": 0.5, "inputLabels": ["x1","x2"], "note": "…", "checks": [ { "kind": "loss", "value": 0.1545 }, { "kind": "delta", "layer": 2, "unit": 0, "value": -0.1 }, { "kind": "dW", "layer": 0, "unit": 0, "from": 1, "value": -0.0163, "tol": 0.001 } ] }`. 3–4 layers, 1–4 units each; `weights[l][j][i]` as in `network`. Tabs switch between the forward pass (circles show activations) and the backward pass (circles show δ = dL/dz and lines show |dL/dw|); selecting a circle shows its arithmetic; a button applies one gradient-descent step and lists the loss history. `mse` means L = ½Σ(a−y)²; `bce` needs a sigmoid output. `checks` (`kind` loss, delta with `layer`/`unit` (layer index 1..L), dW with `layer`/`unit`/`from` (layer 0 = weights into layer 1)) are recomputed by the validator (tol default 0.002): put in at least three.
+
+### `gradflow` (vanishing and exploding gradients)
+`{ "type": "gradflow", "title": "…", "intro": "…", "depth": 10, "activation": "sigmoid|tanh|relu", "scale": 1, "width": 16, "seed": 5, "presets": [ { "name": "He (1.41)", "scale": 1.41 } ], "note": "…", "checks": [ { "depth": 10, "activation": "sigmoid", "scale": 1, "maxRatio": 0.001 }, { "depth": 10, "activation": "relu", "scale": 2, "minRatio": 100 } ] }`. Bars show the Frobenius norm of dL/dW per layer on a log scale for one random network (weights N(0, scale²/inputs), zero biases, loss = sum of outputs). Measured at depth 10, width 16: sigmoid at scale 1 → layer 1 is about 2e-6 times the last layer; tanh at 1 stays within a factor of about 1; ReLU at 1.41 stays within a factor of about 2; ReLU at scale 2 → layer 1 about 2× the last layer, with all gradients about 25 times larger than at scale 1.41; ReLU at 0.7 shrinks all of them about 500-fold. Always back claims with `checks`.
+
+### `fold` (why depth helps)
+`{ "type": "fold", "title": "…", "intro": "…", "layers": 2, "note": "…" }`. A slider stacks 1–6 "tent" layers (two ReLU units each); the zig-zag has 2^k straight pieces. A one-hidden-layer ReLU network with m units has at most m + 1 pieces, so it needs at least 2^k − 1 units.
+
 ### `calc` kind `split`
 `{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`
