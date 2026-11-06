@@ -1,396 +1,3363 @@
 # %% [markdown]
-# # Week 8 — The Transformer & Autoregressive Training: lab notebook
+# # Week 8 — The Transformer and Autoregressive Training: lab notebook
 #
-# Built for **Google Colab**. First choose **File → Save a copy in Drive** so that your own work is saved in your own copy.
+# Built for **Google Colab**. Before you start, choose **File → Save a copy in Drive**, so that you work in your own copy and your answers are kept.
 #
-# **Runtime:** a CPU is enough (nothing to change). **Estimated time:** about 3 hours; the training cells take well under a minute each on a CPU.
+# **Runtime:** a normal CPU runtime is fine for everything; no GPU is needed and nothing is downloaded: the two short texts for the language model are written inside the setup cell. **Time:** about 3 hours. Every cell finishes in seconds; the slowest ones (training the tiny GPT in Part 6) take under a minute each on a free Colab CPU.
 #
-# This is Laboratory 3, Part 2. You build the pieces of a tiny Transformer yourself and train it to predict the next character. No pretrained model and no download is needed.
+# This lab is called **Imagine the Transformer, then build it**. First you picture the Transformer as a factory of identical stations on an assembly line: each word arrives with a position badge, and at every station the words look back at the earlier words, think alone, and are re-balanced. Then you build every station yourself: the position badge, multi-head attention, the do-not-peek rule (the causal mask), the feed-forward network, the residual connections and layer norm. You assemble a tiny GPT, count its parameters against the formula, train it on a few hundred characters, sample text from it, and break it on purpose (no mask, no positions, fewer heads, a bad learning rate) to see why each part is there.
 #
-# **What you will do**
-# - Step 1: sinusoidal positional encoding in NumPy.
-# - Step 2: causal multi-head attention in PyTorch, with shapes and a parameter count.
-# - Step 3: a Transformer block and a tiny language model.
-# - Step 4: train it on a repeated string and watch the loss fall.
-# - Step 5: generate text, then remove the causal mask and see what goes wrong.
+# ### What you will do
 #
-# **How this notebook works:** run the cells from top to bottom with the ▶ button. **Your turn** cells are for you to fill in. A **Check** cell tells you whether you are right. Open the **Show a possible answer** block only after you have tried.
+# 1. **Part 1. Positions: why and how** (25 min): show that attention is order-blind, write sinusoidal positional encoding by hand, draw it, measure its wavelengths, and compare it with learned positions.
+# 2. **Part 2. Multi-head attention** (25 min): write scaled dot-product attention on batches, split and merge heads, build a `MultiHeadAttention` class and check it against PyTorch, count its parameters and its cost.
+# 3. **Part 3. The causal mask and shifted targets** (25 min): build the mask, prove there is no leakage, look at teacher forcing, compute the loss by hand and count what a KV cache saves.
+# 4. **Part 4. Feed-forward, residuals, layer norm** (25 min): layer norm by hand, the feed-forward network, residual connections and why they help the gradient, pre-norm against post-norm.
+# 5. **Part 5. Assemble a tiny GPT** (25 min): build a block and the whole model, count its parameters against the formula, run the sanity checks and tie the embeddings.
+# 6. **Part 6. Train it, sample from it, break it** (30 min): train, sample at different temperatures, and run the ablations: no mask, no positions, fewer heads, different learning rates.
+# 7. **Part 7. Scale it up on paper, design and reflect** (15 min): count GPT-2-sized models without building them, do the memory arithmetic, design a Transformer for a real problem and answer four reflection questions.
+#
+# ### How this notebook works
+#
+# Run the cells from top to bottom with the ▶ button. Every part starts with **✏️ Imagine first**: write a prediction before you run the code, then see how close you were. **✏️ Your turn** cells (the exercises) are for you: write the answer in the starter cell. A **Check** cell tells you whether you are right (✓ or ✗ with a hint). Open **Show a possible answer** only after you tried. Your key numbers are collected in a dictionary called `RESULTS` that Part 7 prints.
 
 # %% [markdown]
 # ## Setup
 #
-# Colab already has PyTorch, NumPy and Matplotlib. The cell below imports them, fixes the seed and defines the `check` helper.
+# Run this cell once. It loads the libraries, fixes the random seed so your results match the ones in the lesson, and defines helpers: `check(...)` to test your answers; `TOY_TEXT` and `PATTERN_TEXT`, two short original texts for the tiny language model; `CharData` (a character-level tokenizer and data set: `encode`, `decode`, `get_batch`); `train_lm(...)` to train any next-token model with the standard autoregressive loss and keep the learning curve; `sample_lm(...)` to generate text from a model; and `show_matrix(...)` to draw a matrix with its numbers. Everything runs on a CPU in a few minutes and nothing is downloaded. The Transformer itself is **not** given: you will build it, piece by piece, in Parts 2 to 5.
 
 # %%
-import os
-import math
+import os, gc, math, random, time, warnings
+warnings.filterwarnings("ignore")
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-SEED = 0
-torch.manual_seed(SEED)
-np.random.seed(SEED)
+SEED = 42
+random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 device = "cuda" if torch.cuda.is_available() else "cpu"
-print("device:", device)
-QUICK = bool(os.environ.get("NB_TEST"))  # shortens long loops when the notebook is tested
+QUICK = bool(os.environ.get("NB_TEST"))   # lets the author shorten long loops when testing; leave it alone
+print("Running on:", device)
 
+RESULTS = {}   # a place to keep your key numbers and answers; the last part prints them together
 
 def check(name, ok, hint=""):
+    """Print a tick or a cross with a hint, so you know whether your answer is right."""
     print(("✓ " if ok else "✗ ") + name + ("" if ok else "  → " + hint))
 
+TOY_TEXT = (
+    "the robotics club meets every friday in the science room. the students build small robots and the robots follow a black line. "
+    "the teachers help the students write code and the students test the code on the robots. every robot has a motor and a sensor and a battery. "
+    "the sensor reads the line and the motor turns the wheels. when a robot fails the students look at the code and the teachers look at the battery. "
+    "the club learns from every failure and gets better every week. "
+)
+PATTERN_TEXT = "the cat sat on the mat. the dog sat on the log. " * 20
+
+class CharData:
+    """A character-level tokenizer and data set. `text` becomes a tensor of integer ids; the vocabulary is the sorted set of characters."""
+    def __init__(self, text):
+        self.chars = sorted(set(text)); self.vocab_size = len(self.chars)
+        self.stoi = {c: i for i, c in enumerate(self.chars)}; self.itos = {i: c for c, i in self.stoi.items()}
+        self.data = torch.tensor([self.stoi[c] for c in text], dtype=torch.long)
+    def encode(self, s): return [self.stoi[c] for c in s]
+    def decode(self, ids): return "".join(self.itos[int(i)] for i in ids)
+    def get_batch(self, batch_size, block_size, gen=None):
+        """Random windows of `block_size + 1` characters: x is the first block_size characters, y is the same window shifted one to the left (the targets)."""
+        ix = torch.randint(0, len(self.data) - block_size - 1, (batch_size,), generator=gen)
+        x = torch.stack([self.data[i:i + block_size] for i in ix]); y = torch.stack([self.data[i + 1:i + block_size + 1] for i in ix])
+        return x, y
+
+def train_lm(model, data, steps=300, batch_size=32, block_size=32, lr=3e-3, seed=0, verbose=False):
+    """Train a next-token model: model(x) must return logits of shape (batch, block, vocab). Cross-entropy against the shifted targets, AdamW.
+    Returns a list with the training loss at every step."""
+    gen = torch.Generator().manual_seed(seed)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr)
+    losses = []
+    for step in range(steps):
+        x, y = data.get_batch(batch_size, block_size, gen)
+        logits = model(x)
+        loss = F.cross_entropy(logits.reshape(-1, logits.shape[-1]), y.reshape(-1))
+        opt.zero_grad(); loss.backward(); nn.utils.clip_grad_norm_(model.parameters(), 1.0); opt.step()
+        losses.append(float(loss))
+        if verbose and (step % 50 == 0 or step == steps - 1): print(f"step {step:4d}  loss {losses[-1]:.3f}")
+    return losses
+
+@torch.no_grad()
+def sample_lm(model, data, prompt, n_new=100, block_size=32, temperature=1.0, top_k=None, seed=0):
+    """Generate n_new characters after `prompt`, one at a time, feeding the model its own output (autoregressive generation)."""
+    g = torch.Generator().manual_seed(seed); model.eval()
+    ids = torch.tensor([data.encode(prompt)], dtype=torch.long)
+    for _ in range(n_new):
+        logits = model(ids[:, -block_size:])[:, -1, :] / max(temperature, 1e-6)
+        if top_k:
+            v, _ = torch.topk(logits, top_k); logits[logits < v[:, [-1]]] = -float("inf")
+        nxt = torch.multinomial(F.softmax(logits, dim=-1), 1, generator=g)
+        ids = torch.cat([ids, nxt], dim=1)
+    model.train()
+    return data.decode(ids[0])
+
+def show_matrix(M, title="", ax=None, row_labels=None, col_labels=None, fmt="{:.2f}", cmap="RdBu_r"):
+    """Draw a matrix as a heat map with the numbers written in the cells."""
+    M = np.asarray(M); ax = ax or plt.gca()
+    lim = max(abs(M).max(), 1e-9)
+    ax.imshow(M, cmap=cmap, vmin=-lim, vmax=lim)
+    if row_labels is not None: ax.set_yticks(range(M.shape[0])); ax.set_yticklabels(row_labels)
+    if col_labels is not None: ax.set_xticks(range(M.shape[1])); ax.set_xticklabels(col_labels, rotation=45, ha="right")
+    if M.size <= 150:
+        for i in range(M.shape[0]):
+            for j in range(M.shape[1]): ax.text(j, i, fmt.format(M[i, j]), ha="center", va="center", fontsize=7)
+    ax.set_title(title)
 
 # %% [markdown]
-# ## Step 1: sinusoidal positional encoding
+# ### Smoke test
 #
-# Attention has no sense of order by itself: it treats the tokens as a set. The lesson section *Positional encoding* fixed this by adding a position-dependent vector to each token embedding. Position `pos` and dimension pair `i` get `sin(pos / 10000^(i/d_model))` in the even columns and `cos(...)` in the odd columns.
+# Run this cell to check that the helpers work and that figures appear in the notebook. It builds the two texts' tokenizers, prints a window `x` and its target `y` (the same window shifted one character to the left), shows a tick and draws a tiny heat map.
 
 # %%
-def positional_encoding(n_pos, d_model):
-    pos = np.arange(n_pos)[:, None]                 # positions 0..n_pos-1 as a column
-    i = np.arange(0, d_model, 2)[None, :]           # even dimension indices as a row
-    angle = pos / (10000 ** (i / d_model))
-    pe = np.zeros((n_pos, d_model))
-    pe[:, 0::2] = np.sin(angle)                     # even columns: sine
-    pe[:, 1::2] = np.cos(angle)                     # odd columns: cosine
-    return pe
-
-
-pe = positional_encoding(24, 16)
-print(pe.shape, pe[0, :4], pe[1, :4].round(4))
-assert pe.shape == (24, 16)
-assert np.allclose(pe[0, :4], [0, 1, 0, 1])
-assert np.allclose(pe[1, :4], [0.8415, 0.5403, 0.3110, 0.9504], atol=1e-4)
-
-plt.figure(figsize=(6, 3))
-plt.imshow(pe, cmap="RdBu", aspect="auto")
-plt.xlabel("dimension")
-plt.ylabel("position")
-plt.colorbar()
-plt.tight_layout()
-plt.show()
+d0 = CharData(PATTERN_TEXT)
+print("TOY_TEXT    :", len(TOY_TEXT), "characters, vocabulary", CharData(TOY_TEXT).vocab_size)
+print("PATTERN_TEXT:", len(PATTERN_TEXT), "characters, vocabulary", d0.vocab_size)
+xs, ys = d0.get_batch(2, 12, torch.Generator().manual_seed(SEED))
+print("x:", repr(d0.decode(xs[0])))
+print("y:", repr(d0.decode(ys[0])))
+check("helpers work", xs.shape == (2, 12) and ys.shape == (2, 12), "Run the setup cell first.")
+plt.figure(figsize=(3, 2.5)); show_matrix(np.array([ [1.0, -0.5], [0.25, 0.0] ]), "show_matrix works"); plt.tight_layout(); plt.show()
 
 # %% [markdown]
-# ### ✏️ Your turn: positional encoding by hand
+# ## Part 1. Positions: why and how (25 min)
 #
-# For `d_model = 4`, work out the row for position 1 by hand. Remember the angles are `1 / 10000^(0/4) = 1` and `1 / 10000^(2/4) = 0.01`. Store the four numbers (rounded to 4 decimals) in `answer`. Then look at the picture above: how do the columns change from left to right?
+# *Lesson section: "Positions".* Attention looks at all the tokens of a sentence at the same time, and that is its great strength: no more waiting for a hidden state to travel along the sentence. But it has a price. If you give a self-attention layer a set of vectors, it does not know which one came first. In this part you prove that with a few lines of NumPy, and then you fix it the way the original Transformer did: by adding to every token a **position badge** made of sines and cosines. You write the badge yourself (`pos_encoding`), draw it, measure its wavelengths, see that nearby positions get similar badges, check the rotation property that makes relative offsets easy, add the badge to word vectors, and compare it with the other option, a table of learned position vectors. These are the same ideas as the lesson's figure on positional encoding.
+
+# %% [markdown]
+# ### ✏️ Imagine first
+#
+# Picture two sentences made of the same words: "the dog bites man" and "man bites the dog". The first is the news that nobody notices; the second is a very different story. Now give the four word vectors of each sentence to a self-attention layer with no position information at all. Before you run any code, write two predictions in the cell below: (1) are the output rows for the second sentence the very same rows as for the first, only in a different order? (2) After we add a position badge to every token, does the answer change? Put your reason in a markdown cell. You will compare your answers with Steps 1.1 and 1.6.
+#
+# Write your prediction in the starter cell below (it does not matter if you are wrong: the point is to commit before you look).
 
 # %%
-answer = None  # YOUR ANSWER HERE, for example [a, b, c, d]
+# Imagine first: what does self-attention do with word order?
+my_same_rows = None      # True or False: are the output rows of "man bites the dog" the same rows as those of "the dog bites man", only in a different order?
+my_pos_changes_it = None # True or False: after we add a position badge to every token, does the answer change?
+
+# %% [markdown]
+# ### Step 1.1. Order-blindness: self-attention cannot tell the order
+#
+# Self-attention compares every token with every other token and mixes their vectors with the resulting weights. In this block we write it in a few lines of NumPy with `Q = K = V = X`, the simplest case, and apply it to the four-word sentence "the dog bites man", where each word is a vector of four numbers that we wrote by hand. Then we feed it the same four vectors in another order, "man bites the dog", and compare the two outputs. The function `softmax_np` is the usual stable softmax, and `perm = [3, 2, 0, 1]` says: take row 3, then row 2, then row 0, then row 1.
 
 # %%
-# Check
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
+def softmax_np(z, axis=-1):
+    """Softmax of a NumPy array along an axis (numerically stable)."""
+    z = np.asarray(z, dtype=float); e = np.exp(z - z.max(axis=axis, keepdims=True))
+    return e / e.sum(axis=axis, keepdims=True)
+
+def self_attention_np(X):
+    """Self-attention with Q = K = V = X. X has one row per token. Returns (output, weights)."""
+    scores = X @ X.T / np.sqrt(X.shape[1])     # how much each token matches each other token
+    W = softmax_np(scores, axis=1)             # each row becomes weights that add up to 1
+    return W @ X, W                            # each output row is a weighted mix of the token rows
+
+# "the dog bites man": one 4-number vector per word (written by hand)
+X_a = np.array([ [0.5, 0.1, 0.0, 0.3],     # the
+                 [1.0, 0.2, 0.1, 0.0],     # dog
+                 [0.0, 1.0, 0.5, 0.2],     # bites
+                 [0.2, 0.0, 1.0, 0.8] ])   # man
+out_a, W_a = self_attention_np(X_a)
+print("output for 'the dog bites man':")
+print(np.round(out_a, 3))
+
+# %% [markdown]
+# **What you should see.** You should see a 4 by 4 array of outputs: one row per word, each row a weighted mix of the four word vectors. The rows are all rather similar, because the weights are not very sharp (the vectors are short, so the scores are small).
+
+# %%
+perm = [3, 2, 0, 1]            # the second sentence uses the same rows in a new order: man, bites, the, dog
+X_b = X_a[perm]
+out_b, W_b = self_attention_np(X_b)
+print("output for 'man bites the dog':")
+print(np.round(out_b, 3))
+print("out_b equals out_a with its rows reordered by perm:", np.allclose(out_b, out_a[perm]))
+assert np.allclose(out_b, out_a[perm])
+print("largest difference:", float(np.abs(out_b - out_a[perm]).max()))
+
+# %% [markdown]
+# The second printout has the same four rows as the first, in the order `man, bites, the, dog`. The line `out_b equals out_a with its rows reordered by perm: True` and the largest difference of about 1e-16 (a rounding error) confirm it. Compare this with your Imagine-first answer: yes, the rows are the same, only reordered. The layer has no idea that "man" came first and "dog" last; the order of the rows is simply carried through. Self-attention treats the sentence as a set. The two sentences "the dog bites man" and "man bites the dog" would get the same information, even though they mean opposite things.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - Each output row is a weighted average of the rows of `X`: the weights in each row of `W` add up to 1. Print `W_a` to see them.
+# - `out_a[perm]` means "the rows of `out_a` in the order given by `perm`". It is how you reorder rows in NumPy.
+# - If `np.allclose` says False, check that `X_b` was made from `X_a[perm]` and that you reordered `out_a` with the same `perm`.
+#
+# **Try also (optional)**
+#
+# - Print `W_a` and `W_b`. Find the weight that "dog" gives to "man" in the first and in the second. Is it the same number? (It is, because it depends only on the two vectors, not on where they are.)
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.1. Order-blindness: self-attention cannot tell the order
+#
+# Your task: take another order, `perm2 = [2, 3, 1, 0]`, run `self_attention_np` on `X_a[perm2]` and compute `max_diff`, the largest absolute difference between its output and `out_a[perm2]`. Why it matters: this is the proof that the layer cannot see order, and the whole reason this part exists.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+perm2 = [2, 3, 1, 0]
+max_diff = None   # largest absolute difference between self_attention_np(X_a[perm2])[0] and out_a[perm2]
+
+# %%
+if max_diff is None:
+    print("Fill in max_diff above, then run this cell again.")
 else:
-    true_row = positional_encoding(3, 4)[1]
-    check("PE(position 1, d_model=4)", len(answer) == 4 and bool(np.allclose(answer, true_row, atol=1e-3)),
-          "Order is sin(1), cos(1), sin(0.01), cos(0.01).")
+    truth = float(np.abs(self_attention_np(X_a[perm2])[0] - out_a[perm2]).max())
+    check("max_diff is the largest difference for perm2", abs(max_diff - truth) < 1e-12, "Compute out2 = self_attention_np(X_a[perm2])[0] and take np.abs(out2 - out_a[perm2]).max().")
+    check("it is (almost) zero: order changes nothing but the order of the rows", max_diff < 1e-9, "Rows should be identical up to rounding.")
+    RESULTS["p1_perm_max_diff"] = float(max_diff)
 
 # %% [markdown]
 # <details><summary>Show a possible answer</summary>
 #
 # ```python
-# answer = positional_encoding(3, 4)[1].round(4).tolist()   # [0.8415, 0.5403, 0.01, 1.0]
+# out2 = self_attention_np(X_a[perm2])[0]
+# max_diff = float(np.abs(out2 - out_a[perm2]).max())
 # ```
 #
-# By hand: `sin(1) = 0.8415`, `cos(1) = 0.5403`, `sin(0.01) = 0.0100`, `cos(0.01) = 1.0000`. In the picture, the left columns change quickly from one position to the next (fast waves), while the columns on the right change very slowly (slow waves). Together they give every position a distinct pattern.
+# What you should get: `max_diff` is a tiny number (around 1e-16, or exactly 0): reordering the input only reorders the output.
 #
 # </details>
 
 # %% [markdown]
-# ## Step 2: causal multi-head attention
+# ### Step 1.2. Sinusoidal positional encoding by hand
 #
-# Multi-head attention splits the model width `d_model` into `h` heads of size `d_head = d_model / h`, runs scaled dot-product attention in each head, then joins the heads and mixes them with a final linear layer. For next-token prediction we add a **causal mask**: position `t` may only look at positions `≤ t`. We set the forbidden scores to −∞ *before* the softmax so their weights become exactly 0.
+# The fix proposed by the original Transformer is to give every position its own vector and **add** it to the word vector. The vector for position `pos` has, in the pair of dimensions number `i`, a sine and a cosine of `pos / 10000^(2i/d)`. The first pairs use a fast angle (they change a lot from one position to the next) and the last pairs use a very slow angle. Together the pairs work like the hands of a clock: seconds, minutes, hours. Write the function exactly as the lesson defines it, with the even dimensions as sines and the odd ones as cosines, and compare position 1 with the lesson's worked numbers for `d = 4`: `(sin 1, cos 1, sin 0.01, cos 0.01) = (0.8415, 0.5403, 0.0100, 1.0000)`.
+
+# %%
+def pos_encoding(n_pos, d):
+    """Sinusoidal positional encoding: an array (n_pos, d). Even columns are sines, odd columns cosines, with wavelengths from 2*pi up to 2*pi*10000."""
+    pos = np.arange(n_pos)[:, None]                  # (n_pos, 1)   0, 1, 2, ...
+    i2 = np.arange(0, d, 2)[None, :]                 # (1, d/2)     0, 2, 4, ...  (this is 2i in the formula)
+    angle = pos / (10000 ** (i2 / d))                # pos / 10000^(2i/d)
+    pe = np.zeros((n_pos, d))
+    pe[:, 0::2] = np.sin(angle)
+    pe[:, 1::2] = np.cos(angle)
+    return pe
+
+pe4 = pos_encoding(3, 4)
+np.set_printoptions(precision=4, suppress=True)
+print("d = 4, positions 0, 1, 2:")
+print(pe4)
+
+# %% [markdown]
+# **What you should see.** You should see three rows. Position 0 is `[0, 1, 0, 1]` (all sines are 0 and all cosines are 1). Position 1 is `[0.8415, 0.5403, 0.01, 1.0]`: the first pair rotates by 1 radian, the second by only 0.01 radians. Position 2 is `[0.9093, -0.4161, 0.02, 0.9998]`.
+
+# %%
+lesson_row1 = np.array([np.sin(1), np.cos(1), 0.0100, 1.0000])      # the lesson's worked numbers for position 1
+print("lesson says position 1 is", np.round(lesson_row1, 4))
+assert np.allclose(pe4[1], lesson_row1, atol=1e-4)
+assert np.allclose(pe4[0], [0, 1, 0, 1])
+assert pos_encoding(32, 16).shape == (32, 16)
+print("shape of pos_encoding(32, 16):", pos_encoding(32, 16).shape)
+
+# %% [markdown]
+# The second block compares position 1 with the lesson's numbers and asserts that they agree to four decimals, then checks the shape of a 32 by 16 table. If an assertion fails, look at the exponent: it must be `i2 / d` where `i2` runs over 0, 2, 4, and so on, not over 0, 1, 2.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - `pe[:, 0::2]` means "all rows, every second column starting at column 0" (the even dimensions); `pe[:, 1::2]` is the odd ones.
+# - `10000 ** (i2 / d)` with `i2 = 0, 2, 4, ...` is the same as `10000^(2i/d)` with `i = 0, 1, 2, ...`. It is easy to double the exponent by mistake.
+# - The encoding has no trainable numbers: for the same `n_pos` and `d` it always returns the same array.
+#
+# **Try also (optional)**
+#
+# - Print `pos_encoding(3, 8)` and find the pair that changes fastest from position 0 to position 1, and the pair that hardly changes.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.2. Sinusoidal positional encoding by hand
+#
+# Your task: store in `pe_5_3` the value of `pos_encoding(8, 8)` at position 5 and dimension 3 (counting from 0). Why it matters: you must be able to say, from the formula alone, which dimension is a sine and which is a cosine, and which angle it uses.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+pe_5_3 = None   # the value of pos_encoding(8, 8) at position 5, dimension 3 (count from 0)
+
+# %%
+if pe_5_3 is None:
+    print("Fill in pe_5_3 above, then run this cell again.")
+else:
+    truth = math.cos(5 / 10000 ** (2 / 8))
+    check("pe_5_3 matches the formula", abs(pe_5_3 - truth) < 1e-9, "Dimension 3 is odd, so it is a cosine: cos(5 / 10000^(2/8)).")
+    RESULTS["p1_pe_5_3"] = round(float(pe_5_3), 4)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# pe_5_3 = float(pos_encoding(8, 8)[5, 3])
+# ```
+#
+# What you should get: `pe_5_3` is about 0.8776. Dimension 3 is odd, so it is a cosine, and it belongs to pair 1, whose angle is `5 / 10000^(2/8) = 5 / 10 = 0.5`; the cosine of 0.5 is 0.8776.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 1.3. Draw it: heat map and wavelengths
+#
+# A table of 32 by 32 numbers is hard to read; a picture is easier. The first block draws the encoding of 32 positions and 32 dimensions as a heat map (rows are positions, columns are dimensions) and, next to it, four dimensions as curves against the position. The second block turns the formula into a table of **wavelengths**: the pair `i` has the frequency `1 / 10000^(2i/d)`, so its sine repeats every `2π · 10000^(2i/d)` positions. For `d = 16` we list the pairs 0, 2, 4 and 6 and check numerically that the sine really repeats after one wavelength.
+
+# %%
+PE = pos_encoding(32, 32)
+fig, axs = plt.subplots(1, 2, figsize=(10, 3.6))
+show_matrix(PE, "positional encoding: 32 positions (rows) x 32 dimensions (columns)", ax=axs[0], fmt="{:.1f}")
+for dim in [0, 2, 8, 16]:
+    axs[1].plot(range(32), PE[:, dim], marker="o", ms=3, label=f"dimension {dim}")
+axs[1].set_xlabel("position"); axs[1].set_title("four dimensions against position"); axs[1].legend(fontsize=7)
+plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# **What you should see.** The figure has two panels. In the heat map the left columns (small dimension numbers) change rapidly from row to row, producing stripes, and the columns on the right change so slowly that they look like a vertical band of a single colour. In the line plot, dimension 0 is a sine with a wavelength of about 6.3 positions (it completes five periods in 32 positions), dimension 2 is slower (a wavelength of about 11), dimension 8 completes only about half a period (its wavelength is 62.8) and dimension 16 hardly moves.
+
+# %%
+d = 16
+print("pair i  dimension 2i  frequency   wavelength 2*pi*10000^(2i/d)")
+for i in [0, 2, 4, 6]:
+    freq = 1 / 10000 ** (2 * i / d)
+    wl = 2 * np.pi / freq
+    p = np.array([0.0, 3.0, 17.0])                       # a few positions (they may be fractions in this check)
+    same = np.allclose(np.sin(freq * (p + wl)), np.sin(freq * p))
+    print(f"{i:6d}  {2 * i:12d}  {freq:9.5f}  {wl:12.2f}   repeats after one wavelength: {same}")
+
+# %% [markdown]
+# The table shows the wavelengths of the pairs: pair 0 has 6.28 positions (2π), pair 2 has 62.83, pair 4 has 628.32 and pair 6 has 6283.19. Going from pair `i` to pair `i + 2` multiplies the wavelength by `10000^(4/16) = 10`, so each row of the table is ten times slower than the one above. All four rows say `repeats after one wavelength: True`.
+
+# %%
+print("first column (dimension 0, a sine with wavelength 2*pi):", np.round(PE[:8, 0], 3))
+print("last sine column (dimension 30):", np.round(PE[:8, 30], 5))
+
+# %% [markdown]
+# Dimension 0 follows `sin(pos)`: `0, 0.841, 0.909, 0.141, -0.757 ...`. Dimension 30 (the slowest sine of the 32-dimensional table) is still near 0 after 7 positions: `0.0012`. The slow dimensions tell you roughly where you are in a long text, the fast ones tell you the exact position nearby.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - The 32 by 32 picture is drawn with `show_matrix`; it writes the numbers into the cells only when the matrix is small, so for 32 by 32 you see only colours.
+# - Red and blue are positive and negative values. A thin vertical stripe pattern on the left and a solid block on the right is exactly what the formula predicts.
+#
+# **Try also (optional)**
+#
+# - Change `d` to 64 and draw the heat map again. Do the stripes get finer, or do more slow columns appear? (More slow columns: the wavelengths now stretch up to `2π · 10000^(62/64)`.)
+# - Find the wavelength of the last pair for `d = 512` and compare it with GPT-2's context of 1,024 tokens.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.3. Draw it: heat map and wavelengths
+#
+# Your task: compute `wl_pair7`, the wavelength of pair `i = 7` when `d = 16` (the slowest pair). Why it matters: the longest wavelength is the longest "ruler" the badge has, and it should be much longer than any text you give the model.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+wl_pair7 = None   # wavelength of pair i = 7 when d = 16
+
+# %%
+if wl_pair7 is None:
+    print("Fill in wl_pair7 above, then run this cell again.")
+else:
+    truth = 2 * np.pi * 10000 ** (2 * 7 / 16)
+    check("wl_pair7 matches 2*pi*10000^(2*7/16)", abs(wl_pair7 - truth) < 1e-6 * truth, "Use 2 * np.pi * 10000 ** (2 * 7 / 16).")
+    RESULTS["p1_wavelength_pair7"] = round(float(wl_pair7), 1)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# wl_pair7 = 2 * np.pi * 10000 ** (2 * 7 / 16)
+# ```
+#
+# What you should get: `wl_pair7` is about 19,869 positions, `2π · 10000^(14/16)`. The slowest clock hand needs almost twenty thousand tokens for one turn, far longer than a typical window.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 1.4. Similarity falls with distance
+#
+# A good badge should make nearby positions look alike and far positions look different. We can measure "alike" with the **dot product** (and the cosine, which divides by the lengths). With `d = 64` we compute the dot product between the badge of position 0 and the badge of every position `k = 0, 1, ..., 63`, print some values, and find where the dot product is smallest. A dot product of a vector with itself is `d/2 = 32` here, because the sine squared plus the cosine squared of each pair is 1 and there are 32 pairs.
+
+# %%
+PE64 = pos_encoding(64, 64)
+dots = PE64 @ PE64[0]                       # dot product of position 0 with every position k = 0..63
+cos_sim = dots / (np.linalg.norm(PE64, axis=1) * np.linalg.norm(PE64[0]))
+print("PE[0] . PE[0] =", round(float(dots[0]), 2), "(this is d/2 = 32)")
+for k in [1, 2, 4, 8, 16, 32, 63]:
+    print(f"k = {k:2d}: dot {dots[k]:7.3f}   cosine {cos_sim[k]:6.3f}")
+k_min = int(np.argmin(dots))
+print("smallest dot product in 0..63 is at k =", k_min, "with value", round(float(dots[k_min]), 3))
+
+# %% [markdown]
+# **What you should see.** You should see `PE[0] . PE[0] = 32.0`. The dot product (and the cosine) falls as the distance grows: 30.917 at `k = 1` (cosine 0.966), 28.304 at `k = 2`, 23.934 at `k = 4`, 22.414 at `k = 8`, 19.373 at `k = 16`, and 14.462 at `k = 63` (cosine 0.452). But it does not fall in a straight line: at `k = 32` it is 19.554, a little higher than at `k = 16`. The smallest value in 0 to 63 is **13.374 at `k = 53`**, not at the far end. That is honest and expected: the badge is a sum of 32 waves of different wavelengths, and several of the fast waves are back in step again at some distances.
+
+# %%
+plt.figure(figsize=(6, 2.8))
+plt.plot(range(64), dots, marker="o", ms=3); plt.axhline(0, color="k", lw=0.5)
+plt.xlabel("k (distance from position 0)"); plt.ylabel("PE[0] . PE[k]"); plt.title("similarity falls with distance (d = 64)")
+plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# The figure is a falling, wiggling curve that starts at 32. It drops quickly over the first 10 positions and then wobbles downwards. So the rule "nearby positions are similar" is true, as a trend and for small distances; it is not a perfect distance meter. The model does not need one: it only needs to learn what each badge pattern means.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - `PE64 @ PE64[0]` is a matrix-vector product: row `k` of `PE64` times `PE64[0]` is the dot product we want, for all `k` at once.
+# - The cosine is the dot product divided by the two lengths; every row has length `sqrt(32)`, so the cosine is the dot product divided by 32.
+#
+# **Try also (optional)**
+#
+# - Change `d` to 16 and find the position of the smallest dot product in 0 to 63. Does the badge of a faraway position ever become *more* similar to position 0 again?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.4. Similarity falls with distance
+#
+# Your task: store in `first_k_below_09` the first `k` for which the cosine between `PE[0]` and `PE[k]` is below 0.9. Why it matters: it tells you how fast similarity drops in the first few positions.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+first_k_below_09 = None   # the first k (0, 1, 2, ...) for which the cosine between PE[0] and PE[k] is below 0.9
+
+# %%
+if first_k_below_09 is None:
+    print("Fill in first_k_below_09 above, then run this cell again.")
+else:
+    truth = int(np.argmax(cos_sim < 0.9))
+    check("first_k_below_09 is the first k with cosine below 0.9", first_k_below_09 == truth, "Use np.argmax(cos_sim < 0.9): it returns the first True.")
+    RESULTS["p1_first_k_below_09"] = int(first_k_below_09)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# first_k_below_09 = int(np.argmax(cos_sim < 0.9))
+# ```
+#
+# What you should get: `first_k_below_09` is 2: the cosine is 0.966 at `k = 1` and 0.884 at `k = 2`. Next-door positions are very alike; two positions apart is already clearly different.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 1.5. The rotation property
+#
+# There is a deeper reason for sines and cosines. Take one pair of dimensions with angle `w`. Position `pos` has `(sin(w·pos), cos(w·pos))`, and position `pos + k` has `(sin(w·pos + w·k), cos(w·pos + w·k))`. The angle-addition formulas of trigonometry say that the second pair is the first pair rotated by the angle `w·k`, whatever `pos` is. So there is one matrix `R_k`, made of one 2 by 2 rotation for every pair (a block-diagonal matrix), with `PE[pos + k] = R_k · PE[pos]` for **every** position. A model can therefore learn "look 3 tokens back" as a single linear map that does not depend on where it is in the text. We build `R_3` for `d = 8` and check it on three positions.
+
+# %%
+def rotation_matrix(k, d):
+    """Block-diagonal matrix R_k with a 2x2 rotation for every (sin, cos) pair, such that PE[pos + k] = R_k @ PE[pos]."""
+    R = np.zeros((d, d))
+    for j in range(d // 2):
+        w = 1 / 10000 ** (2 * j / d)                 # frequency of pair j
+        c, s = np.cos(w * k), np.sin(w * k)
+        R[2 * j:2 * j + 2, 2 * j:2 * j + 2] = [ [c, s], [-s, c] ]
+    return R
+
+d, k = 8, 3
+PE8 = pos_encoding(20, d)
+R3 = rotation_matrix(k, d)
+for pos in [0, 5, 11]:
+    ok = np.allclose(R3 @ PE8[pos], PE8[pos + k])
+    print(f"pos = {pos:2d}: R_3 @ PE[{pos}] equals PE[{pos + k}]?  {ok}")
+    assert ok
+print("R_3 is a rotation (R^T R = identity):", np.allclose(R3.T @ R3, np.eye(d)))
+print("the first 2x2 block of R_3 holds cos(3) = %.4f and sin(3) = %.4f" % (R3[0, 0], R3[0, 1]))
+
+# %% [markdown]
+# **What you should see.** You should see three `True` lines (positions 0, 5 and 11 are mapped to 3, 8 and 14), and `R_3 is a rotation (R^T R = identity): True`: a rotation does not change lengths. The first 2 by 2 block holds `cos(3) = -0.9900` and `sin(3) = 0.1411`, because the fastest pair has frequency 1 and k is 3. The assertion would stop the block if any of the three checks failed.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - In `rotation_matrix` the block is `[c, s; -s, c]`: with this sign convention `R @ (sin a, cos a)` gives `(sin(a+b), cos(a+b))`. With the other sign you would rotate backwards.
+# - `R[2*j:2*j+2, 2*j:2*j+2] = ...` writes the 2 by 2 block of pair `j` on the diagonal, and everything else stays 0.
+#
+# **Try also (optional)**
+#
+# - Check the property for a negative offset by using `rotation_matrix(-3, 8)` and `PE8[8]` against `PE8[5]`.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.5. The rotation property
+#
+# Your task: store in `ok_k5` the answer (True or False) to: does `rotation_matrix(5, 8) @ PE8[7]` equal `PE8[12]`? Why it matters: one rule works for every position and every offset, which is what makes the sinusoidal badge so tidy.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+ok_k5 = None   # True if the matrix rotation_matrix(5, 8) maps PE8[7] to PE8[12]
+
+# %%
+if ok_k5 is None:
+    print("Fill in ok_k5 above, then run this cell again.")
+else:
+    truth = bool(np.allclose(rotation_matrix(5, 8) @ PE8[7], PE8[12]))
+    check("ok_k5 is True", ok_k5 == truth and truth, "Compare rotation_matrix(5, 8) @ PE8[7] with PE8[12] using np.allclose.")
+    RESULTS["p1_rotation_ok"] = bool(ok_k5)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# ok_k5 = bool(np.allclose(rotation_matrix(5, 8) @ PE8[7], PE8[12]))
+# ```
+#
+# What you should get: `ok_k5` is True. The matrix depends only on the offset 5, not on the position 7.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 1.6. Adding positions to embeddings
+#
+# Now we use the badge. A Transformer starts from the **embedding** of each token (a vector looked up in a table) and **adds** the position badge: `x = embedding[ids] + PE[:n]`. In the first block we make the six-word sentence "so the dog saw the cat", where "the" appears at positions 1 and 4, with a random embedding table of 8 numbers per word, and check that the two copies of "the" are identical without the badge but different with it. In the second block we repeat Step 1.1 on the four-number words, this time adding the badge of positions 0 to 3 to the *places* and not to the words, and compare the two sentences again.
+
+# %%
+sentence = ["so", "the", "dog", "saw", "the", "cat"]          # "the" appears at positions 1 and 4
+vocab_ids = {w: i for i, w in enumerate(sorted(set(sentence)))}
+ids = [vocab_ids[w] for w in sentence]
+rng = np.random.RandomState(0)
+E = rng.randn(len(vocab_ids), 8)                               # one random 8-number vector per word (an embedding table)
+x_plain = E[ids]                                               # (6, 8), no position information
+x_pos = E[ids] + pos_encoding(len(ids), 8)                     # the embedding PLUS the position badge
+print("ids:", ids)
+print("'the' at position 1 vs position 4, without positions, identical?", np.allclose(x_plain[1], x_plain[4]))
+print("'the' at position 1 vs position 4, with positions, identical?   ", np.allclose(x_pos[1], x_pos[4]))
+print("distance between the two 'the' vectors with positions:", round(float(np.linalg.norm(x_pos[1] - x_pos[4])), 3))
+
+# %% [markdown]
+# **What you should see.** You should see `ids: [3, 4, 1, 2, 4, 0]`: the word "the" has id 4 in both places. Without positions the two vectors are identical (True); with positions they are not (False), and their distance is 2.017. The same word now has two different vectors, one for "the, second word" and one for "the, fifth word".
+
+# %%
+Xa_pos = X_a + pos_encoding(4, 4)             # the 4-number words of Step 1.1, now with a position badge
+Xb_pos = X_a[perm] + pos_encoding(4, 4)       # the same words in the new order, badges are tied to the places
+out_ap, _ = self_attention_np(Xa_pos)
+out_bp, _ = self_attention_np(Xb_pos)
+same_rows = np.allclose(out_bp, out_ap[perm])
+print("with positions, are the outputs of the permuted sentence just reordered rows?", same_rows)
+assert not np.allclose(out_bp, out_ap[perm])
+print("largest difference:", round(float(np.abs(out_bp - out_ap[perm]).max()), 3))
+
+# %% [markdown]
+# The permuted sentence no longer gives reordered rows: `False`, with a largest difference of 1.277. Now "the dog bites man" and "man bites the dog" produce different outputs, because each place carries its own badge. This is the answer to your Imagine-first question: yes, adding positions changes the result, and that is exactly what we want.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - The badge is added to the embedding, not concatenated. The vector keeps the size `d`, so every layer afterwards has the same shape.
+# - In `Xb_pos` the badge is tied to the places (0, 1, 2, 3), not to the words. That is what happens in a real model: position 0 always gets badge 0, whatever word sits there.
+#
+# **Try also (optional)**
+#
+# - Make the badge very small (multiply `pos_encoding(4, 4)` by 0.01) and see how close to a plain reordering the output gets. What does that say about the size of the word vectors compared with the badge?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.6. Adding positions to embeddings
+#
+# Your task: store in `dist_the` the distance (`np.linalg.norm`) between the two vectors of "the" in `x_pos`, at positions 1 and 4. Why it matters: it measures in one number how much the badge separates two copies of the same word.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+dist_the = None   # the distance (np.linalg.norm) between the vectors of "the" at positions 1 and 4 in x_pos
+
+# %%
+if dist_the is None:
+    print("Fill in dist_the above, then run this cell again.")
+else:
+    truth = float(np.linalg.norm(x_pos[1] - x_pos[4]))
+    check("dist_the is the distance between the two 'the' vectors", abs(dist_the - truth) < 1e-9, "Use np.linalg.norm(x_pos[1] - x_pos[4]).")
+    check("it is clearly bigger than 0 (the two 'the' are no longer identical)", dist_the > 0.1, "Positions were not added.")
+    RESULTS["p1_dist_the"] = round(float(dist_the), 3)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# dist_the = float(np.linalg.norm(x_pos[1] - x_pos[4]))
+# ```
+#
+# What you should get: `dist_the` is 2.017. Without the badge it would be exactly 0.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 1.7. Learned positions versus sinusoidal positions
+#
+# The other popular choice, used by GPT-2, is not a formula but a **table**: `nn.Embedding(n_ctx, d)` holds one trainable vector for each position from 0 to `n_ctx - 1`, and the training finds good values for them. The learned table costs `n_ctx · d` parameters, the formula costs none. In this block we build the table for GPT-2 small's sizes (a context of 1,024 and a width of 768) and count it, then ask both methods for a position far beyond 1,024.
+
+# %%
+n_ctx, d_model = 1024, 768                       # GPT-2 small's context length and width
+learned = nn.Embedding(n_ctx, d_model)           # a learned position table: one trainable vector per position
+n_learned = sum(p.numel() for p in learned.parameters())
+print("learned table parameters:", n_learned, "= n_ctx x d =", n_ctx * d_model)
+print("sinusoidal table parameters: 0 (it is computed from a formula)")
+ids_ok = torch.arange(10)
+print("positions 0..9 work, output shape:", tuple(learned(ids_ok).shape))
+try:
+    learned(torch.tensor([2000]))                # a position the table does not have
+except IndexError as e:
+    print("position 2000 with a learned table -> IndexError:", str(e)[:40])
+print("position 2000 with the formula works:", pos_encoding(2001, d_model)[2000, :3])
+
+# %% [markdown]
+# **What you should see.** You should see `learned table parameters: 786432 = n_ctx x d = 786432`. This is the figure that we met in the lesson: the learned position table of GPT-2 small has 786,432 parameters. The sinusoidal table has 0. Positions 0 to 9 give an output of shape `(10, 768)`. The learned table raises an `IndexError` (index out of range in self) for position 2000, since it was never given a row for it. The formula works at any position: `[0.93, -0.3675, -0.995]` are the first three numbers of the badge at position 2000. Being able to produce a badge beyond the training length does not mean the model will use it well, though: it has never seen those positions, so the quality of such extrapolation has to be tested.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - `nn.Embedding(n_ctx, d)` is just a trainable matrix of shape `(n_ctx, d)`; `learned(ids)` picks rows.
+# - The error message comes from PyTorch looking up row 2000 in a table that has only 1,024 rows.
+#
+# **Try also (optional)**
+#
+# - Print `pos_encoding(1024, 768).shape` and `learned.weight.shape`. They have the same shape. One is computed, the other is learned.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.7. Learned positions versus sinusoidal positions
+#
+# Your task: store in `params_2048_512` the number of parameters of a learned position table for 2,048 positions and a width of 512. Why it matters: a long context makes a learned table more expensive.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+params_2048_512 = None   # the number of parameters of a learned position table for n_ctx = 2048 and d = 512
+
+# %%
+if params_2048_512 is None:
+    print("Fill in params_2048_512 above, then run this cell again.")
+else:
+    check("params_2048_512 is n_ctx x d", params_2048_512 == 2048 * 512, "Multiply the number of positions by the width.")
+    RESULTS["p1_learned_params"] = int(params_2048_512)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# params_2048_512 = sum(p.numel() for p in nn.Embedding(2048, 512).parameters())
+# ```
+#
+# What you should get: `params_2048_512` is 1,048,576, which is 2,048 times 512.
+#
+# </details>
+
+# %% [markdown]
+# ### Part 1 checkpoint: Positions
+#
+# Before you move on, make sure you can say each of these in your own words:
+#
+# - Self-attention without positions is **order-blind**: permuting the input permutes the output rows and nothing else (Steps 1.1 and the check of 1.6).
+# - The sinusoidal badge has no parameters: even dimensions are sines, odd dimensions are cosines, with wavelengths from 2π up to 2π · 10000 (Steps 1.2 and 1.3). For `d = 4` position 1 is (0.8415, 0.5403, 0.0100, 1.0000).
+# - Nearby positions get similar badges (cosine 0.966 at distance 1, 0.884 at distance 2) but the similarity is not a perfect ruler: its smallest value in 0 to 63 is at `k = 53` (Step 1.4).
+# - A shift by `k` positions is one fixed rotation of every (sin, cos) pair (Step 1.5), and adding the badge makes the same word at two positions into two different vectors (Step 1.6).
+# - A learned table costs `n_ctx · d` parameters (786,432 for GPT-2 small) and has no row for a position beyond `n_ctx`; the formula costs nothing (Step 1.7).
+#
+# Now look back at your Imagine-first answers. If you wrote that the permuted sentence gives the same rows in another order, and that adding a badge changes the answer, you were right on both. If you were surprised, write one sentence in a markdown cell on what you did not expect: that sentence is worth more than the correct guess.
+#
+# Double-click this cell to write two sentences about what surprised you in this part.
+
+# %% [markdown]
+# ## Part 2. Multi-head attention (25 min)
+#
+# *Lesson section: "Multi-head".* One attention head makes one choice of where to look. A sentence needs several at once: the subject of a verb, the previous word, the word that a pronoun refers to. Multi-head attention runs several smaller attentions side by side, each with its own projections, and glues the results together. In this part you build it from the bottom: scaled dot-product attention on batches of tensors, then the reshaping trick that splits a vector into heads, then a full `MultiHeadAttention` class that you check against PyTorch's own functions, then you count its parameters (they do not depend on the number of heads), draw what two untrained heads look at, and measure what attention costs as the sequence grows. The shapes are the hard part, so almost every block prints them.
+
+# %% [markdown]
+# ### ✏️ Imagine first
+#
+# A batch holds 2 sequences of 5 tokens, and the layer has 4 heads. Before you run any code, write down the shape you expect for the attention weights of the whole batch (one weight for every pair of tokens, for every head, for every sequence), and the total count of numbers in it. Hint: for one head and one sequence the weights form a table with one row per query token and one column per key token. You will check your answer in Step 2.3.
+#
+# Write your prediction in the starter cell below (it does not matter if you are wrong: the point is to commit before you look).
+
+# %%
+# Imagine first: the shape of attention weights
+my_shape = None          # a tuple, for example (3, 3): the shape you expect for the attention weights of a batch of 2 sequences of 5 tokens with 4 heads
+my_numbers = None        # how many attention weights (numbers) there are in total
+
+# %% [markdown]
+# ### Step 2.1. Scaled dot-product attention on batches
+#
+# From Week 7 you know attention for one query at a time. A Transformer processes whole batches, so the function must work on tensors of shape `(batch, seq, d)`: scores `q @ k^T / sqrt(d)` have shape `(batch, seq, seq)`, one table per sequence; the softmax runs over the last axis (the keys), so every row adds up to 1; and the output is the weights times `v`. We write `attention(q, k, v, mask=None)` (the `mask` argument is for Part 3) and compare the output with PyTorch's `F.scaled_dot_product_attention`.
+
+# %%
+def attention(q, k, v, mask=None):
+    """Scaled dot-product attention. q, k, v: (..., seq, d). Returns (output, weights). `mask` is 1 where looking is allowed, 0 where not (None = no mask)."""
+    d = q.shape[-1]
+    scores = q @ k.transpose(-2, -1) / math.sqrt(d)          # (..., seq, seq)
+    if mask is not None:
+        scores = scores.masked_fill(mask == 0, float("-inf"))
+    w = F.softmax(scores, dim=-1)                            # each row adds up to 1
+    return w @ v, w
+
+torch.manual_seed(SEED)
+q, k, v = torch.randn(2, 5, 8), torch.randn(2, 5, 8), torch.randn(2, 5, 8)    # (batch, seq, d)
+out, w = attention(q, k, v)
+print("q:", tuple(q.shape), "| weights:", tuple(w.shape), "| output:", tuple(out.shape))
+print("rows add up to 1:", torch.allclose(w.sum(-1), torch.ones(2, 5)))
+ref = F.scaled_dot_product_attention(q, k, v)
+print("same as F.scaled_dot_product_attention:", torch.allclose(out, ref, atol=1e-6))
+assert torch.allclose(out, ref, atol=1e-6)
+print("first row of the weights of sequence 0:", np.round(w[0, 0].numpy(), 3))
+
+# %% [markdown]
+# **What you should see.** You should see `q: (2, 5, 8) | weights: (2, 5, 5) | output: (2, 5, 8)`. The weights are a 5 by 5 table for each of the 2 sequences. The rows add up to 1 (True), the output agrees with PyTorch's function (True), and the first row of the weights of the first sequence is `[0.281, 0.16, 0.129, 0.363, 0.067]`: token 0 looks mostly at token 3 and least at token 4. Your Imagine-first prediction for a single head and no batch would be (5, 5); with a batch it is (2, 5, 5).
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - `k.transpose(-2, -1)` swaps the last two axes whatever the number of leading axes, so the same function also works for 4-dimensional tensors with heads (Step 2.3).
+# - `F.softmax(scores, dim=-1)`: if you use `dim=1` by mistake you normalise the wrong axis and the rows will not add up to 1.
+#
+# **Try also (optional)**
+#
+# - Print `scores.std()` before and after dividing by `sqrt(d)` for `d = 8` and for `d = 512` with random `q` and `k`. The division keeps the scores at a similar size whatever `d` is.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 2.1. Scaled dot-product attention on batches
+#
+# Your task: store in `w_shape` the shape (a tuple) of the attention weights when `q`, `k` and `v` have the shape `(3, 7, 4)`. Why it matters: shapes are the language of this part, and half of all bugs are shape bugs.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+w_shape = None   # the shape (a tuple) of the attention weights when q, k, v have shape (3, 7, 4)
+
+# %%
+if w_shape is None:
+    print("Fill in w_shape above, then run this cell again.")
+else:
+    t = torch.randn(3, 7, 4)
+    check("w_shape matches the real weights", tuple(w_shape) == tuple(attention(t, t, t)[1].shape), "The weights have one row per query and one column per key: (batch, seq, seq).")
+    RESULTS["p2_w_shape"] = tuple(w_shape)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# w_shape = (3, 7, 7)
+# ```
+#
+# What you should get: `w_shape` is `(3, 7, 7)`: one 7 by 7 table of weights for each of the 3 sequences.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 2.2. Splitting into heads and merging back
+#
+# To get several heads from one vector, we do not need several separate layers: we cut the vector of `d_model` numbers of each token into `h` groups of `d_head = d_model / h` numbers, and let each group be one head. With `d_model = 16` and `h = 4` every token has 4 heads of 4 numbers. The tensor method `view(batch, seq, h, d_head)` does the cutting, and `transpose(1, 2)` moves the heads in front of the sequence, so that the shape is `(batch, heads, seq, d_head)` and every head can do its attention independently. To go back we transpose again and `reshape` (glue the groups together). The block prints the shape at each stage.
+
+# %%
+torch.manual_seed(SEED)
+d_model, h = 16, 4
+d_head = d_model // h
+x = torch.randn(2, 5, d_model)                                # (batch, seq, d_model)
+t1 = x.view(2, 5, h, d_head)                                  # cut the 16 numbers of every token into 4 groups of 4
+t2 = t1.transpose(1, 2)                                       # move the heads in front of the sequence
+print("x                  :", tuple(x.shape))
+print("view(B, N, h, dh)  :", tuple(t1.shape))
+print("transpose(1, 2)    :", tuple(t2.shape), " <- (batch, heads, seq, d_head)")
+merged = t2.transpose(1, 2).reshape(2, 5, d_model)            # undo: heads behind the sequence, then glue the groups together
+print("merged             :", tuple(merged.shape))
+print("round trip is exact:", torch.equal(merged, x))
+assert torch.equal(merged, x)
+
+# %% [markdown]
+# **What you should see.** You should see the shapes `(2, 5, 16)`, then `(2, 5, 4, 4)`, then `(2, 4, 5, 4)`, and after merging `(2, 5, 16)` again; `round trip is exact: True`.
+
+# %%
+print("head 0 of token 0 is the first 4 numbers of x[0, 0]:", torch.equal(t2[0, 0, 0], x[0, 0, :4]))
+print("head 1 of token 0 is the next 4 numbers          :", torch.equal(t2[0, 1, 0], x[0, 0, 4:8]))
+
+# %% [markdown]
+# The second block shows what the split does: head 0 of token 0 is simply the first 4 numbers of the vector, and head 1 is the next 4. Nothing is computed, the numbers are only regrouped.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - `transpose` returns a view with the axes swapped, which may not be contiguous in memory; that is why the merge uses `reshape` and not `view`.
+# - The most common mistake is to write `x.view(batch, h, seq, d_head)` directly. It runs without an error but mixes tokens and heads, and the result is nonsense. Always view as `(batch, seq, h, d_head)` first and then transpose.
+#
+# **Try also (optional)**
+#
+# - Try `x.view(2, 4, 5, 4)` and compare head 0 of token 0 with the right answer. Do they agree?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 2.2. Splitting into heads and merging back
+#
+# Your task: store in `split_shape` the shape you get from `x.view(2, 5, 3, 8).transpose(1, 2)` for an input of shape `(2, 5, 24)` and 3 heads, written as a tuple. Why it matters: it practises the (batch, heads, seq, d_head) rule on new numbers.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+split_shape = None   # the shape after view + transpose when x has shape (2, 5, 24) and there are 3 heads
+
+# %%
+if split_shape is None:
+    print("Fill in split_shape above, then run this cell again.")
+else:
+    t = torch.randn(2, 5, 24).view(2, 5, 3, 8).transpose(1, 2)
+    check("split_shape is (batch, heads, seq, d_head)", tuple(split_shape) == tuple(t.shape), "d_head = 24 / 3 = 8, and the heads come before the sequence.")
+    RESULTS["p2_split_shape"] = tuple(split_shape)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# split_shape = (2, 3, 5, 8)
+# ```
+#
+# What you should get: `split_shape` is `(2, 3, 5, 8)`.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 2.3. A MultiHeadAttention class, checked against PyTorch
+#
+# Now we put it together. The class has four linear layers: `W_Q`, `W_K` and `W_V` (each `d_model` to `d_model`, which together contain all heads), and `W_O`, which mixes the heads after they are glued together. The forward pass projects the input, splits the heads, computes the scores of shape `(batch, heads, seq, seq)`, applies the softmax, takes the weighted sum of `v`, merges the heads and applies `W_O`. The option `causal=True` (used from Part 3) hides the future. The class keeps the last attention weights in `last_weights` so that we can look at them. Then we test it twice: against `F.scaled_dot_product_attention` applied to the split tensors, and against PyTorch's complete layer `nn.MultiheadAttention`, after copying our weights into it (PyTorch stores Q, K and V stacked in a single matrix `in_proj_weight`, so we concatenate ours).
 
 # %%
 class MultiHeadAttention(nn.Module):
+    """Multi-head self-attention. Input and output: (batch, seq, d_model). causal=True hides the future (Part 3)."""
+    def __init__(self, d_model, n_heads, causal=False):
+        super().__init__()
+        assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
+        self.h, self.dh, self.causal = n_heads, d_model // n_heads, causal
+        self.W_Q = nn.Linear(d_model, d_model); self.W_K = nn.Linear(d_model, d_model)
+        self.W_V = nn.Linear(d_model, d_model); self.W_O = nn.Linear(d_model, d_model)
+        self.last_weights = None                                        # the attention weights of the last call, for plotting
+    def split(self, t):                                                 # (B, N, D) -> (B, h, N, dh)
+        B, N, _ = t.shape
+        return t.view(B, N, self.h, self.dh).transpose(1, 2)
+    def merge(self, t):                                                 # (B, h, N, dh) -> (B, N, D)
+        B, H, N, Dh = t.shape
+        return t.transpose(1, 2).reshape(B, N, H * Dh)
+    def forward(self, x):
+        q, k, v = self.split(self.W_Q(x)), self.split(self.W_K(x)), self.split(self.W_V(x))
+        scores = q @ k.transpose(-2, -1) / math.sqrt(self.dh)           # (B, h, N, N)
+        if self.causal:
+            n = x.shape[1]
+            mask = torch.tril(torch.ones(n, n, device=x.device))
+            scores = scores.masked_fill(mask == 0, float("-inf"))
+        w = F.softmax(scores, dim=-1)
+        self.last_weights = w.detach()
+        return self.W_O(self.merge(w @ v))                              # mix the heads with W_O
+
+torch.manual_seed(SEED)
+mha = MultiHeadAttention(16, 4)
+x = torch.randn(2, 5, 16)
+y = mha(x)
+print("input:", tuple(x.shape), "| output:", tuple(y.shape), "| weights:", tuple(mha.last_weights.shape))
+
+# %% [markdown]
+# **What you should see.** You should see `input: (2, 5, 16) | output: (2, 5, 16) | weights: (2, 4, 5, 5)`. The answer to your Imagine-first question is there: for a batch of 2 sequences of 5 tokens with 4 heads the weights have the shape `(2, 4, 5, 5)`, which is 2 times 4 times 5 times 5 = 200 numbers.
+
+# %%
+# Check 1: the same computation with PyTorch's own function on the split tensors
+q, k, v = mha.split(mha.W_Q(x)), mha.split(mha.W_K(x)), mha.split(mha.W_V(x))
+ref = mha.W_O(mha.merge(F.scaled_dot_product_attention(q, k, v)))
+print("matches F.scaled_dot_product_attention on the split tensors:", torch.allclose(y, ref, atol=1e-6))
+assert torch.allclose(y, ref, atol=1e-6)
+
+# Check 2: the full layer against nn.MultiheadAttention, after copying our weights into it
+ref_layer = nn.MultiheadAttention(16, 4, batch_first=True)
+with torch.no_grad():
+    ref_layer.in_proj_weight.copy_(torch.cat([mha.W_Q.weight, mha.W_K.weight, mha.W_V.weight], dim=0))   # PyTorch packs Q, K, V into one matrix
+    ref_layer.in_proj_bias.copy_(torch.cat([mha.W_Q.bias, mha.W_K.bias, mha.W_V.bias], dim=0))
+    ref_layer.out_proj.weight.copy_(mha.W_O.weight); ref_layer.out_proj.bias.copy_(mha.W_O.bias)
+y_ref, w_ref = ref_layer(x, x, x, average_attn_weights=False)
+print("matches nn.MultiheadAttention (outputs):", torch.allclose(y, y_ref, atol=1e-5), "| (weights per head):", torch.allclose(mha.last_weights, w_ref, atol=1e-5))
+assert torch.allclose(y, y_ref, atol=1e-5)
+print("largest output difference:", float((y - y_ref).abs().max()))
+
+# %% [markdown]
+# The checks print `True` three times: our class agrees with the attention function on the split tensors, with the complete PyTorch layer (outputs) and with its per-head weights, and the largest output difference is a few millionths at most (often exactly 0). If you do not get `True`, the most common problems are using `d_model` instead of `d_head` in the square root, or applying the softmax on the wrong axis.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - `nn.MultiheadAttention(16, 4, batch_first=True)` expects the input as `(batch, seq, d)` only with `batch_first=True`; the default is `(seq, batch, d)`.
+# - `average_attn_weights=False` asks PyTorch to return the weights of every head and not their average.
+# - The code uses one big `nn.Linear(d_model, d_model)` for all heads together instead of four small ones. It is the same thing, only faster.
+#
+# **Try also (optional)**
+#
+# - Print `mha.last_weights[0, 0]` and check that each row adds up to 1. Then repeat with `MultiHeadAttention(16, 1)` and see how the shape changes.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 2.3. A MultiHeadAttention class, checked against PyTorch
+#
+# Your task: write the function `mha_forward(m, x)` that computes the output of a `MultiHeadAttention` object `m` for the input `x`, using only `m.W_Q`, `m.W_K`, `m.W_V`, `m.W_O`, `m.h` and plain tensor operations (no call to `m.forward`, `m.split` or `m.merge`). Why it matters: writing it without looking is the best test that you understand the shapes.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+def mha_forward(m, x):
+    """Compute the output of the MultiHeadAttention object m for input x using only m.W_Q, m.W_K, m.W_V, m.W_O, m.h and plain tensor operations."""
+    return None   # YOUR CODE HERE
+
+# %%
+mine = mha_forward(mha, x)
+if mine is None:
+    print("Write mha_forward above, then run this cell again.")
+else:
+    check("the output has the right shape", tuple(mine.shape) == tuple(y.shape), "It must be (batch, seq, d_model).")
+    check("it equals mha(x)", torch.allclose(mine, y, atol=1e-5), "Split Q, K, V into heads, scores = q @ k^T / sqrt(d_head), softmax, weights @ v, merge, then W_O.")
+    RESULTS["p2_mha_ok"] = True
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# def mha_forward(m, x):
+#     B, N, D = x.shape
+#     q = m.W_Q(x).view(B, N, m.h, D // m.h).transpose(1, 2)
+#     k = m.W_K(x).view(B, N, m.h, D // m.h).transpose(1, 2)
+#     v = m.W_V(x).view(B, N, m.h, D // m.h).transpose(1, 2)
+#     w = F.softmax(q @ k.transpose(-2, -1) / math.sqrt(D // m.h), dim=-1)
+#     return m.W_O((w @ v).transpose(1, 2).reshape(B, N, D))
+# ```
+#
+# What you should get: The answer splits with `view` and `transpose`, scales by the square root of `d_head`, takes the softmax, multiplies by `v`, merges and applies `W_O`. The check compares it with `mha(x)`.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 2.4. Counting the parameters
+#
+# An attention layer has four weight matrices of size `d x d` and four bias vectors of size `d`, so it has `4d² + 4d` parameters. The number of heads does not appear in the formula: more heads cut the same `d_model` numbers into more, smaller pieces. We check the formula against the real count for `d = 16, 64, 768` (768 is GPT-2 small) and then vary the number of heads for `d = 64`.
+
+# %%
+def mha_params(d):
+    """Parameters of one attention layer with four d x d weight matrices and four bias vectors: 4*d^2 + 4*d."""
+    return 4 * d * d + 4 * d
+
+for d in [16, 64, 768]:
+    real = sum(p.numel() for p in MultiHeadAttention(d, 4).parameters())
+    print(f"d = {d:4d}: formula {mha_params(d):>9,} | counted {real:>9,}")
+    assert real == mha_params(d)
+
+# %% [markdown]
+# **What you should see.** You should see `1,088`, `16,640` and `2,362,368` parameters, in agreement with the formula in all three rows. The last one is the attention parameter count of GPT-2 small that appears in the lesson: 2,362,368 per block.
+
+# %%
+print("d = 64, different numbers of heads:")
+for hh in [1, 2, 4, 8]:
+    print(f"  heads {hh}: {sum(p.numel() for p in MultiHeadAttention(64, hh).parameters()):,} parameters, d_head {64 // hh}")
+
+# %% [markdown]
+# For `d = 64` the count is 16,640 for 1, 2, 4 and 8 heads, while `d_head` shrinks from 64 to 8. Multi-head attention is free in parameters: it spends the same budget on several smaller views instead of one large one.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - `MultiHeadAttention(d, 4)` needs `d` divisible by 4: that is why we use 16, 64 and 768.
+# - The count `sum(p.numel() for p in model.parameters())` includes every weight and bias that can be trained.
+#
+# **Try also (optional)**
+#
+# - Compute the share of the four matrices (without the biases) in the total for `d = 768`: it is very nearly 100%.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 2.4. Counting the parameters
+#
+# Your task: store in `params_512` the number of parameters of one attention layer with `d_model = 512`. Why it matters: you will need this formula in Part 5, to count a whole model.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+params_512 = None   # the number of parameters of one attention layer with d_model = 512
+
+# %%
+if params_512 is None:
+    print("Fill in params_512 above, then run this cell again.")
+else:
+    check("params_512 is 4*512^2 + 4*512", params_512 == 4 * 512 * 512 + 4 * 512, "Four matrices of 512 x 512 plus four bias vectors of 512.")
+    RESULTS["p2_params_512"] = int(params_512)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# params_512 = mha_params(512)
+# ```
+#
+# What you should get: `params_512` is 1,050,624 (`4 · 512² = 1,048,576` plus `4 · 512 = 2,048`).
+#
+# </details>
+
+# %% [markdown]
+# ### Step 2.5. What do heads see?
+#
+# A trained head often does one clear job (look at the previous word, or at the verb). An untrained one does nothing sensible, but we can still look at what the *machinery* does. We take the sentence "the robot follows the black line" with a hand-written 8-number vector for each word (plus the position badge of Part 1), a layer with 2 heads and random weights, and draw the two 6 by 6 attention tables side by side. The random weights are small, which makes all heads almost uniform, so we multiply the Q and K weights by 3 and use the seed 1 for the random numbers; with this seed the two heads happen to make clearly different choices.
+
+# %%
+words = ["the", "robot", "follows", "the", "black", "line"]
+Xw = torch.tensor([ [0.9, 0.1, 0.0, 0.2, 0.0, 0.1, 0.0, 0.3],    # the
+                    [0.1, 1.0, 0.8, 0.0, 0.3, 0.0, 0.2, 0.0],    # robot
+                    [0.0, 0.7, 0.1, 1.0, 0.0, 0.6, 0.0, 0.1],    # follows
+                    [0.9, 0.1, 0.0, 0.2, 0.0, 0.1, 0.0, 0.3],    # the
+                    [0.2, 0.0, 0.1, 0.0, 1.0, 0.0, 0.9, 0.2],    # black
+                    [0.0, 0.2, 0.9, 0.1, 0.8, 0.1, 0.1, 0.0] ])  # line
+Xw = (Xw + torch.tensor(pos_encoding(6, 8), dtype=torch.float32)).unsqueeze(0)     # add positions: (1, 6, 8)
+torch.manual_seed(1)                                   # with this seed the two random heads happen to make clearly different choices
+m2 = MultiHeadAttention(8, 2)
+with torch.no_grad():
+    m2.W_Q.weight.mul_(3); m2.W_K.weight.mul_(3)       # random weights are small: scale Q and K up so that the heads make clearer choices
+    m2(Xw)
+Wh = m2.last_weights[0].numpy()                                    # (2, 6, 6): one 6x6 matrix per head
+fig, axs = plt.subplots(1, 2, figsize=(9, 4))
+for hd in range(2):
+    show_matrix(Wh[hd], f"head {hd} (untrained, random weights)", ax=axs[hd], row_labels=words, col_labels=words, cmap="Greens")
+plt.tight_layout(); plt.show()
+for hd in range(2):
+    print(f"head {hd}: each word attends most to ->", [words[j] for j in Wh[hd].argmax(axis=1)])
+print("the two heads are different matrices:", not np.allclose(Wh[0], Wh[1]))
+
+# %% [markdown]
+# **What you should see.** You should see two heat maps. The rows are the words that look (queries) and the columns the words looked at (keys). The printed lines say what each word attends to most: head 0 gives `['the', 'robot', 'robot', 'the', 'black', 'black']` and head 1 gives `['the', 'the', 'follows', 'follows', 'robot', 'the']`. The two heads clearly differ. In the row of "line", head 0 puts 0.43 on "black" and head 1 puts 0.68 on the first "the". The rows add up to 1 in both heads (True).
+
+# %%
+print("rows add up to 1 in both heads:", np.allclose(Wh.sum(-1), 1))
+print("head 0, row of 'line':", np.round(Wh[0, 5], 2))
+print("head 1, row of 'line':", np.round(Wh[1, 5], 2))
+
+# %% [markdown]
+# The second block prints the full row of "line" in both heads, so you can see the actual weights: head 0 spreads its weight over several words, with 0.43 on "black", while head 1 puts 0.68 on the first "the" and almost nothing on the last three words. Two views of the same word, from the same input, with different projections.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - These heads are random, so the pattern means nothing. After training, the rows of a head would be driven by the loss.
+# - With a different seed you get different heads. If you change the seed, the exercise check still works, because it recomputes the answer from `Wh`.
+#
+# **Try also (optional)**
+#
+# - Change the seed to 0 and to 7 and see how the maximum attention words change. Is there ever a head that looks at one word only?
+# - Why do you think trained heads end up different from one another, even though they all start from random numbers and are trained for the same loss? (Because the loss rewards a head that adds information the others do not have; the random start breaks the symmetry.)
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 2.5. What do heads see?
+#
+# Your task: store in `top_key_head0` and `top_key_head1` the words ("the", "robot", ...) that the last word, "line", attends to most in head 0 and in head 1. Why it matters: reading an attention table is a skill you will use again in Part 6.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+top_key_head0 = None   # the word that "line" (the last word) attends to most in head 0
+top_key_head1 = None   # the word that "line" attends to most in head 1
+
+# %%
+if top_key_head0 is None or top_key_head1 is None:
+    print("Fill in top_key_head0 and top_key_head1 above, then run this cell again.")
+else:
+    check("head 0 is right", top_key_head0 == words[int(Wh[0, 5].argmax())], "Look at the last row of head 0: which column is largest?")
+    check("head 1 is right", top_key_head1 == words[int(Wh[1, 5].argmax())], "Look at the last row of head 1: which column is largest?")
+    RESULTS["p2_top_keys"] = (top_key_head0, top_key_head1)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# top_key_head0 = words[int(Wh[0, 5].argmax())]
+# top_key_head1 = words[int(Wh[1, 5].argmax())]
+# ```
+#
+# What you should get: Head 0 gives "black" (0.43) and head 1 gives "the" (0.68, the first "the"). The two heads look at different things.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 2.6. The cost of attention
+#
+# The weights table has `n x n` entries for each head, so the number of score entries is `heads x n²`. Doubling the length of the text multiplies this by 4. In this block we time the forward pass of our layer (width 64, batch of 4 random sequences) for `n = 64, 128, 256, 512` with 1 head and with 8 heads, and print the number of score entries next to the time. Timings depend on your machine, and on what else the machine is doing, so only the pattern matters.
+
+# %%
+def time_mha(n, h, d_model=64, batch=4, repeats=5):
+    """Best time (milliseconds) of one forward pass of MultiHeadAttention on random input of n tokens."""
+    torch.manual_seed(SEED)
+    m = MultiHeadAttention(d_model, h); xx = torch.randn(batch, n, d_model); best = 1e9
+    with torch.no_grad():
+        m(xx)                                                       # warm-up
+        for _ in range(repeats):
+            t0 = time.perf_counter(); m(xx); best = min(best, time.perf_counter() - t0)
+    return best * 1000
+
+sizes = [64, 128, 256] if QUICK else [64, 128, 256, 512]
+print("   n | score entries h=1 | score entries h=8 | time h=1 (ms) | time h=8 (ms)")
+rows = []
+for n in sizes:
+    t1, t8 = time_mha(n, 1), time_mha(n, 8)
+    rows.append((n, t1, t8))
+    print(f"{n:4d} | {1 * n * n:17,d} | {8 * n * n:17,d} | {t1:13.1f} | {t8:13.1f}")
+
+# %% [markdown]
+# **What you should see.** You should see the score entries `4,096; 16,384; 65,536; 262,144` for one head and eight times as many for eight heads. On our test machine the times for one head were about 0.3, 0.7, 1.1 and 3.8 ms, and for eight heads about 0.8, 2.4, 7.2 and 35 ms (another run gave 3.3 and 31 ms for `n = 512`). Your times will differ, but you should see that (1) the time grows faster than linearly with `n`, and (2) 8 heads cost clearly more than 1 head for long sequences.
+
+# %%
+print("time ratio n=%d vs n=%d at h=1: %.1fx (the score entries grow 4x each time n doubles)" % (rows[-1][0], rows[-2][0], rows[-1][1] / rows[-2][1]))
+
+# %% [markdown]
+# The ratio line says that going from `n = 256` to `n = 512` took between 3 and 4 times longer for one head (we measured 3.4x in one run and 4.1x in another), in line with the 4 times larger table. This is the quadratic cost of attention that Week 7 and the lesson mentioned, and the reason people work on long-context tricks.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - Timings are noisy on a shared computer. The function takes the best of 5 runs and a warm-up run first to reduce the noise.
+# - On the Spark you may see different numbers because it has more CPU cores. The pattern (about 4x for double n) stays.
+#
+# **Try also (optional)**
+#
+# - Add `n = 1024` to the list for one head. How long does it take, and how large is the score table in megabytes (4 bytes per number)?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 2.6. The cost of attention
+#
+# Your task: store in `entries` the number of score entries for 12 heads and `n = 1024`. Why it matters: it is the real number for a GPT-2 small layer with a full 1,024-token window.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+entries = None   # the number of score entries (heads x n x n) for 12 heads and n = 1024
+
+# %%
+if entries is None:
+    print("Fill in entries above, then run this cell again.")
+else:
+    check("entries is heads x n x n", entries == 12 * 1024 * 1024, "12 * 1024 * 1024.")
+    RESULTS["p2_entries"] = int(entries)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# entries = 12 * 1024 * 1024
+# ```
+#
+# What you should get: `entries` is 12,582,912 (12 times 1,024 times 1,024). In float32 that is about 50 MB for one layer and one sequence.
+#
+# </details>
+
+# %% [markdown]
+# ### Part 2 checkpoint: Multi-head attention
+#
+# Before you move on, make sure you can say each of these in your own words:
+#
+# - Attention on batches has the weights shape `(batch, seq, seq)`; with heads it is `(batch, heads, seq, seq)`, so for 2 sequences of 5 tokens and 4 heads it is `(2, 4, 5, 5)`, 200 numbers (Steps 2.1 and 2.3).
+# - Splitting into heads is `view(batch, seq, h, d_head)` followed by `transpose(1, 2)`; merging is the reverse with `reshape`; the round trip is exact (Step 2.2).
+# - Your `MultiHeadAttention` agrees with `F.scaled_dot_product_attention` and with `nn.MultiheadAttention` (Step 2.3).
+# - An attention layer has `4d² + 4d` parameters: 2,362,368 for `d = 768`, whatever the number of heads (Step 2.4).
+# - Untrained heads make different (random) choices, and the cost is `heads · n²` score entries: 4 times more when the text doubles (Steps 2.5 and 2.6).
+#
+# Look back at your Imagine-first shape. The answer is `(2, 4, 5, 5)`: one 5 by 5 table for each of the 4 heads of each of the 2 sequences. If you forgot the head axis, or the batch axis, say which one in a markdown cell.
+#
+# Double-click this cell to write two sentences about what surprised you in this part.
+
+# %% [markdown]
+# ## Part 3. The causal mask and shifted targets (25 min)
+#
+# *Lesson section: "Autoregressive".* A language model is trained to predict the next token. Training it is a clever trick: instead of showing it one position at a time, we give it a whole window of text and ask for the next token at **every** position in parallel. That is only fair if each position is not allowed to look at the tokens that come after it, otherwise the answer would be in plain sight. The tool that enforces this is the **causal mask**. In this part you build the mask, prove with an experiment that no information leaks from the future, look at the data as the model sees it (the targets are the input shifted by one place), compute the loss by hand and see why an untrained model starts at the loss ln V, compare the parallel training step with the sequential generation loop, and count what a key-value cache saves. These are the ideas of the lesson's figure on the causal mask and the shifted loss.
+
+# %% [markdown]
+# ### ✏️ Imagine first
+#
+# Suppose we forget the mask, so that each token can see the whole window, including the very token it is asked to predict. Before you run any code, predict what happens to the training loss: does it fall slowly like a normal model, fall suspiciously fast, or not move at all? And what loss does a model that knows nothing about the text start at, for a vocabulary of V characters? Write both in the cell below. You will see the answers in Steps 3.2 and 3.4, and the real experiment in Part 6.
+#
+# Write your prediction in the starter cell below (it does not matter if you are wrong: the point is to commit before you look).
+
+# %%
+# Imagine first: what happens if a token can see its own answer?
+my_loss_with_leak = None   # the training loss you expect after a while if every token can see the token it must predict (a number)
+my_loss_chance = None      # the loss of a model that knows nothing about the text, for a vocabulary of V characters (a formula or a number)
+
+# %% [markdown]
+# ### Step 3.1. Build the mask
+#
+# The causal mask is a lower-triangular table of ones and zeros: row `i` (the token that looks) may look at the columns `0..i` and not at the columns after `i`. We build it with `torch.tril(torch.ones(n, n))`, put minus infinity in the forbidden cells of a score table with `masked_fill` (which fills the cells where the mask is 0 with `-inf`), and apply the softmax. Since `exp(-inf)` is exactly 0, the forbidden cells get weight exactly 0 and the rest of the row is renormalised. Our example: the sentence "the cat sat down" with a made-up 4 by 4 table of scores.
+
+# %%
+tokens = ["the", "cat", "sat", "down"]
+scores = torch.tensor([ [1.0, 0.5, 0.2, 0.1],
+                        [0.4, 1.2, 0.3, 0.2],
+                        [0.1, 0.9, 1.1, 0.4],
+                        [0.2, 0.3, 0.8, 1.5] ])
+n = len(tokens)
+mask = torch.tril(torch.ones(n, n))                        # 1 = may look, 0 = may not (the future)
+print("mask:"); print(mask.int())
+masked = scores.masked_fill(mask == 0, float("-inf"))      # forbidden cells get minus infinity
+print("masked scores:"); print(masked)
+W_plain = F.softmax(scores, dim=-1)
+W_causal = F.softmax(masked, dim=-1)
+np.set_printoptions(precision=3, suppress=True)
+print("weights without the mask:"); print(W_plain.numpy())
+print("weights with the mask:"); print(W_causal.numpy())
+
+# %% [markdown]
+# **What you should see.** You should see the mask (ones on and below the diagonal), the masked scores with `-inf` in the upper triangle, and the two weight tables. Without the mask each row spreads weight over all four tokens, for example the first row is `[0.406, 0.246, 0.182, 0.165]`. With the mask, the first row is `[1, 0, 0, 0]` (the first token can only look at itself), the second row is `[0.31, 0.69, 0, 0]`, the third is `[0.168, 0.374, 0.457, 0]` and the last row is unchanged: `[0.132, 0.145, 0.24, 0.483]`, because the last token may look at everything.
+
+# %%
+print("rows add up to 1:", bool(torch.allclose(W_causal.sum(-1), torch.ones(n))))
+print("upper triangle is exactly 0:", bool((W_causal[mask == 0] == 0).all()))
+assert torch.allclose(W_causal.sum(-1), torch.ones(n)) and (W_causal[mask == 0] == 0).all()
+print("row 0 (the) can only look at itself:", W_causal[0].numpy())
+print("row 3 (down) has weight on tokens:", [t for t, wv in zip(tokens, W_causal[3]) if wv > 0])
+
+# %% [markdown]
+# The checks print `True` for both statements and the assertion passes: every row adds up to 1 and the upper triangle is exactly 0, not just small. Row 0 ("the") has all its weight on itself, and row 3 ("down") has weight on all four tokens.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - Minus infinity is safe here because every row of a causal mask has at least one allowed cell (the token itself). A row made only of minus infinity would give nan after the softmax.
+# - If you masked *after* the softmax by multiplying by zero, the rows would no longer add up to 1. The mask must be applied to the scores, before the softmax.
+#
+# **Try also (optional)**
+#
+# - Print `W_causal` for a mask made with `torch.triu` instead of `torch.tril`. Which tokens may look at which now? (Each token sees the future and not the past: a reverse language model.)
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 3.1. Build the mask
+#
+# Your task: build `mask6`, the 6 by 6 causal mask. Why it matters: the number of allowed positions in each row is the key idea behind this whole part.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+mask6 = None   # the 6 x 6 lower-triangular mask (a tensor of 0 and 1)
+
+# %%
+if mask6 is None:
+    print("Fill in mask6 above, then run this cell again.")
+else:
+    check("mask6 has shape (6, 6)", tuple(mask6.shape) == (6, 6), "Use torch.tril(torch.ones(6, 6)).")
+    check("row 2 allows 3 positions", int(mask6[2].sum()) == 3, "Row i allows i + 1 positions.")
+    check("15 cells are forbidden", int((mask6 == 0).sum()) == 15, "n(n-1)/2 = 15 cells above the diagonal.")
+    RESULTS["p3_forbidden_cells"] = int((mask6 == 0).sum())
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# mask6 = torch.tril(torch.ones(6, 6))
+# ```
+#
+# What you should get: `mask6 = torch.tril(torch.ones(6, 6))`. Row `i` allows `i + 1` positions, and 15 cells (`6 · 5 / 2`) are forbidden.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 3.2. No leakage: an experiment
+#
+# Let us prove the mask works as a one-way mirror. We create two copies of the same attention layer with the same weights, one causal and one not. Then we take a random input of 8 tokens, change **only token 5** (we add 1 to all its numbers) and look at how much the output changes at each of the 8 positions. If the mask is right, the causal layer must not change at positions 0 to 4, which come before the changed token and therefore cannot see it, and it must change at positions 5 to 7. Without the mask, everything changes.
+
+# %%
+torch.manual_seed(SEED)
+att_c = MultiHeadAttention(16, 4, causal=True).eval()
+att_n = MultiHeadAttention(16, 4, causal=False).eval()
+att_n.load_state_dict(att_c.state_dict())                  # the same weights, only the mask differs
+x1 = torch.randn(1, 8, 16)
+x2 = x1.clone(); x2[0, 5] += 1.0                           # change token 5 only
+with torch.no_grad():
+    d_c = (att_c(x1) - att_c(x2)).abs().amax(dim=-1)[0]    # how much does the output change at each position?
+    d_n = (att_n(x1) - att_n(x2)).abs().amax(dim=-1)[0]
+print("change of the output at positions 0..7")
+print("with the causal mask   :", np.round(d_c.numpy(), 4))
+print("without the mask       :", np.round(d_n.numpy(), 4))
+
+# %% [markdown]
+# **What you should see.** You should see the change at each position. With the causal mask: `[0, 0, 0, 0, 0, 0.144, 0.143, 0.086]`: exactly zero for the positions 0 to 4, and different from zero from position 5. Without the mask: `[0.085, 0.039, 0.064, 0.104, 0.091, 0.113, 0.124, 0.086]`: every position, even position 0, feels a change that happened later in the text.
+
+# %%
+assert torch.allclose(att_c(x1)[0, :5], att_c(x2)[0, :5])                   # positions 0..4 cannot see token 5
+assert not torch.allclose(att_c(x1)[0, 5:], att_c(x2)[0, 5:])               # positions 5.. can
+assert not torch.allclose(att_n(x1)[0, :5], att_n(x2)[0, :5])               # without the mask, even position 0 changes
+print("causal: positions 0-4 unchanged, positions 5-7 changed.  No mask: everything changed.")
+
+# %% [markdown]
+# The assertions and the final line confirm it. This is your first answer to the Imagine-first question: without the mask the future leaks into the past. When the target of position 0 is the token at position 1, a model that can see position 1 can simply copy it.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - `att_n.load_state_dict(att_c.state_dict())` copies the weights from one layer to the other, so the only difference is the mask.
+# - `.eval()` is harmless here (there is no dropout) but it is a good habit for tests.
+# - `.abs().amax(dim=-1)` takes, for every position, the largest change over its 16 numbers.
+#
+# **Try also (optional)**
+#
+# - Change token 7 instead (the last one). Does anything before it change in the causal layer? What does this tell you about the tokens at the end?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 3.2. No leakage: an experiment
+#
+# Your task: change token 3 (not 5) and store in `changed_positions` the list of positions whose output changes in the causal layer `att_c`. Why it matters: it tells you which part of the window a single token can influence.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+changed_positions = None   # a list of the positions whose output changes when token 3 is changed (causal model, 8 tokens)
+
+# %%
+if changed_positions is None:
+    print("Fill in changed_positions above, then run this cell again.")
+else:
+    x3 = x1.clone(); x3[0, 3] += 1.0
+    with torch.no_grad():
+        truth = [i for i in range(8) if not torch.allclose(att_c(x1)[0, i], att_c(x3)[0, i])]
+    check("changed_positions is right", list(changed_positions) == truth, "Change token 3 in a copy, run att_c on both, and compare each position.")
+    RESULTS["p3_changed_positions"] = list(changed_positions)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# x3 = x1.clone(); x3[0, 3] += 1.0
+# with torch.no_grad():
+#     changed_positions = [i for i in range(8) if not torch.allclose(att_c(x1)[0, i], att_c(x3)[0, i])]
+# ```
+#
+# What you should get: `changed_positions` is `[3, 4, 5, 6, 7]`: a token influences its own position and all later ones, never earlier ones.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 3.3. Teacher forcing and the shift
+#
+# To train a language model we take a window of `block_size` characters as the input `x` and the same window **shifted one place to the left** as the target `y`: at every position the right answer is the character that comes next in the text. This is called **teacher forcing**: the model is always given the true text as input, even if it would have guessed wrong. `CharData(TOY_TEXT)` turns the text into integer ids; `get_batch(batch_size, block_size, gen)` returns the windows. We print two windows as text to see the shift.
+
+# %%
+data = CharData(TOY_TEXT)
+print("characters in TOY_TEXT:", len(TOY_TEXT), "| vocabulary size V =", data.vocab_size)
+print("the vocabulary:", "".join(data.chars).replace(" ", "_"))
+gen = torch.Generator().manual_seed(SEED)
+xb, yb = data.get_batch(2, 16, gen)                         # 2 windows of 16 characters
+print("x shape:", tuple(xb.shape), "| y shape:", tuple(yb.shape))
+for i in range(2):
+    print("x:", repr(data.decode(xb[i])))
+    print("y:", repr(data.decode(yb[i])))
+
+# %% [markdown]
+# **What you should see.** You should see that `TOY_TEXT` has 474 characters and a vocabulary of V = 24 (letters, the space, shown as an underscore, and the full stop). The vocabulary, sorted, is `_.abcdefghiklmnoprstuvwy`. The two printed pairs show the shift: `x: 'he line and the '` and `y: 'e line and the m'`: the target is the input moved one place left, with a new last character. Every window of 16 characters gives 16 training examples at once.
+
+# %%
+ok = bool((yb[:, :-1] == xb[:, 1:]).all())
+print("y[:, :-1] == x[:, 1:] (y is x shifted by one):", ok)
+assert ok
+print("at position 0 the model sees", repr(data.decode(xb[0, :1])), "and must predict", repr(data.decode(yb[0, :1])))
+print("at position 5 the model sees", repr(data.decode(xb[0, :6])), "and must predict", repr(data.decode(yb[0, 5:6])))
+
+# %% [markdown]
+# The check prints `True`: the target without its last column equals the input without its first column. At position 0 the model sees only "h" and must say "e"; at position 5 it sees "he lin" and must say "e". The same window teaches the model to predict from a context of any length from 1 to 16 characters.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - `get_batch` draws random starting points, so you get different windows for different generators. Fixing the generator (`torch.Generator().manual_seed(SEED)`) makes the batch repeatable.
+# - Because `y` is `x` moved by one, the last character of `y` is a character that does not appear in `x`. It is the target of the last position.
+#
+# **Try also (optional)**
+#
+# - Ask for a batch with `block_size=40` and print `x[0]` and `y[0]` as text. Do the first 39 characters of `y[0]` match `x[0]` shifted?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 3.3. Teacher forcing and the shift
+#
+# Your task: store in `pairs_per_batch` the number of (context, target) training examples in one batch of 32 windows of 32 characters. Why it matters: one batch teaches the model 1,024 predictions in one go; that is what makes training parallel.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+pairs_per_batch = None   # how many (context, target) training examples are in one batch of 32 windows of 32 characters
+
+# %%
+if pairs_per_batch is None:
+    print("Fill in pairs_per_batch above, then run this cell again.")
+else:
+    check("pairs_per_batch is batch x block", pairs_per_batch == 32 * 32, "Every position of every window is one training example.")
+    RESULTS["p3_pairs_per_batch"] = int(pairs_per_batch)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# pairs_per_batch = 32 * 32
+# ```
+#
+# What you should get: `pairs_per_batch` is 1,024: every position of every window is one example.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 3.4. The loss by hand
+#
+# The training loss is the average, over all positions, of `-ln p(target)`, the minus log of the probability that the model gave to the right next character. We compute it by hand: `log_softmax` of the logits, then `gather` the log-probability of the target at every position, change the sign and average. We then compare with `F.cross_entropy`. For the model we use `MiniLM`, a tiny untrained model made of an embedding, one causal attention layer and an output layer, with small random weights. An untrained model knows nothing, so its probabilities are about `1/V` for every character, and its loss should be about `ln V`. The **perplexity** `exp(loss)` is the number of equally likely characters the model is hesitating between.
+
+# %%
+class MiniLM(nn.Module):
+    """A tiny untrained language model: embedding -> one causal attention layer (with residual) -> output layer."""
+    def __init__(self, vocab, d=32, n_heads=4):
+        super().__init__()
+        self.emb = nn.Embedding(vocab, d); self.attn = MultiHeadAttention(d, n_heads, causal=True); self.head = nn.Linear(d, vocab)
+        nn.init.normal_(self.emb.weight, std=0.02); nn.init.normal_(self.head.weight, std=0.02); nn.init.zeros_(self.head.bias)
+    def forward(self, ids):
+        h = self.emb(ids)
+        return self.head(h + self.attn(h))
+
+V = data.vocab_size
+torch.manual_seed(SEED)
+mini = MiniLM(V)
+xb, yb = data.get_batch(32, 32, torch.Generator().manual_seed(SEED))
+with torch.no_grad():
+    logits = mini(xb)                                          # (32, 32, V)
+logp = F.log_softmax(logits, dim=-1)
+nll = -logp.gather(-1, yb.unsqueeze(-1)).squeeze(-1)           # -ln p(target) at every position: (32, 32)
+loss_manual = float(nll.mean())
+loss_ce = float(F.cross_entropy(logits.reshape(-1, V), yb.reshape(-1)))
+print("logits:", tuple(logits.shape), "| per-position losses:", tuple(nll.shape))
+print(f"ln V = {math.log(V):.3f} | manual loss {loss_manual:.3f} | F.cross_entropy {loss_ce:.3f}")
+print(f"perplexity exp(loss) = {math.exp(loss_manual):.2f}  (V = {V})")
+assert abs(loss_manual - math.log(V)) < 0.3 and abs(loss_manual - loss_ce) < 1e-5
+
+# %% [markdown]
+# **What you should see.** You should see logits of shape `(32, 32, 24)` and 32 by 32 per-position losses. The manual loss is 3.174 and `F.cross_entropy` gives the same, 3.174. The value `ln V = ln 24` is 3.178: the untrained model sits almost exactly at its theoretical start. The perplexity is 23.90, close to the vocabulary size 24: an untrained model is as confused as a random guess among all 24 characters.
+
+# %%
+p_target = float(torch.exp(logp.gather(-1, yb.unsqueeze(-1))).mean())
+print(f"average probability given to the right character: {p_target:.3f}  (uniform guessing gives 1/V = {1 / V:.3f})")
+print("loss of the first position of the first window:", round(float(nll[0, 0]), 3))
+
+# %% [markdown]
+# The average probability given to the right character is 0.042, which is 1/24 (0.042). The assertion in the first block requires the loss to be within 0.3 of `ln V`; this is the sanity check you will run before every real training in Part 5.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - If your first loss is far above `ln V`, the output layer is too large at the start (the model is confidently wrong). We used a standard deviation of 0.02 for the new weights, as GPT-2 does.
+# - If it is far below `ln V` before any training, something leaks (a missing mask or targets inside the input).
+#
+# **Try also (optional)**
+#
+# - Make a model with `std=1.0` for the output layer and compute the loss again. It is much higher than `ln V`: large random logits make the model confidently wrong.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 3.4. The loss by hand
+#
+# Your task: compute `loss_half`, the loss when the model gives probability 0.5 to every correct character, and `ppl_half`, its perplexity. Why it matters: it gives you a feeling for the scale of loss values.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+loss_half = None   # the loss -ln p when the model gives probability 0.5 to every correct character
+ppl_half = None    # the perplexity exp(loss) of that model
+
+# %%
+if loss_half is None or ppl_half is None:
+    print("Fill in loss_half and ppl_half above, then run this cell again.")
+else:
+    check("loss_half is -ln 0.5", abs(loss_half - math.log(2)) < 1e-9, "Use -math.log(0.5).")
+    check("ppl_half is 2", abs(ppl_half - 2) < 1e-9, "exp(ln 2) = 2: like choosing between 2 equally likely characters.")
+    RESULTS["p3_loss_half"] = round(float(loss_half), 3)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# loss_half = -math.log(0.5)
+# ppl_half = math.exp(loss_half)
+# ```
+#
+# What you should get: `loss_half` is `ln 2 = 0.693`, and the perplexity is 2: the model hesitates between two equally likely characters.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 3.5. Parallel in training, sequential in generation
+#
+# To train, one forward pass over a window gives the loss at all positions at once. To generate, the model must produce a character, append it to the text, and run again, since each new character depends on the one before. `generate_slowly` is that loop: one forward pass per new token. We count the passes and time the loop for 50 new tokens, and compare with one forward pass that computes the loss of a 50-token window.
+
+# %%
+@torch.no_grad()
+def generate_slowly(model, prompt_ids, n_new):
+    """One forward pass per new token: the sequential loop of autoregressive generation. Returns (ids, number of forward passes)."""
+    ids, passes = prompt_ids.clone(), 0
+    for _ in range(n_new):
+        logits = model(ids[:, -32:])[:, -1, :]                    # only the LAST position is needed
+        nxt = torch.multinomial(F.softmax(logits, dim=-1), 1)
+        ids = torch.cat([ids, nxt], dim=1); passes += 1
+    return ids, passes
+
+torch.manual_seed(SEED)
+prompt = torch.tensor([data.encode("the ")])
+t0 = time.perf_counter(); out_ids, n_passes = generate_slowly(mini, prompt, 50); t_gen = time.perf_counter() - t0
+xw, yw = data.get_batch(1, 50, torch.Generator().manual_seed(SEED))
+t0 = time.perf_counter()
+with torch.no_grad(): lw = F.cross_entropy(mini(xw).reshape(-1, V), yw.reshape(-1))
+t_one = time.perf_counter() - t0
+print(f"generating 50 new tokens : {n_passes} forward passes, {t_gen * 1000:.1f} ms")
+print(f"training loss of a 50-token window: 1 forward pass, {t_one * 1000:.1f} ms")
+print(f"the sequential job took about {t_gen / t_one:.0f} times longer")
+assert n_passes == 50 and t_gen > t_one
+
+# %% [markdown]
+# **What you should see.** You should see that generating 50 tokens took 50 forward passes (37.3 ms on our test machine in the run printed above, 26.8 ms in another) and that computing the loss of a 50-token window took 1 forward pass (0.5 ms): about 75 times longer for the same number of characters (57 times in the other run). Your numbers will differ, but the factor should be of the order of tens. The generated ids have length 54, the 4 characters of the prompt "the " and the 50 new ones.
+
+# %%
+print("generated ids have length", out_ids.shape[1], "= 4 prompt tokens + 50 new ones")
+print("an untrained model writes noise:", repr(data.decode(out_ids[0])[:60]))
+
+# %% [markdown]
+# An untrained model writes noise (`'the b lbphehtut.hspulerr mglmfsarudof enr.meone iykhd.'`). After training in Part 6 you will see the same loop produce text that looks like the training text.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - We feed the model only the last 32 characters (`ids[:, -32:]`): the model has a maximum context. The sampling function `sample_lm` from the setup does the same.
+# - `@torch.no_grad()` switches off the gradient bookkeeping, which is not needed for generation and makes it faster.
+#
+# **Try also (optional)**
+#
+# - Change the window to 100 tokens and time the single forward pass. Does it take twice as long as for 50?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 3.5. Parallel in training, sequential in generation
+#
+# Your task: measure `t_gen100`, the time in seconds to generate 100 new tokens with `generate_slowly(mini, prompt, 100)`. Why it matters: it shows that generation cost grows with the number of tokens you ask for, one pass at a time.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+t_gen100 = None   # time in seconds to generate 100 new tokens with generate_slowly(mini, prompt, 100)
+
+# %%
+if t_gen100 is None:
+    print("Fill in t_gen100 above, then run this cell again.")
+else:
+    check("t_gen100 is a positive time, longer than one forward pass of a 50-token window", t_gen100 > t_one, "Time the call with time.perf_counter() before and after.")
+    RESULTS["p3_passes_100"] = 100
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# t0 = time.perf_counter(); generate_slowly(mini, prompt, 100); t_gen100 = time.perf_counter() - t0
+# ```
+#
+# What you should get: `t_gen100` is roughly twice the time for 50 tokens (about 0.07 s on our machine).
+#
+# </details>
+
+# %% [markdown]
+# ### Step 3.6. KV cache arithmetic
+#
+# When the model generates token number `n`, the keys and values of all earlier tokens are the same as they were one step before. A **KV cache** keeps them and computes only the new query against the stored keys. The first block counts the score computations for one head: without a cache, the step for the `n`-th token recomputes the whole `n x n` table; with a cache it computes `n` scores. The second block implements both for a single head and checks that they give the same output.
+
+# %%
+print("      n | scores without cache (n x n) | scores with cache (n) | ratio")
+for n in [100, 1000, 10000]:
+    print(f"{n:7,d} | {n * n:28,d} | {n:21,d} | {n * n // n:5,d}x")
+n = 1000
+all_no_cache = n * (n + 1) * (2 * n + 1) // 6       # recompute t x t scores at every step t = 1..n
+all_cache = n * (n + 1) // 2                        # only t scores at every step t
+print(f"generating ALL {n} tokens: {all_no_cache:,} score computations without a cache, {all_cache:,} with a cache ({all_no_cache / all_cache:.0f}x)")
+
+# %% [markdown]
+# **What you should see.** You should see the table: for `n = 1000`, 1,000,000 scores without a cache and 1,000 with a cache (1,000 times fewer); for `n = 100`, 10,000 against 100; for `n = 10,000`, 100,000,000 against 10,000. If you generate *all* 1,000 tokens, the totals are 333,833,500 scores without a cache and 500,500 with a cache (667 times fewer).
+
+# %%
+def attn_causal_full(q, k, v):
+    """Single-head causal attention for all positions at once. q, k, v: (n, d)."""
+    n, d = q.shape
+    s = (q @ k.T / math.sqrt(d)).masked_fill(torch.tril(torch.ones(n, n)) == 0, float("-inf"))
+    return F.softmax(s, dim=-1) @ v
+
+def attn_cached(q, k, v):
+    """The same output, computed one token at a time with a cache of keys and values. Returns (output, number of scores computed)."""
+    n, d = q.shape; K, Vv, out, count = [], [], [], 0
+    for t in range(n):
+        K.append(k[t]); Vv.append(v[t])                  # the cache grows by one key and one value per step
+        Kt, Vt = torch.stack(K), torch.stack(Vv)         # (t+1, d)
+        w = F.softmax(Kt @ q[t] / math.sqrt(d), dim=-1)  # only t+1 scores
+        out.append(w @ Vt); count += len(K)
+    return torch.stack(out), count
+
+torch.manual_seed(SEED)
+q, k, v = torch.randn(12, 8), torch.randn(12, 8), torch.randn(12, 8)
+o_full = attn_causal_full(q, k, v); o_cache, cnt = attn_cached(q, k, v)
+print("cached output equals the full computation:", torch.allclose(o_full, o_cache, atol=1e-6))
+print("scores computed with the cache for n = 12:", cnt, "| without:", sum(t * t for t in range(1, 13)))
+assert torch.allclose(o_full, o_cache, atol=1e-6)
+
+# %% [markdown]
+# `cached output equals the full computation: True`. For a sequence of 12 tokens the cached version computed 78 scores (1 + 2 + ... + 12) and recomputing everything each step needs 650 (1 + 4 + ... + 144). The cache changes the cost, not the answer. The price is memory: the cache stores the keys and values of every token, in every layer.
+
+# %% [markdown]
+# **Tips and common mistakes**
+#
+# - A real implementation stores keys and values as tensors that grow by one row per step (here, a Python list that we stack, which is simpler to read).
+# - The cache is used only at generation time. In training all positions are processed at once, so there is nothing to cache.
+#
+# **Try also (optional)**
+#
+# - Compute how many numbers a cache stores for GPT-2 small at 1,024 tokens (keys and values, 768 numbers each per token, 12 layers). That is `2 · 1,024 · 768 · 12` numbers.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 3.6. KV cache arithmetic
+#
+# Your task: store in `no_cache` the number of score computations for the 2,000th token without a cache, and in `with_cache` the number with a cache. Why it matters: it is the saving that makes chat models fast.
+#
+# Replace the `None` values (or write the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+no_cache = None     # score computations to produce the 2000th token if you recompute everything (2000 x 2000)
+with_cache = None   # score computations for the same token with a cache
+
+# %%
+if no_cache is None or with_cache is None:
+    print("Fill in no_cache and with_cache above, then run this cell again.")
+else:
+    check("no_cache is 2000 x 2000", no_cache == 2000 * 2000, "Every query against every key: n x n.")
+    check("with_cache is 2000", with_cache == 2000, "Only the new query against the 2000 stored keys.")
+    RESULTS["p3_cache_ratio"] = no_cache // with_cache
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# no_cache = 2000 * 2000
+# with_cache = 2000
+# ```
+#
+# What you should get: `no_cache` is 4,000,000 (2,000 times 2,000) and `with_cache` is 2,000: a saving of 2,000 times for that token.
+#
+# </details>
+
+# %% [markdown]
+# ### Part 3 checkpoint: The causal mask
+#
+# Before you move on, make sure you can say each of these in your own words:
+#
+# - The causal mask is `torch.tril(torch.ones(n, n))`; forbidden scores become minus infinity, and the softmax turns them into exact zeros while each row still adds up to 1 (Step 3.1).
+# - With the mask, changing token 5 changes only the outputs at positions 5 and later; without it every position changes, even position 0 (Step 3.2).
+# - The training target is the input shifted by one character, so one window of 32 characters is 32 training examples at once (Step 3.3).
+# - An untrained model has loss about `ln V` (3.174 against `ln 24 = 3.178`) and perplexity about V (Step 3.4).
+# - Training is parallel (one forward pass for the whole window) but generation is sequential (one pass per token), and a KV cache turns the `n²` scores of a step into `n` (Steps 3.5 and 3.6).
+#
+# Look back at your Imagine-first answers. Without the mask a model can read its answer, so the training loss would fall suspiciously fast without learning anything useful; you will measure this in Part 6, Step 6.3. A model that knows nothing about a text with V characters starts at the loss `ln V`, here about 3.18.
+#
+# Double-click this cell to write two sentences about what surprised you in this part.
+
+# %% [markdown]
+# ## Part 4. Feed-forward, residuals and layer norm (25 min)
+#
+# *Lesson section: "FFN and norm".* Attention moves information *between* tokens. Three more pieces make a block that can be stacked twelve times and still train. The **feed-forward network** works on each token alone and holds most of the block's parameters. The **residual connection** adds a layer's input to its output, so that the signal and the gradient have a straight road through the stack. The **layer norm** re-balances every token's vector so that the numbers do not drift to huge or tiny sizes. In this part you write layer norm by hand and check it against PyTorch, build the feed-forward network and count its parameters, provoke the shape error that residuals can cause, measure how well the gradient reaches the first layer of a 12-layer stack with and without residuals, and compare the post-norm and pre-norm orderings. ==Residuals give the gradient a road, and layer norm keeps the numbers on that road a sensible size.==
+#
+# This part defines everything it uses, so it runs after the Setup cells alone. All numbers below are for `SEED = 42`.
+#
+# **Imagine first.** Picture a stack of 12 identical layers. In one version every layer replaces its input: the output of layer 5 is only what layer 5 computed. In the other version every layer *adds* its result to what came in. After one backward pass, the first layer is twelve steps away from the loss. Do you expect the first layer of the plain stack to receive a gradient of about the same size as the last layer, or a much smaller one? Is the stack with additions easier to train? Write your guess below (a word and a reason). In Step 4.4 you will measure it.
+
+# %%
+# Imagine first: does a 12-layer stack without residual connections train as easily as one with them?
+my_guess_residual = ""   # write "yes", "no" or "slower" and one reason
+
+# %% [markdown]
+# ### Step 4.1. Layer norm by hand
+#
+# Layer norm takes the vector of one token (its `d` features) and rescales it: subtract the mean of the features, divide by their standard deviation (with a tiny `eps` so that we never divide by zero), then multiply by a learned `gamma` and add a learned `beta`. After the first two operations the token has mean 0 and variance 1; `gamma` and `beta` let the model undo that if it wants to. We write it in NumPy for three tokens with four features each, check it against `nn.LayerNorm`, and then compute the batch-norm way (statistics down a column) to see the difference.
+
+# %%
+np.set_printoptions(precision=3, suppress=True)
+
+def layer_norm(x, gamma, beta, eps=1e-5):
+    """Layer norm in NumPy: every ROW (one token) is normalised over its own features, then scaled by gamma and shifted by beta."""
+    mean = x.mean(axis=-1, keepdims=True)
+    var = x.var(axis=-1, keepdims=True)              # variance over the features (divide by d, not d - 1)
+    return gamma * (x - mean) / np.sqrt(var + eps) + beta
+
+X = np.array([[2.0, 4.0, 6.0, 8.0], [1.0, 1.0, 1.0, 5.0], [10.0, 20.0, 30.0, 40.0]])   # 3 tokens, 4 features each
+Y = layer_norm(X, np.ones(4), np.zeros(4))
+print("normalised rows:\n", Y)
+print("row means    :", Y.mean(axis=1))
+print("row variances:", Y.var(axis=1))
+Yt = nn.LayerNorm(4, eps=1e-5)(torch.tensor(X, dtype=torch.float32)).detach().numpy()   # gamma = 1, beta = 0 at the start
+print("largest difference to nn.LayerNorm:", float(np.abs(Y - Yt).max()))
+assert np.allclose(Y, Yt, atol=1e-5)
+assert np.allclose(Y.mean(axis=1), 0, atol=1e-6) and np.allclose(Y.var(axis=1), 1, atol=1e-3)
+g2, b2 = np.array([1.0, 2.0, 0.5, 1.0]), np.array([0.0, 0.0, 1.0, -1.0])
+print("row 0 with gamma =", g2, "and beta =", b2, ":", layer_norm(X, g2, b2)[0])
+
+# %% [markdown]
+# Now the other axis. Batch norm computes its statistics for each *feature* over all tokens in the batch; layer norm computes them for each *token* over its own features. We normalise the columns of the same matrix and compare the means.
+
+# %%
+# Batch-norm style: statistics over the TOKENS (down each column) instead of over the features of one token
+col = (X - X.mean(axis=0)) / np.sqrt(X.var(axis=0) + 1e-5)
+print("batch-norm style, column means:", col.mean(axis=0))
+print("batch-norm style, row means   :", col.mean(axis=1))
+print("layer norm,       row means   :", Y.mean(axis=1))
+print("row 1 of X is", X[1], "-> layer norm gives", Y[1])
+
+# %% [markdown]
+# **What you should see.**
+#
+# Rows 0 and 2 of `X` are `[2, 4, 6, 8]` and `[10, 20, 30, 40]`: the second is ten times bigger, but after layer norm both rows are the same, `[-1.342 -0.447 0.447 1.342]`. Layer norm removes the scale of a token. Row 1, `[1, 1, 1, 5]`, becomes `[-0.577 -0.577 -0.577 1.732]`: its mean is 2 and its variance is 3, so the three small numbers sit 0.577 standard deviations below the mean and the large one 1.732 above. The row means are 0 and the row variances are 1 (printed as 1.0; it is 0.99999 because of `eps`). The largest difference to `nn.LayerNorm` is about 1e-7, float32 rounding, so the assert passes.
+#
+#    In the second block, the batch-norm style makes the *column* means 0 but leaves the row means at -0.552, -0.850 and 1.403. Layer norm does the opposite: each token (row) has mean 0 by itself. This matters for language: a batch of sentences has different lengths and padding, so statistics over the batch are awkward, while the statistics of one token's own features are always available.
+#
+# Tips and common mistakes:
+#
+# - `x.var(axis=-1)` in NumPy divides by `d`, as PyTorch's layer norm does. `torch.var` divides by `d - 1` unless you pass `unbiased=False`; that is a common source of a tiny mismatch.
+# - `keepdims=True` keeps the mean as a column, shape (3, 1), so that the subtraction broadcasts along the rows. Without it the shapes do not line up.
+# - `eps` goes inside the square root: `sqrt(var + eps)`.
+#
+# Try also (optional):
+#
+# - Set `gamma` to `[2, 2, 2, 2]` and `beta` to 1. What are the new row means and variances?
+# - Use `eps = 1.0` instead of `1e-5`. How different are the rows now? Why is a tiny `eps` almost invisible when the variance is large?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 4.1
+#
+# For the row `x_row = [3, 5, 7, 9]` compute the layer-normalised row with `gamma = 1` and `beta = 0` and store it in `x_hat`. Why it matters: Layer norm appears twice in every block and once at the end. If you can do it by hand for four numbers, you know what every one of them does.
+
+# %%
+x_row = np.array([3.0, 5.0, 7.0, 9.0])
+x_hat = None   # YOUR CODE: the layer-normalised row (gamma = 1, beta = 0, eps = 1e-5), as a NumPy array of 4 numbers
+
+# %%
+if x_hat is None:
+    print("Fill in x_hat above, then run this cell again.")
+else:
+    x_hat = np.asarray(x_hat, dtype=float)
+    check("same as layer_norm", np.allclose(x_hat, layer_norm(x_row, 1.0, 0.0), atol=1e-3), "subtract the mean (6), divide by sqrt(variance + eps); the variance is 5")
+    check("mean 0 and variance 1", abs(x_hat.mean()) < 1e-6 and abs(x_hat.var() - 1) < 1e-3, "the normalised row must have mean 0 and variance about 1")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# x_hat = (x_row - x_row.mean()) / np.sqrt(x_row.var() + 1e-5)
+# print(x_hat)
+# ```
+#
+# The mean is 6 and the variance is (9 + 1 + 1 + 9) / 4 = 5, so the standard deviation is 2.236 and the row becomes (-3, -1, 1, 3) / 2.236 = `[-1.342 -0.447 0.447 1.342]`. This is the same row as row 0 of `X`: both are evenly spaced numbers, only on different scales. Layer norm throws the scale away and keeps the *shape* of the vector.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 4.2. The feed-forward network
+#
+# After attention has mixed information between tokens, each token goes alone through a small two-layer network: a Linear layer that **expands** from `d` to `d_ff` (usually 4 times wider), an activation, and a Linear layer that **projects** back to `d`. It is called position-wise because the same two matrices are applied to every position, one token at a time; tokens do not talk to each other here. GPT-2 uses the **GELU** activation, a smooth cousin of ReLU. We build `FeedForward`, count its parameters by formula and with PyTorch, work out how large a share of a GPT-2 small block it holds, and compare ReLU and GELU.
+
+# %%
+class FeedForward(nn.Module):
+    """The position-wise feed-forward network: expand from d to d_ff, apply GELU, project back to d. The same two matrices serve every token."""
+    def __init__(self, d, d_ff):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(d, d_ff), nn.GELU(), nn.Linear(d_ff, d))
+    def forward(self, x):
+        return self.net(x)
+
+def ffn_params(d, d_ff):
+    return 2 * d * d_ff + d_ff + d          # weights d*d_ff twice, plus the two bias vectors
+
+ffn = FeedForward(32, 128)
+x = torch.randn(2, 8, 32)
+print("input", tuple(x.shape), "-> output", tuple(ffn(x).shape), "| hidden layer width", ffn.net[0].out_features)
+n_real = sum(p.numel() for p in ffn.parameters())
+print("FeedForward(32, 128): parameters", n_real, "| by formula", ffn_params(32, 128))
+assert n_real == ffn_params(32, 128) and ffn(x).shape == x.shape
+d, d_ff = 768, 3072                          # GPT-2 small
+attn_p, ln_p = 4 * d * d + 4 * d, 4 * d      # attention parameters, and two layer norms (gamma and beta each)
+block_p = attn_p + ffn_params(d, d_ff) + ln_p
+print("GPT-2 small, one block: attention", attn_p, "| feed-forward", ffn_params(d, d_ff), "| layer norms", ln_p, "| total", block_p)
+print("share of the feed-forward network: %.1f percent" % (100 * ffn_params(d, d_ff) / block_p))
+
+# %% [markdown]
+# Now the activation. ReLU cuts everything below 0 to exactly 0. GELU multiplies each number by the probability that a standard normal variable is smaller than it, so it lets small negative values through a little and bends smoothly. We print both on seven points and plot them.
+
+# %%
+z = torch.linspace(-3, 3, 7)
+print("z    :", z.numpy())
+print("ReLU :", F.relu(z).numpy())
+print("GELU :", F.gelu(z).numpy().round(4))
+print("GELU(1) =", round(float(F.gelu(torch.tensor(1.0))), 4), "| ReLU(1) =", 1.0, "| GELU(-1) =", round(float(F.gelu(torch.tensor(-1.0))), 4))
+zz = torch.linspace(-3, 3, 200)
+plt.figure(figsize=(5, 3.2))
+plt.plot(zz, F.relu(zz), label="ReLU"); plt.plot(zz, F.gelu(zz), label="GELU")
+plt.axhline(0, color="gray", lw=0.5); plt.axvline(0, color="gray", lw=0.5)
+plt.legend(); plt.title("ReLU and GELU"); plt.xlabel("input"); plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# **What you should see.**
+#
+# The module keeps the shape: (2, 8, 32) in, (2, 8, 32) out, with a hidden layer of width 128. It has 8,352 parameters, the formula `2 * d * d_ff + d_ff + d` gives 8,352 as well (two weight matrices, one bias of length 128 and one of length 32). For GPT-2 small, with `d = 768` and `d_ff = 3072`, one block has 2,362,368 parameters in attention, 4,722,432 in the feed-forward network and 3,072 in the two layer norms: 7,087,872 together. The feed-forward network holds **66.6 percent** of the block, two thirds. So when people say that Transformers store their knowledge in the feed-forward layers, at least the space for it is there.
+#
+#    For the activation: GELU(1) is 0.8413, not 1 (ReLU(1) is exactly 1), and GELU(-1) is -0.1587, a small negative number where ReLU gives 0. At 3 the two are almost the same (2.996 against 3); at -3 GELU is -0.004, nearly 0. The plot shows two curves that agree far from zero and differ in the smooth dip near zero.
+#
+# Tips and common mistakes:
+#
+# - The expansion factor is a design choice, not a law: `d_ff = 4 * d` is the usual choice, and the default of `TinyGPT` below.
+# - The feed-forward network has *no* mixing between positions. If you swap two tokens before the feed-forward network, the outputs swap with them. Only attention (and the mask) moves information between tokens.
+#
+# Try also (optional):
+#
+# - Change `d_ff` to `2 * d` for GPT-2 small. What share of the block does the feed-forward network have now?
+# - Check numerically that the feed-forward network treats tokens separately: apply `ffn` to `x` and to `x` with two tokens swapped, and compare.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 4.2
+#
+# Compute by hand the number of parameters of `FeedForward(48, 192)` and store it in `n_ffn`. Why it matters: The feed-forward network is the biggest part of every block; being able to count it is the first step towards counting a whole model in Part 5.
+
+# %%
+n_ffn = None   # YOUR CODE: the number of parameters of FeedForward(48, 192), computed by hand (weights and biases)
+
+# %%
+if n_ffn is None:
+    print("Fill in n_ffn above, then run this cell again.")
+else:
+    check("FeedForward(48, 192)", n_ffn == sum(p.numel() for p in FeedForward(48, 192).parameters()), "2 * 48 * 192 for the two weight matrices, plus 192 + 48 for the biases")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# n_ffn = 2 * 48 * 192 + 192 + 48
+# print(n_ffn)
+# ```
+#
+# Two weight matrices of 48 by 192 give 2 * 9,216 = 18,432. The two biases add 192 and 48. The total is 18,672. Notice that the count depends only on `d` and `d_ff`, never on the length of the sequence: the same matrices serve every token.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 4.3. Residual connections
+#
+# A **residual connection** adds the input of a sublayer to its output: `y = x + F(x)`. Two consequences. First, the shapes of `x` and `F(x)` must be the same, otherwise the addition is not defined; this is why the feed-forward network goes back to `d` and why attention ends in an output projection `W_O` of width `d`. Second, the derivative of `y` with respect to `x` is `1 + F'(x)`: the `1` is a road that does not pass through any weights. First we provoke the shape error on purpose and read it, then we check the highway with autograd.
+
+# %%
+x = torch.randn(2, 5, 8)
+good, bad = nn.Linear(8, 8), nn.Linear(8, 16)
+print("x", tuple(x.shape), "| good(x)", tuple(good(x).shape), "| bad(x)", tuple(bad(x).shape))
+y = x + good(x)
+print("x + good(x): shape", tuple(y.shape))
+try:
+    y = x + bad(x)
+except RuntimeError as e:
+    print("RuntimeError:", str(e).split("\n")[0])
+
+# %% [markdown]
+# Two more facts. A branch that outputs zero leaves the signal unchanged, so a residual block can start as the identity; and the derivative of `x + F(x)` is the derivative of `F` plus exactly 1.
+
+# %%
+# A residual branch that outputs zero leaves the signal untouched: the block starts as the identity
+zero = nn.Linear(8, 8); nn.init.zeros_(zero.weight); nn.init.zeros_(zero.bias)
+print("x + zero(x) is exactly x:", torch.equal(x + zero(x), x))
+# The derivative: dy/dx = 1 + F'(x)
+t = torch.tensor(1.0, requires_grad=True)
+f = 0.3 * torch.tanh(t)                      # a small branch F(x) = 0.3 tanh(x)
+f.backward(); d_plain = float(t.grad); t.grad = None
+(t + 0.3 * torch.tanh(t)).backward(); d_res = float(t.grad)
+print("derivative of F alone: %.4f | derivative of x + F(x): %.4f (the extra 1 is the highway)" % (d_plain, d_res))
+assert abs(d_res - d_plain - 1.0) < 1e-6
+
+# %% [markdown]
+# **What you should see.**
+#
+# The first line shows `x` and the two linear layers' outputs: `good(x)` keeps (2, 5, 8) and `bad(x)` gives (2, 5, 16). The sum `x + good(x)` works and keeps (2, 5, 8). The sum `x + bad(x)` raises a `RuntimeError`: *The size of tensor a (8) must match the size of tensor b (16) at non-singleton dimension 2*. Read it as "the last axis has 8 numbers in one tensor and 16 in the other": the widths differ. The cure is never to broadcast; it is to make the sublayer end at width `d`.
+#
+#    In the second block, `x + zero(x)` is exactly `x` (`True`): with a zero branch the block is the identity. The derivative of the small branch `0.3 tanh(x)` at `x = 1` is 0.1260, and the derivative of `x + 0.3 tanh(x)` is 1.1260: exactly the extra 1. Through twelve such steps the plain chain multiplies twelve factors like 0.126; the residual chain multiplies twelve factors like 1.126.
+#
+# Tips and common mistakes:
+#
+# - The error message says *tensor a* and *tensor b*: a is the left operand of the plus, b the right one.
+# - Do not 'fix' a shape error by adding a projection to the residual path without thinking: that puts a weight matrix back on the road you wanted to keep free. Real Transformer blocks keep the residual path as a plain addition.
+#
+# Try also (optional):
+#
+# - Replace `0.3` by `3.0` in the derivative cell. What is the derivative of `x + F(x)` now? What would happen to a chain of twelve of these?
+# - Make `bad` output width 8 by changing `nn.Linear(8, 16)` to `nn.Linear(8, 8)` and rerun the error cell.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 4.3
+#
+# Write a function `res_ffn(x, ffn)` that returns the residual output of a feed-forward network: the input plus the network's output. Why it matters: This one line, `x + sublayer(x)`, appears twice in each Transformer block you will write in Part 5.
+
+# %%
+def res_ffn(x, ffn):
+    """Return the residual output of a feed-forward network: x plus ffn(x)."""
+    return None   # YOUR CODE HERE
+
+# %%
+xt = torch.randn(2, 5, 8)
+f8 = FeedForward(8, 32)
+out = res_ffn(xt, f8)
+if out is None:
+    print("Write the body of res_ffn above, then run this cell again.")
+else:
+    check("same shape as the input", tuple(out.shape) == tuple(xt.shape), "a residual output has the shape of x")
+    check("equals x + ffn(x)", torch.allclose(out, xt + f8(xt), atol=1e-6), "return x + ffn(x)")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# def res_ffn(x, ffn):
+#     return x + ffn(x)
+# ```
+#
+# The function is `return x + ffn(x)`. The check calls it with a feed-forward network of width 8 and checks the shape and the values. With a zero-initialised last layer it would return exactly `x`; with the random initial weights it returns `x` plus a small correction.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 4.4. Gradient flow with and without residuals
+#
+# Now we measure what the residual connection does for learning, using the method of Week 3: one backward pass, then the norm of the gradient of each layer's weight matrix. We build a stack of 12 layers of width 16 in four variants. **Plain**: `h = tanh(W h)`. **Plain with LayerNorm**: `h = LN(tanh(W h))`. **Residual**: `h = h + tanh(W h)`. **Residual with LayerNorm** (the pre-norm layout): `h = h + tanh(W LN(h))`. The loss is the mean of `h` squared. Layer 1 is the layer *farthest* from the loss; layer 12 is the closest. If the gradient reaches the first layer as strongly as the last, the ratio first over last is near 1.
+
+# %%
+def layer_grads(depth=12, width=16, residual=False, norm=False, seed=0):
+    """Gradient norm of every layer's weight matrix after one backward pass through a stack of `depth` layers.
+    plain: h = tanh(W h); residual: h = h + tanh(W h); norm without residual: h = LN(tanh(W h)); residual with norm (pre-norm): h = h + tanh(W LN(h))."""
+    torch.manual_seed(seed)
+    lins = [nn.Linear(width, width) for _ in range(depth)]
+    lns = [nn.LayerNorm(width) for _ in range(depth)]
+    h = torch.randn(32, width)
+    for lin, ln in zip(lins, lns):
+        if residual and norm:   h = h + torch.tanh(lin(ln(h)))
+        elif residual:          h = h + torch.tanh(lin(h))
+        elif norm:              h = ln(torch.tanh(lin(h)))
+        else:                   h = torch.tanh(lin(h))
+    h.pow(2).mean().backward()
+    return [float(l.weight.grad.norm()) for l in lins]
+
+VARIANTS = {"plain": (False, False), "plain + LayerNorm": (False, True), "residual": (True, False), "residual + LayerNorm": (True, True)}
+G = {name: layer_grads(12, 16, r, n) for name, (r, n) in VARIANTS.items()}
+print("gradient norm of the weights, layer 1 is the FIRST layer (farthest from the loss):")
+print("%-22s" % "variant", " ".join("L%-8d" % i for i in (1, 4, 8, 12)), " first/last")
+for name, g in G.items():
+    print("%-22s" % name, " ".join("%-9.2e" % g[i - 1] for i in (1, 4, 8, 12)), " %.3g" % (g[0] / g[-1]))
+
+# %% [markdown]
+# We plot the first-layer gradient of the four variants (left, log scale) and the gradient of every layer (right).
+
+# %%
+names = list(G)
+firsts = [G[n][0] for n in names]
+fig, ax = plt.subplots(1, 2, figsize=(10, 3.4))
+ax[0].bar(range(4), firsts, color=["tab:red", "tab:orange", "tab:blue", "tab:green"])
+ax[0].set_xticks(range(4)); ax[0].set_xticklabels([n.replace(" + ", "\n+ ") for n in names], fontsize=8)
+ax[0].set_yscale("log"); ax[0].set_title("gradient norm at the first layer (log scale)")
+for n in names: ax[1].plot(range(1, 13), G[n], marker="o", ms=3, label=n)
+ax[1].set_yscale("log"); ax[1].set_xlabel("layer (1 = first)"); ax[1].set_title("gradient norm by layer"); ax[1].legend(fontsize=7)
+plt.tight_layout(); plt.show()
+assert G["residual"][0] > 10 * G["plain"][0]
+
+# %% [markdown]
+# **What you should see.**
+#
+# Read the table. In the **plain** stack the gradient norm is 5.40e-02 at layer 12 but only 3.65e-05 at layer 1: the ratio first over last is 0.000677. Every layer on the way back multiplies the gradient by a factor below 1 (the weights have a small gain and the tanh slope is below 1), and twelve such factors leave less than a thousandth. With **residual** connections the gradient is about 2 everywhere (1.91 at layer 1, 1.94 at layer 12; ratio 0.985): the first layer gets roughly **50,000 times** more gradient than in the plain stack (1.91 against 3.65e-05). With **residual and LayerNorm** it is about 1.1 everywhere (ratio 0.971).
+#
+#    Now the honest part. **LayerNorm alone** (without residuals) did not rescue the first layer: its gradient is 4.55e-05, about the same as the plain stack's 3.65e-05. What it changed is the *shape*: the ratio first over last is 0.289 instead of 0.000677 (the later layers got much smaller gradients, 1.57e-04 at layer 12 instead of 5.40e-02), so the gradient is more even but still tiny. In this small experiment the residual connection is what carries the gradient; the layer norm keeps the sizes tidy. The bar chart shows this in one picture: three orders of magnitude between the red bar and the blue and green ones.
+#
+#    One caution: this is a toy (width 16, one batch, random weights, default initialisation). It shows the mechanism, not the exact size of the effect in a trained model.
+#
+# Tips and common mistakes:
+#
+# - `h.pow(2).mean().backward()` creates one gradient per weight matrix; `l.weight.grad.norm()` is the length of that gradient as one long vector.
+# - Use the same `seed` for all four variants so that they share the same weights and the same input: otherwise you compare luck.
+# - Layer 1 is the first layer of the *forward* pass, the one farthest from the loss. People sometimes number layers from the loss backwards; check which order a table uses.
+#
+# Try also (optional):
+#
+# - Change the depth to 24. Does the plain stack's first-layer gradient fall further? Does the residual stack's change?
+# - Replace `tanh` by `relu` in the plain stack. Does the first-layer gradient still vanish, explode or stay stable? Report what you measure.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 4.4
+#
+# Using `layer_grads`, compute the first-layer gradient norm of the **plain** stack (no residual, no norm) for depths 4, 8 and 12 and store the three numbers in a list `grad_first`. Why it matters: It shows how the gradient at the first layer shrinks as the stack gets deeper, which is the problem the residual connection solves.
+
+# %%
+grad_first = None   # YOUR CODE: a list with the first-layer gradient norm of the PLAIN stack (residual=False, norm=False) for depth 4, 8 and 12
+
+# %%
+if grad_first is None:
+    print("Fill in grad_first above, then run this cell again.")
+else:
+    ref = [layer_grads(dp, 16, False, False)[0] for dp in (4, 8, 12)]
+    check("three values", len(grad_first) == 3, "one number for each depth: 4, 8 and 12")
+    if len(grad_first) == 3:
+        check("values match", np.allclose(grad_first, ref, rtol=1e-3), "call layer_grads(depth, 16, False, False) and take element [0]")
+        check("they fall with depth", grad_first[0] > grad_first[1] > grad_first[2], "a deeper plain stack should give a smaller gradient at the first layer")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# grad_first = [layer_grads(dp, 16, False, False)[0] for dp in (4, 8, 12)]
+# print(grad_first)
+# ```
+#
+# The three numbers are about 1.77e-02, 7.51e-04 and 3.65e-05. Every four extra layers cost another factor of roughly 20 to 25. Going from 4 to 12 layers, the gradient at the first layer falls by a factor of about 480. That is why deep plain networks were hard to train before residual connections, and why every Transformer block has two of them.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 4.5. Post-norm and pre-norm
+#
+# Where exactly do we put the layer norm? The 2017 Transformer put it *after* the residual addition (**post-norm**): `h = LN(h + F(h))`. Most models since, GPT-2 included, put it *before* each sublayer (**pre-norm**): `h = h + F(LN(h))`. We compare the two orderings through 12 sublayers of a feed-forward type on random input, and watch the standard deviation of the residual stream (all numbers of all tokens) after each layer. With pre-norm the stream is only ever *added to*, so we expect it to grow; with post-norm it is normalised after every layer, so we expect it to stay at 1.
+
+# %%
+def make_sublayers(depth, d, seed=0):
+    """`depth` feed-forward sublayers with weights of standard deviation 1/sqrt(fan_in), so each one adds a signal of a similar size."""
+    torch.manual_seed(seed)
+    subs = []
+    for _ in range(depth):
+        l1, l2 = nn.Linear(d, 4 * d), nn.Linear(4 * d, d)
+        for l in (l1, l2): nn.init.normal_(l.weight, std=1 / math.sqrt(l.in_features)); nn.init.zeros_(l.bias)
+        subs.append(nn.Sequential(l1, nn.GELU(), l2))
+    return subs
+
+def stream_stds(kind, depth=12, d=32, seed=0):
+    """Standard deviation of the residual stream (over tokens and features) after every layer, for 'pre' or 'post' norm."""
+    subs = make_sublayers(depth, d, seed)
+    lns = [nn.LayerNorm(d) for _ in range(depth)]
+    torch.manual_seed(seed + 1)
+    h = torch.randn(64, d); stds = []
+    for f, ln in zip(subs, lns):
+        h = h + f(ln(h)) if kind == "pre" else ln(h + f(h))      # pre-norm: normalise the input of the sublayer; post-norm: normalise after the add
+        stds.append(float(h.detach().std()))
+    return stds
+
+pre, post = stream_stds("pre"), stream_stds("post")
+print("layer   pre-norm std   post-norm std")
+for i in (1, 2, 4, 6, 8, 10, 12): print("%5d   %12.3f   %13.3f" % (i, pre[i - 1], post[i - 1]))
+plt.figure(figsize=(5.5, 3.3))
+plt.plot(range(1, 13), pre, marker="o", label="pre-norm"); plt.plot(range(1, 13), post, marker="s", label="post-norm")
+plt.xlabel("layer"); plt.ylabel("std of the residual stream"); plt.legend(); plt.title("Size of the residual stream"); plt.tight_layout(); plt.show()
+assert pre[-1] > 1.5 * pre[0] and abs(post[-1] - 1) < 0.05
+
+# %% [markdown]
+# And the gradient: we repeat the experiment with one backward pass and look at the first and the last sublayer. The loss is the average of `h` dotted with a fixed random target (a loss that is constant after a final layer norm would give no gradient to measure).
+
+# %%
+def first_layer_grad(kind, depth=12, d=32, seed=0):
+    """Gradient norm at the first sublayer's first weight matrix after one backward pass, for 'pre' or 'post' norm."""
+    subs = make_sublayers(depth, d, seed)
+    lns = [nn.LayerNorm(d) for _ in range(depth)]
+    torch.manual_seed(seed + 1)
+    h = torch.randn(64, d)
+    for f, ln in zip(subs, lns):
+        h = h + f(ln(h)) if kind == "pre" else ln(h + f(h))
+    target = torch.randn(64, d)                      # a fixed random direction: the loss is the average of h . target
+    (h * target).sum().div(64).backward()            # (h.pow(2).mean() would be constant after a final layer norm)
+    return float(subs[0][0].weight.grad.norm()), float(subs[-1][0].weight.grad.norm())
+
+for kind in ("pre", "post"):
+    g_first, g_last = first_layer_grad(kind)
+    print("%-4s-norm: gradient norm first sublayer %.3e | last sublayer %.3e | ratio first/last %.3g" % (kind, g_first, g_last, g_first / g_last))
+
+# %% [markdown]
+# **What you should see.**
+#
+# The post-norm stream stays at exactly 1.000 after every layer, because the last operation of each layer is a layer norm. The pre-norm stream starts at 1.224 after the first layer and grows: 1.389 after 2 layers, 1.598 after 4, 1.790 after 6, 1.984 after 8, 2.104 after 10 and 2.291 after 12. The squares (the variance) are 1.50 after the first layer and 5.25 after twelve: the variance grows roughly linearly, about 0.34 per layer, because every layer adds a new term of similar size to what was there. (After 24 layers the standard deviation is 3.421, which is the number of Exercise 4.5.)
+#
+#    What we can show about the gradient: with pre-norm the first sublayer gets a gradient norm of 6.11 and the last one 2.52 (ratio 2.43); with post-norm the values are 3.18 and 2.17 (ratio 1.47). At depth 12 on this toy, both orderings pass gradient to the first layer and we cannot claim that one trains better from this measurement. What the experiment does show is the structural difference: in the pre-norm layout the residual path from the input to the output has no layer norm on it, so the signal travels as `h + F1 + F2 + ...`, while in post-norm every layer norm sits on the main road. The common practical claim is that pre-norm is *usually* more stable to train, especially without a warm-up of the learning rate, and that is why GPT-2 and most later models use it; the claim comes from experience with large models, not from this toy.
+#
+#    Because the pre-norm stream grows, a pre-norm model ends with one more layer norm, `ln_f`, before the output layer. You wrote exactly that in `TinyGPT` in Part 5.
+#
+# Tips and common mistakes:
+#
+# - The standard deviation here is taken over every number in the 64 by 32 stream, not over one token, so it also reflects differences between tokens.
+# - The sublayers use weights with standard deviation `1 / sqrt(fan_in)`, so each adds a signal of a similar size. With a much smaller initialisation the pre-norm growth would be slower; the direction would stay the same.
+#
+# Try also (optional):
+#
+# - Change `d` from 32 to 64. Does the growth of the pre-norm stream change?
+# - Scale the second linear layer of every sublayer by 0.1 after creating it. How much does the pre-norm growth shrink? (Some large models initialise this way.)
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 4.5
+#
+# Using `stream_stds`, find the standard deviation of the pre-norm residual stream after 24 layers and store it in `std_pre_24`. Why it matters: It confirms that the pre-norm stream keeps growing with depth, which is why a final layer norm is needed.
+
+# %%
+std_pre_24 = None   # YOUR CODE: the std of the pre-norm residual stream after 24 layers (use stream_stds)
+
+# %%
+if std_pre_24 is None:
+    print("Fill in std_pre_24 above, then run this cell again.")
+else:
+    ref = stream_stds("pre", depth=24)[-1]
+    check("value", abs(std_pre_24 - ref) < 0.02 * ref, "call stream_stds('pre', depth=24) and take the last element")
+    check("bigger than after 12 layers", std_pre_24 > stream_stds("pre")[-1], "the pre-norm stream keeps growing with depth")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# std_pre_24 = stream_stds("pre", depth=24)[-1]
+# print(round(std_pre_24, 3))
+# ```
+#
+# The value is 3.421, against 2.291 after 12 layers: the stream keeps growing as layers are added, with variance 11.7 against 5.2, so roughly twice as many layers, twice the variance. Post-norm would still say 1.000. The final `ln_f` of a pre-norm model brings the vector back to a unit scale before the output layer.
+#
+# </details>
+
+# %% [markdown]
+# ## Part 5. Assemble a tiny GPT (25 min)
+#
+# *Lesson sections: "Big picture" and "Putting together".* Now we put all the pieces on the assembly line. Each **token** goes in as an integer id; it receives its **embedding** and a **position badge**; it passes through a stack of identical **blocks**, in each of which tokens first look back (attention) and then think alone (feed-forward), with a residual connection and a layer norm around each; at the end a final layer norm and an output layer turn each token's vector into a score for every character of the vocabulary. This is a GPT in miniature, and the only differences from GPT-2 small are the sizes. ==Everything in a Transformer language model is a stack of the same block; the work is in getting the shapes, the mask and the counts right.==
+#
+# This part defines its own attention layer, feed-forward network, block and model, so it runs after the Setup cells alone. (If you did Parts 1 to 3 you already know the attention recipe; here it is in one class, with a causal mask that can be switched on and off.)
+#
+# **Imagine first.** Take the vocabulary of `TOY_TEXT` (the number of different characters, `V`, which you will print in Step 5.2). A model has `d = 32`, 4 heads, 2 blocks, a context of 32 characters and a learned position table. Roughly how many parameters does it have: hundreds, thousands, tens of thousands, millions? Write your guess as a whole number. In Step 5.3 you will count them exactly.
+
+# %%
+# Imagine first: how many parameters does TinyGPT(d=32, 4 heads, 2 blocks, the vocabulary of TOY_TEXT, context 32) have?
+my_param_guess = None    # a whole number; no calculator needed, just a rough guess
+
+# %% [markdown]
+# ### Step 5.1. One block: attention, feed-forward, residuals and norms
+#
+# A **block** has two sublayers. First attention: `x = x + attn(ln1(x))`, then the feed-forward network: `x = x + ffn(ln2(x))`. Each sublayer is preceded by its own layer norm (pre-norm, Step 4.5) and followed by a residual addition (Step 4.3). The attention layer is multi-head: four linear layers `W_Q`, `W_K`, `W_V`, `W_O`; the queries, keys and values are split into heads with the shapes `(batch, heads, T, d_head)`; the scores have shape `(batch, heads, T, T)`; the optional **mask** sets the scores above the diagonal to minus infinity before the softmax, so that each token can look only at itself and at earlier tokens. We write the three classes and then trace one input of shape (2, 8, 32) through the block, line by line.
+
+# %%
+class CausalSelfAttention(nn.Module):
+    """Multi-head self-attention with an optional causal mask: four Linear layers W_Q, W_K, W_V, W_O (the Part 2 recipe)."""
     def __init__(self, d_model, n_heads):
         super().__init__()
-        if d_model % n_heads:
-            raise ValueError("d_model must be divisible by n_heads")
-        self.h, self.dh = n_heads, d_model // n_heads
-        self.qkv = nn.Linear(d_model, 3 * d_model)   # one layer makes q, k and v together
-        self.out = nn.Linear(d_model, d_model)       # mixes the heads
+        assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
+        self.h, self.d_head = n_heads, d_model // n_heads
+        self.W_Q, self.W_K, self.W_V, self.W_O = (nn.Linear(d_model, d_model) for _ in range(4))
+        self.last_weights = None
+    def forward(self, x, mask=None):
+        B, T, C = x.shape
+        split = lambda t: t.view(B, T, self.h, self.d_head).transpose(1, 2)        # (B, T, C) -> (B, heads, T, d_head)
+        q, k, v = split(self.W_Q(x)), split(self.W_K(x)), split(self.W_V(x))
+        scores = q @ k.transpose(-1, -2) / math.sqrt(self.d_head)                  # (B, heads, T, T)
+        if mask is not None:
+            scores = scores.masked_fill(mask[:T, :T] == 0, float("-inf"))          # the do-not-peek rule
+        w = torch.softmax(scores, dim=-1)
+        self.last_weights = w.detach()
+        out = (w @ v).transpose(1, 2).reshape(B, T, C)                             # merge the heads back
+        return self.W_O(out)
 
-    def forward(self, x, causal=True):
-        B, T, D = x.shape
-        q, k, v = self.qkv(x).chunk(3, dim=-1)
-        # (B, T, D) -> (B, heads, T, d_head)
-        q, k, v = [t.reshape(B, T, self.h, self.dh).transpose(1, 2) for t in (q, k, v)]
-        scores = q @ k.transpose(-2, -1) / math.sqrt(self.dh)   # (B, heads, T, T)
-        if causal:
-            keep = torch.tril(torch.ones(T, T, device=x.device)).bool()
-            scores = scores.masked_fill(~keep, float("-inf"))   # mask BEFORE softmax
-        w = scores.softmax(dim=-1)
-        y = (w @ v).transpose(1, 2).reshape(B, T, D)             # join the heads
-        return self.out(y), w
+class FeedForward(nn.Module):
+    """Same as Part 4 (repeated so that this part runs on its own)."""
+    def __init__(self, d, d_ff):
+        super().__init__()
+        self.net = nn.Sequential(nn.Linear(d, d_ff), nn.GELU(), nn.Linear(d_ff, d))
+    def forward(self, x): return self.net(x)
 
-
-mha = MultiHeadAttention(d_model=32, n_heads=4)
-y, w = mha(torch.randn(2, 5, 32))
-n_params = sum(p.numel() for p in mha.parameters())
-print(y.shape, w.shape, w.sum(-1)[0, 0].detach().numpy(), w[0, 0].triu(1).abs().sum().item())
-print("parameters:", n_params)
-assert y.shape == (2, 5, 32) and w.shape == (2, 4, 5, 5)
-assert torch.allclose(w.sum(-1), torch.ones(2, 4, 5))    # each row of weights sums to 1
-assert w.triu(1).abs().sum().item() == 0                 # nothing above the diagonal: no peeking ahead
-assert n_params == 4224
-
-# %% [markdown]
-# ### ✏️ Your turn: count the parameters
-#
-# The layers are `qkv` (d_model → 3·d_model) and `out` (d_model → d_model), both with biases. By formula that is `4 · d_model² + 4 · d_model`. Compute the count for `d_model = 512` and store it in `answer`.
-
-# %%
-answer = None  # YOUR CODE HERE, for example: answer = 4 * 512**2 + 4 * 512
-
-# %%
-# Check (we compare with a real layer, so the check cannot be wrong)
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
-else:
-    real = sum(p.numel() for p in MultiHeadAttention(512, 8).parameters())
-    check("parameter count for d_model=512", answer == real, f"Use 4 * d_model**2 + 4 * d_model (the real count is a whole number).")
-
-# %% [markdown]
-# <details><summary>Show a possible answer</summary>
-#
-# ```python
-# answer = 4 * 512**2 + 4 * 512   # 1,050,624
-# ```
-#
-# `qkv` has 512 × 1536 weights plus 1536 biases and `out` has 512 × 512 weights plus 512 biases; adding them gives 4·512² + 4·512. The number of heads does not change the count.
-#
-# </details>
-
-# %% [markdown]
-# ## Step 3: a Transformer block and a tiny language model
-#
-# A block is: attention, add the input back (residual), LayerNorm, then a feed-forward network, add the input back, LayerNorm. This is the post-norm layout of the original Transformer, as in the lesson section *The Transformer block*. The language model embeds characters, adds the positional encoding, applies the block and predicts the next character at every position.
-
-# %%
 class Block(nn.Module):
-    def __init__(self, d, h, causal=True):
+    """One pre-norm Transformer block: x = x + attention(LN(x)); x = x + feed-forward(LN(x))."""
+    def __init__(self, d, n_heads, d_ff):
         super().__init__()
-        self.causal = causal
-        self.attn = MultiHeadAttention(d, h)
-        self.ln1, self.ln2 = nn.LayerNorm(d), nn.LayerNorm(d)
-        self.ff = nn.Sequential(nn.Linear(d, 4 * d), nn.GELU(), nn.Linear(4 * d, d))
+        self.ln1, self.attn = nn.LayerNorm(d), CausalSelfAttention(d, n_heads)
+        self.ln2, self.ffn = nn.LayerNorm(d), FeedForward(d, d_ff)
+    def forward(self, x, mask=None):
+        x = x + self.attn(self.ln1(x), mask)
+        x = x + self.ffn(self.ln2(x))
+        return x
 
-    def forward(self, x):
-        x = self.ln1(x + self.attn(x, causal=self.causal)[0])   # residual 1 around attention
-        return self.ln2(x + self.ff(x))                          # residual 2 around the feed-forward net
-
-
-class TinyLM(nn.Module):
-    def __init__(self, vocab, d=64, h=4, n_ctx=16, causal=True):
-        super().__init__()
-        self.emb = nn.Embedding(vocab, d)
-        pe = torch.tensor(positional_encoding(n_ctx, d), dtype=torch.float32)
-        self.register_buffer("pe", pe)                           # fixed, not trained
-        self.block = Block(d, h, causal=causal)
-        self.head = nn.Linear(d, vocab)
-
-    def forward(self, idx):
-        x = self.emb(idx) + self.pe[: idx.size(1)]
-        return self.head(self.block(x))
-
-
-demo = TinyLM(vocab=11)
-print(demo(torch.randint(0, 11, (2, 16))).shape)   # (batch, positions, vocab)
+torch.manual_seed(SEED)
+blk = Block(32, 4, 128)
+x = torch.randn(2, 8, 32)
+mask = torch.tril(torch.ones(8, 8))
+a = blk.attn(blk.ln1(x), mask)
+x1 = x + a
+f = blk.ffn(blk.ln2(x1))
+x2 = x1 + f
+print("input                 ", tuple(x.shape))
+print("after ln1 + attention ", tuple(a.shape), "(attention weights", tuple(blk.attn.last_weights.shape), ")")
+print("after first residual  ", tuple(x1.shape))
+print("after ln2 + feed-fwd  ", tuple(f.shape))
+print("after second residual ", tuple(x2.shape))
+assert torch.allclose(x2, blk(x, mask), atol=1e-6)
+print("the same as blk(x, mask):", torch.allclose(x2, blk(x, mask), atol=1e-6))
 
 # %% [markdown]
-# ### ✏️ Your turn: where are the residual connections?
+# The no-leakage test for a whole block. We replace token 5 of the input by a different random vector and look at how much each *position* of the output changes, with and without the mask.
+
+# %%
+# no leakage through a whole block: change token 5 and look at positions 0-4
+x_b = x.clone(); x_b[:, 5] = torch.randn(2, 32)       # replace token 5 by a different random vector
+with torch.no_grad():
+    d_masked = (blk(x, mask) - blk(x_b, mask)).abs().amax(dim=(0, 2))
+    d_open = (blk(x, None) - blk(x_b, None)).abs().amax(dim=(0, 2))
+print("change at each position, with the mask   :", d_masked.numpy().round(4))
+print("change at each position, without the mask:", d_open.numpy().round(4))
+assert d_masked[:5].max() < 1e-6 and d_open[:5].min() > 1e-4
+
+# %% [markdown]
+# **What you should see.**
 #
-# In `Block.forward`, there are two residual connections. Which two lines of code contain them? Store the words in `answer` as a short string, for example by naming the variable that is added back each time.
+# Every step of the block keeps the shape (2, 8, 32): the attention output, the sum with the input, the feed-forward output and the second sum. Only the attention weights have a new shape, (2, 4, 8, 8): for every sequence and every head, an 8 by 8 table. The last line shows that the step-by-step computation equals `blk(x, mask)`.
+#
+#    In the second block, with the mask the change at positions 0 to 4 is exactly 0, the change at position 5 is large (4.217, the token itself changed) and positions 6 and 7 change by 0.147 and 0.142, because they are allowed to look back at token 5. Without the mask, positions 0 to 4 change too (0.152, 0.141, 0.137, 0.165 and 0.116): they can look into the future. So a block that is built correctly *cannot* leak; this is the guarantee that makes next-token training honest. (We replaced token 5 by a random vector, not by `x + 1`: a constant shift added to every feature disappears in the first layer norm.)
+#
+# Tips and common mistakes:
+#
+# - `view` needs the memory to be contiguous; after a `transpose` use `reshape`. We use `view` only on the freshly computed projection, and `reshape` after merging.
+# - `masked_fill` is applied where the cut mask `mask[:T, :T]` is 0, which are the cells above the diagonal; the mask is built once for the full context and cut to the length of the input. A mask of the wrong size is the most common bug.
+# - The mask is applied to the *scores*, before the softmax. Masking the weights after the softmax would leave rows that do not add up to 1.
+#
+# Try also (optional):
+#
+# - Print `blk.attn.last_weights[0, 0]` (the weights of head 0 for the first sequence). Is the upper triangle exactly 0? Does every row add up to 1?
+# - Call the block with `mask=None` and compare the weights again. What do you see in the upper triangle now?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.1
+#
+# The class `MyBlock` below has all the layers but an empty forward pass. Write the forward pass: two residual sublayers, each with its layer norm **before** the sublayer. Why it matters: This is the heart of the model; getting the order of the norm, the sublayer and the addition right is what separates a pre-norm block from a post-norm one.
 
 # %%
-answer = None  # YOUR ANSWER HERE, as a string
+class MyBlock(nn.Module):
+    """Your version of the block. The layers are given; write the forward pass."""
+    def __init__(self, d, n_heads, d_ff):
+        super().__init__()
+        self.ln1, self.attn = nn.LayerNorm(d), CausalSelfAttention(d, n_heads)
+        self.ln2, self.ffn = nn.LayerNorm(d), FeedForward(d, d_ff)
+    def forward(self, x, mask=None):
+        # YOUR CODE HERE: two residual sublayers, each with its layer norm BEFORE the sublayer
+        return x
 
 # %%
-# Check (loose: looks for the idea)
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
-else:
-    t = str(answer).lower()
-    check("mentions adding x back (x + ...)", "x" in t and ("+" in t or "add" in t or "residual" in t),
-          "The input x is added to the output of attention, and again to the output of the feed-forward net.")
+ref = Block(32, 4, 128); mine = MyBlock(32, 4, 128)
+mine.load_state_dict(ref.state_dict())                       # same weights, so the outputs must agree
+xt = torch.randn(2, 8, 32)
+ok = torch.allclose(mine(xt, mask), ref(xt, mask), atol=1e-5)
+check("MyBlock equals Block", ok, "x = x + attn(ln1(x), mask), then x = x + ffn(ln2(x)) and return x")
 
 # %% [markdown]
 # <details><summary>Show a possible answer</summary>
 #
 # ```python
-# answer = "x + self.attn(...)  and  x + self.ff(x)"
+# class MyBlock(nn.Module):
+#     def __init__(self, d, n_heads, d_ff):
+#         super().__init__()
+#         self.ln1, self.attn = nn.LayerNorm(d), CausalSelfAttention(d, n_heads)
+#         self.ln2, self.ffn = nn.LayerNorm(d), FeedForward(d, d_ff)
+#     def forward(self, x, mask=None):
+#         x = x + self.attn(self.ln1(x), mask)
+#         x = x + self.ffn(self.ln2(x))
+#         return x
 # ```
 #
-# The residual connections are the two `x + ...` sums inside the LayerNorm calls: one around attention, one around the feed-forward network. They let the input and the gradient flow straight through the block.
+# The body is two lines: `x = x + self.attn(self.ln1(x), mask)` and `x = x + self.ffn(self.ln2(x))`, then `return x`. The check copies the weights of the reference `Block` into your block and compares the outputs. If you apply the norm after the addition, you wrote a post-norm block and the outputs differ.
 #
 # </details>
 
 # %% [markdown]
-# ## Step 4: train on a repeated string
+# ### Step 5.2. TinyGPT: the whole model
 #
-# We train on the text "the cat sat on the mat. " repeated 40 times. The string has 11 different characters. The target for each position is the *next* character, so `y` is `x` shifted by one. Because the string repeats exactly, a good model can reach a very low loss.
+# `TinyGPT` is the whole model. In `forward`: the token ids go through an embedding table, `(batch, T)` to `(batch, T, d)`; a learned position embedding (a second table with one row per position) is added if `use_pos` is true; then the blocks one after the other, all using the same causal mask, which is built **once** in `__init__` and stored as a buffer (a tensor that belongs to the model but is not a parameter); a final layer norm; and the output layer, a Linear layer from `d` to the vocabulary size, which gives the **logits** (scores before the softmax) for the next character at every position. The output has shape `(batch, T, vocab)`. We attach little hooks to print the shape after each piece. There are three switches for the ablations of Part 6: `use_pos`, `causal` and `tie`.
 
 # %%
-text = "the cat sat on the mat. " * 40
-chars = sorted(set(text))
-stoi = {c: i for i, c in enumerate(chars)}
-data = torch.tensor([stoi[c] for c in text])
-T = 16
-print("vocab size:", len(chars), "  text length:", len(text))
+class TinyGPT(nn.Module):
+    """token embedding + (optional) learned position embedding -> n_layers blocks -> final LayerNorm -> output layer (logits)."""
+    def __init__(self, vocab, d=32, n_heads=4, n_layers=2, block_size=32, d_ff=None, use_pos=True, causal=True, tie=False):
+        super().__init__()
+        d_ff = d_ff or 4 * d
+        self.block_size, self.use_pos, self.causal = block_size, use_pos, causal
+        self.tok_emb = nn.Embedding(vocab, d)
+        self.pos_emb = nn.Embedding(block_size, d) if use_pos else None
+        self.blocks = nn.ModuleList([Block(d, n_heads, d_ff) for _ in range(n_layers)])
+        self.ln_f = nn.LayerNorm(d)
+        self.head = nn.Linear(d, vocab, bias=False)
+        if tie: self.head.weight = self.tok_emb.weight               # tied embeddings: one table for input and output
+        self.register_buffer("mask", torch.tril(torch.ones(block_size, block_size)), persistent=False)   # built once, shared by all blocks
+        self.apply(self._init)
+    @staticmethod
+    def _init(m):
+        if isinstance(m, (nn.Linear, nn.Embedding)): nn.init.normal_(m.weight, mean=0.0, std=0.02)
+        if isinstance(m, nn.Linear) and m.bias is not None: nn.init.zeros_(m.bias)
+    def forward(self, idx):                                          # idx: (batch, T) integer ids
+        B, T = idx.shape
+        x = self.tok_emb(idx)                                        # (B, T, d)
+        if self.use_pos: x = x + self.pos_emb(torch.arange(T, device=idx.device))
+        mask = self.mask if self.causal else None
+        for blk in self.blocks: x = blk(x, mask)
+        return self.head(self.ln_f(x))                               # (B, T, vocab)
 
+DATA = CharData(TOY_TEXT)
+V = DATA.vocab_size
+torch.manual_seed(SEED)
+model = TinyGPT(V, d=32, n_heads=4, n_layers=2, block_size=32)
+xb, yb = DATA.get_batch(2, 8, torch.Generator().manual_seed(0))
+print("vocabulary size V =", V, "| ln V = %.3f" % math.log(V))
+hooks = []
+for name, mod in [("tok_emb", model.tok_emb), ("pos_emb", model.pos_emb), ("blocks[0].attn", model.blocks[0].attn), ("blocks[0].ffn", model.blocks[0].ffn), ("blocks[1] (output)", model.blocks[1]), ("ln_f", model.ln_f), ("head", model.head)]:
+    hooks.append(mod.register_forward_hook(lambda m, i, o, name=name: print("  %-20s -> %s" % (name, tuple(o.shape)))))
+print("ids", tuple(xb.shape))
+logits = model(xb)
+for hk in hooks: hk.remove()
+print("logits", tuple(logits.shape), "= (batch, T, vocab)")
+assert logits.shape == (2, 8, V)
 
-def get_batch(bs=32):
-    ix = torch.randint(0, len(data) - T - 1, (bs,))
-    x = torch.stack([data[i:i + T] for i in ix])
-    y = torch.stack([data[i + 1:i + T + 1] for i in ix])    # shifted by one
-    return x.to(device), y.to(device)
+# %% [markdown]
+# Two limits. The model accepts sequences shorter than `block_size`, because the mask is cut to the length of the input and the position table is indexed by `arange(T)`. It cannot accept longer ones, because the position table has only `block_size` rows.
 
+# %%
+# the model also accepts shorter sequences, but not longer ones than block_size
+print("T = 5 :", tuple(model(xb[:, :5]).shape))
+try:
+    model(torch.zeros(1, 40, dtype=torch.long))
+except IndexError as e:
+    print("T = 40: IndexError:", e)
 
-def train(causal, steps, seed=0):
+# %% [markdown]
+# **What you should see.**
+#
+# The vocabulary of `TOY_TEXT` has V = 24 characters (letters, the space and the full stop), so ln V = 3.178. The shape trace reads: ids (2, 8); token embedding (2, 8, 32); position embedding (8, 32) (one vector per position, shared by all sequences in the batch and added with broadcasting); the attention and feed-forward outputs and each block's output (2, 8, 32); the final norm (2, 8, 32); and the logits (2, 8, 24). One score per character, for each of the 2 times 8 positions.
+#
+#    In the second block, a sequence of 5 tokens gives logits of shape (2, 5, 24) (T = 5 works) and a sequence of 40 tokens gives `IndexError: index out of range in self`: the position table has no row for position 32 and above. This is the limit of *learned* positions that Part 1 pointed out: a sinusoidal encoding could be computed for a longer sequence (but the model has never been trained on it).
+#
+# Tips and common mistakes:
+#
+# - The logits are scores, not probabilities. `F.cross_entropy` applies the log-softmax itself; never put a softmax before it.
+# - `self.pos_emb(torch.arange(T))` has shape (T, d); adding it to (B, T, d) works by broadcasting over the batch.
+# - `register_buffer(..., persistent=False)` keeps the mask on the same device as the model but out of the saved weights.
+#
+# Try also (optional):
+#
+# - Print `model.mask` and check it is lower-triangular.
+# - Build `TinyGPT(V, use_pos=False)` and print its parameter count. How many parameters did you remove? Which formula gives the number?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.2
+#
+# Two quick questions about the shapes. (a) What is the shape of `model(x)` when `x` has 3 sequences of 5 tokens? Store it as a tuple in `shape_T5`. (b) Does the model fail on a sequence of 40 tokens (the block size is 32)? Store True or False in `fails_at_T40`. Why it matters: A model that cannot take its own input shape is the most common first error. These two answers are the contract of the model.
+
+# %%
+shape_T5 = None     # YOUR CODE: the shape (a tuple) of model(x) when x has 3 sequences of 5 tokens
+fails_at_T40 = None # YOUR CODE: True or False: does the model fail on a sequence of 40 tokens (block_size is 32)?
+
+# %%
+if shape_T5 is None or fails_at_T40 is None:
+    print("Fill in both answers above, then run this cell again.")
+else:
+    xt = torch.zeros(3, 5, dtype=torch.long)
+    check("shape", tuple(shape_T5) == tuple(model(xt).shape), "(batch, T, vocab)")
+    try:
+        model(torch.zeros(1, 40, dtype=torch.long)); failed = False
+    except Exception:
+        failed = True
+    check("fails_at_T40", bool(fails_at_T40) == failed, "the position table has only block_size rows")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# shape_T5 = (3, 5, V)
+# fails_at_T40 = True
+# ```
+#
+# (a) The shape is (3, 5, V) = (3, 5, 24): a score for every character at every position. (b) True: the learned position table has only 32 rows. In generation, `sample_lm` keeps only the last `block_size` characters for exactly this reason; a model with a context of 32 forgets everything older than 32 characters.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 5.3. Counting the parameters
+#
+# The number of parameters decides how much memory the model needs and gives a first idea of what it can learn. Every part has a formula. Embedding: `vocab * d`. Learned positions: `ctx * d`. One block: attention `4d² + 4d`, feed-forward `2 * d * d_ff + d_ff + d`, two layer norms `4d`. A final layer norm `2d`. The output layer `d * vocab` (without a bias), or nothing if it is tied to the embedding (Step 5.5). The number of heads does not appear: splitting the width among more heads does not change the number of weights. We write `count_params`, check it against a real model with `sum(p.numel())`, compute the lesson's school-sized model, and compute GPT-2 small *without building it*.
+
+# %%
+def count_params(vocab, d, n_heads, d_ff, n_layers, ctx, tie=True, use_pos=True):
+    """Parameters of a TinyGPT-style model by formula (n_heads does not appear: it does not change the count)."""
+    emb = vocab * d + (ctx * d if use_pos else 0)
+    attn = 4 * d * d + 4 * d
+    ffn = 2 * d * d_ff + d_ff + d
+    norms = 4 * d                                   # two layer norms per block, gamma and beta each
+    head = 0 if tie else d * vocab
+    return emb + n_layers * (attn + ffn + norms) + 2 * d + head   # + the final layer norm
+
+m = TinyGPT(V, d=32, n_heads=4, n_layers=2, block_size=32)
+real = sum(p.numel() for p in m.parameters())
+formula = count_params(V, 32, 4, 128, 2, 32, tie=False)
+print("Imagine-first model (V = %d, d = 32, 4 heads, 2 blocks, context 32): real %d | formula %d" % (V, real, formula))
+assert real == formula
+for name, (v_, d_, h_, ff_, L_, c_) in {"school-sized (V 65, d 64, 4 heads, d_ff 256, 2 blocks, ctx 64)": (65, 64, 4, 256, 2, 64)}.items():
+    print(name, "->", count_params(v_, d_, h_, ff_, L_, c_, tie=True), "with tied output,", count_params(v_, d_, h_, ff_, L_, c_, tie=False), "without")
+    real_school = sum(p.numel() for p in TinyGPT(v_, d_, h_, L_, c_, d_ff=ff_, tie=True).parameters())
+    print("   the real model has", real_school, "parameters")
+    assert real_school == count_params(v_, d_, h_, ff_, L_, c_, tie=True)
+gpt2 = count_params(50257, 768, 12, 3072, 12, 1024, tie=True)
+print("GPT-2 small by formula, without building it:", f"{gpt2:,}")
+assert gpt2 == 124_439_808
+print("per-part check: embedding", 50257 * 768, "| positions", 1024 * 768, "| one block", 4 * 768**2 + 4 * 768 + 2 * 768 * 3072 + 3072 + 768 + 4 * 768)
+
+# %% [markdown]
+# **What you should see.**
+#
+# For the Imagine-first model (V = 24, d = 32, 4 heads, 2 blocks, context 32) the real count is **28,032** and the formula gives the same. If your guess was in the tens of thousands, you were close; it is far from the millions of a real language model. The school-sized model of the lesson (vocabulary 65, d = 64, 4 heads, d_ff = 256, 2 blocks, context 64) has **108,352** parameters with the output layer tied to the embedding and 112,512 without; building it gives 108,352 and the assert passes. And GPT-2 small, computed from its sizes alone, comes to **124,439,808**, the known figure. The last line splits it: the embedding table has 38,597,376, the positions 786,432, and one block 7,087,872.
+#
+#    The point is that you can do the sum on paper. A model with 124 million parameters is not mysterious; it is the same block repeated 12 times with `d = 768`, plus a big embedding table (31 percent of the total).
+#
+# Tips and common mistakes:
+#
+# - Count with `tie=False` when you compare with a model built without tying, and `tie=True` when the model ties its weights: PyTorch's `parameters()` lists a tied tensor only once.
+# - `n_heads` is an argument of `count_params` only for symmetry; change it and the answer does not move.
+#
+# Try also (optional):
+#
+# - Double `d` in the school model (128). By what factor does the count grow? Why is it not exactly 4?
+# - Add a third block to the school model. How many parameters does one block cost?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.3
+#
+# Compute by formula the parameters of one `Block(32, 4, 128)` (attention, feed-forward and two layer norms) and store the number in `n_block`. Why it matters: The block is the unit you repeat. Its cost times the number of layers is almost the whole model.
+
+# %%
+n_block = None   # YOUR CODE: parameters of ONE Block(32, 4, 128) by formula: attention + feed-forward + two layer norms
+
+# %%
+if n_block is None:
+    print("Fill in n_block above, then run this cell again.")
+else:
+    check("one block", n_block == sum(p.numel() for p in Block(32, 4, 128).parameters()), "attention 4*32*32 + 4*32; feed-forward 2*32*128 + 128 + 32; layer norms 4*32")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# n_block = (4 * 32 * 32 + 4 * 32) + (2 * 32 * 128 + 128 + 32) + 4 * 32
+# print(n_block)
+# ```
+#
+# Attention: 4 * 32 * 32 + 4 * 32 = 4,224. Feed-forward: 2 * 32 * 128 + 128 + 32 = 8,352. Two layer norms: 4 * 32 = 128. The total is 12,704. Two blocks: 25,408, which is most of the 28,032 of the whole model; the rest are the embedding table (768), the positions (1,024), the final norm (64) and the output layer (768).
+#
+# </details>
+
+# %% [markdown]
+# ### Step 5.4. Sanity checks before training
+#
+# Before we train for real, two sanity checks that catch most bugs. **Check 1: the initial loss.** An untrained model that knows nothing about the text should spread its probability evenly over the `V` characters, and the cross-entropy of a uniform guess is `ln V`. If the initial loss is much higher (say 10) the output is badly scaled; if it is much lower, something leaks. **Check 2: overfit one batch.** Give the model one fixed batch and train on it for a couple of hundred steps. A correct model must be able to memorise 32 windows of 32 characters; the loss should go to nearly 0. If it cannot, there is a bug (in the shapes, the mask, the loss or the optimiser), and training on real data would only hide it.
+
+# %%
+torch.manual_seed(SEED)
+model = TinyGPT(V, d=32, n_heads=4, n_layers=2, block_size=32)
+x0, y0 = DATA.get_batch(32, 32, torch.Generator().manual_seed(1))
+with torch.no_grad():
+    loss0 = F.cross_entropy(model(x0).reshape(-1, V), y0.reshape(-1))
+print("initial loss %.3f | ln V = %.3f" % (float(loss0), math.log(V)))
+assert abs(float(loss0) - math.log(V)) < 0.3
+RESULTS["p5_initial_loss"] = round(float(loss0), 3)
+print("untrained model writes:", repr(sample_lm(model, DATA, "the ", n_new=60, block_size=32, temperature=1.0, seed=0)))
+
+# %% [markdown]
+# The overfit test. We use the same batch `x0, y0` at every step; the loss is plotted on a log scale.
+
+# %%
+def overfit_one_batch(model, x, y, steps=200, lr=3e-3):
+    """Train on ONE fixed batch. A correct model must drive this loss to nearly 0; a broken one cannot."""
+    opt = torch.optim.AdamW(model.parameters(), lr=lr); curve = []
+    for _ in range(steps):
+        loss = F.cross_entropy(model(x).reshape(-1, V), y.reshape(-1))
+        opt.zero_grad(); loss.backward(); opt.step(); curve.append(float(loss))
+    return curve
+
+steps_o = 40 if QUICK else 200
+curve = overfit_one_batch(model, x0, y0, steps=steps_o)
+for s in (0, steps_o // 4, steps_o // 2, steps_o - 1): print("step %3d  loss %.4f" % (s, curve[s]))
+plt.figure(figsize=(5, 3)); plt.plot(curve); plt.yscale("log"); plt.xlabel("step"); plt.ylabel("loss"); plt.title("Overfitting one batch"); plt.tight_layout(); plt.show()
+if not QUICK: assert curve[-1] < 0.1
+RESULTS["p5_overfit_final"] = round(curve[-1], 4)
+
+# %% [markdown]
+# **What you should see.**
+#
+# The initial loss is **3.189** against ln V = 3.178: the difference is 0.011, well inside the tolerance of 0.3, so the assert passes. The untrained model writes `the wyiatg  .nkfurspsucgb urmypiobgrdsvoptweckh uymnbsocusoobrbi`: the prompt `the ` followed by random characters. Each character is chosen almost uniformly, which is what a loss of ln V means.
+#
+#    In the overfit test the loss falls from 3.1890 at step 0 to 1.0097 at step 50, 0.5800 at step 100 and **0.0450** at step 199. Under 0.1: the model can memorise one batch. (Do not read this as 'the model is good': it has seen exactly these 32 windows.) If your loss stays near 3.2 or goes to NaN, look for a missing `zero_grad`, a wrong target shift or a learning rate that is too large.
+#
+# Tips and common mistakes:
+#
+# - Do the overfit test every time you change the architecture. It takes seconds and tells you the pipeline works end to end.
+# - An initial loss slightly above ln V is normal; a loss of 10 or more usually means the final layer's weights are too large (we use a standard deviation of 0.02 for that reason).
+# - `QUICK` shortens the loops when the notebook is tested; the numbers above are for the full run.
+#
+# Try also (optional):
+#
+# - Initialise the weights with the default PyTorch values (remove `self.apply(self._init)`). What is the initial loss now?
+# - Train the overfit test with `lr = 1e-4`. How many steps does it need to get under 0.1?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.4
+#
+# Without running the model, write down the loss you expect from an untrained model that guesses uniformly over the vocabulary, and store it in `expected_start`. Then the check compares it with the measured initial loss. Why it matters: Knowing the loss you *should* see before you look is the habit that finds bugs early.
+
+# %%
+expected_start = None   # YOUR CODE: the loss you expect from an untrained model that guesses uniformly over the vocabulary V (a number)
+
+# %%
+if expected_start is None:
+    print("Fill in expected_start above, then run this cell again.")
+else:
+    check("ln V", abs(expected_start - math.log(V)) < 0.05, "a uniform guess over V characters has loss ln V")
+    check("close to the measured start", abs(expected_start - float(loss0)) < 0.3, "the measured initial loss is within 0.3 of ln V")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# expected_start = math.log(V)
+# print(round(expected_start, 3))
+# ```
+#
+# The answer is `math.log(V)` = 3.178. Perplexity, `exp(loss)`, is then exactly V = 24: the model is as unsure as a coin with 24 equally likely sides. After training, a perplexity near 1 (Step 6.1) will mean that it is nearly certain of the next character.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 5.5. Tied embeddings
+#
+# The input embedding turns a character id into a vector (a table of `V` rows and `d` columns); the output layer turns a vector into `V` scores (a matrix of `d` columns and `V` rows). These two tables have the same shape and a similar job: one says what each character *means* as an input, the other what each character *looks like* as an output. **Tying** the weights means using one table for both. It saves `V * d` parameters and often helps small models. GPT-2 does it. We build the model both ways, compare the counts and check that the two weights are the very same tensor.
+
+# %%
+torch.manual_seed(SEED)
+untied = TinyGPT(V, 32, 4, 2, 32, tie=False)
+tied = TinyGPT(V, 32, 4, 2, 32, tie=True)
+n_un, n_ti = sum(p.numel() for p in untied.parameters()), sum(p.numel() for p in tied.parameters())
+print("untied:", n_un, "| tied:", n_ti, "| difference:", n_un - n_ti, "= V * d =", V * 32)
+print("same tensor object:", tied.head.weight is tied.tok_emb.weight)
+assert n_un - n_ti == V * 32 and tied.head.weight is tied.tok_emb.weight
+big = count_params(50257, 768, 12, 3072, 12, 1024, tie=False) - count_params(50257, 768, 12, 3072, 12, 1024, tie=True)
+print("GPT-2 small would save", f"{big:,}", "parameters by tying (V * d)")
+
+# %% [markdown]
+# **What you should see.**
+#
+# The untied model has 28,032 parameters; the tied one 27,264. The difference is 768, which is V * d = 24 * 32. `tied.head.weight is tied.tok_emb.weight` is `True`: one tensor with two names. For GPT-2 small the same trick saves 50,257 * 768 = **38,597,376** parameters, almost a third of the model (the number you met in Step 5.3 as the embedding table). With a vocabulary of 50,257 the output layer would otherwise be as large as the whole embedding table.
+#
+# Tips and common mistakes:
+#
+# - After tying, `model.parameters()` lists the shared tensor once, so a plain `sum(p.numel())` reports the saving automatically.
+# - The tied output layer has no bias. In `TinyGPT` the head is created with `bias=False` in both cases, so the only difference between the two models is the shared matrix.
+#
+# Try also (optional):
+#
+# - Train a tied and an untied model for 300 steps on `TOY_TEXT` (use `fit` from Part 6) and compare their final losses.
+# - Compute the share of the embedding table in the school-sized model (65 * 64 out of 108,352). Is it as big as in GPT-2 small?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.5
+#
+# How many parameters does tying save in the school-sized model of Step 5.3 (vocabulary 65, d = 64)? Store the number in `saved`. Why it matters: Tying is a pure saving of memory; knowing the size of the saving lets you decide when it is worth it.
+
+# %%
+saved = None   # YOUR CODE: parameters saved by tying the output layer in the school-sized model (V 65, d 64)
+
+# %%
+if saved is None:
+    print("Fill in saved above, then run this cell again.")
+else:
+    ref = count_params(65, 64, 4, 256, 2, 64, tie=False) - count_params(65, 64, 4, 256, 2, 64, tie=True)
+    check("saved", saved == ref, "the output layer has V * d weights and no bias")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# saved = 65 * 64
+# print(saved)
+# ```
+#
+# 65 * 64 = 4,160, which is exactly the difference between 112,512 and 108,352 in Step 5.3. Out of 112,512 parameters that is 3.7 percent. In GPT-2 small it is 31 percent. The bigger the vocabulary compared with the depth of the model, the more tying saves.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 5.6. Where does each piece live?
+#
+# You have built the model; now find every part of the lesson's block table in your own code. The code is the table: each piece of the assembly line is an attribute of `TinyGPT`, except the two residual additions, which are lines in `Block.forward`. The loop below walks the attribute path of each piece and prints the type of what it finds.
+
+# %%
+pieces = {                                        # lesson piece -> the attribute path in TinyGPT
+    "position badge (learned positions)": "pos_emb",
+    "token embedding": "tok_emb",
+    "lookback (multi-head attention)": "blocks.0.attn",
+    "do-not-peek rule (mask)": "mask",
+    "solo thinking (feed-forward)": "blocks.0.ffn",
+    "stabiliser before attention (layer norm)": "blocks.0.ln1",
+    "stabiliser before feed-forward (layer norm)": "blocks.0.ln2",
+    "final layer norm": "ln_f",
+    "output layer": "head",
+}
+for piece, path in pieces.items():
+    obj = model
+    for part in path.split("."): obj = obj[int(part)] if part.isdigit() else getattr(obj, part)
+    print("%-44s model.%-16s %s" % (piece, path, type(obj).__name__))
+print("The residual connections are the two lines 'x = x + ...' in Block.forward: they are code, not modules.")
+
+# %% [markdown]
+# **What you should see.**
+#
+# The nine rows are the lesson's table in code: the position badge is `pos_emb` (an `Embedding`), the lookback is `blocks.0.attn` (a `CausalSelfAttention`), the do-not-peek rule is `mask` (a plain `Tensor`, not a layer), the solo thinking is `blocks.0.ffn` (a `FeedForward`), the two stabilisers of the block are `ln1` and `ln2`, and the model ends with `ln_f` and `head`. Two things are not modules: the mask is data, and the residual connection is an addition in the code of `forward`.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.6
+#
+# In one sentence of at least 8 words, say where in the code the residual connections are and why they do not show up as modules. Write it in `where_residual`. Why it matters: A residual connection is something the code *does*, not something it *has*; seeing that is part of reading Transformer code.
+
+# %%
+where_residual = ""   # YOUR ANSWER: in one sentence, where in the code are the residual connections, and why are they not modules?
+
+# %%
+if where_residual.strip() == "":
+    print("Write your sentence above, then run this cell again.")
+else:
+    check("at least 8 words", len(where_residual.split()) >= 8, "say where (Block.forward) and why (they are just additions)")
+    RESULTS["p5_residual_answer"] = where_residual
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# where_residual = "They are the two lines x = x + ... in Block.forward; an addition has no weights, so it needs no module."
+# ```
+#
+# A good answer: *The residual connections are the two lines `x = x + ...` in `Block.forward`; an addition has no weights, so there is nothing to make a module out of.* The lesson's table lists seven kinds of piece; you now know which line of code is responsible for each.
+#
+# </details>
+
+# %% [markdown]
+# ## Part 6. Train it, sample from it, break it (30 min)
+#
+# *Lesson section: "Autoregressive".* The model is built and its sanity checks pass. Now we train it on a few hundred characters with the standard recipe of **teacher forcing**: for every position, the target is the next character, and the loss is the cross-entropy between the logits and that character. We watch the loss fall from ln V towards zero, **sample** text by feeding the model its own output one character at a time, and then **break** the model in four ways to see why each part is there: no causal mask, no positions, fewer heads and layers, a bad learning rate. ==An ablation is the best way to understand a part: remove it and see what is lost.== Everything runs on a CPU: each training is about 10 seconds with the sizes below. This part uses the classes of Part 5 (re-run Part 5 first if you restarted the session).
+#
+# All the models use the same settings unless a step says otherwise: `d = 64`, 4 heads, 2 blocks, context 32, batch size 32, AdamW with a learning rate of 3e-3, 500 steps for `TOY_TEXT`.
+#
+# **Imagine first.** You train for 500 steps on `TOY_TEXT`, a few hundred characters long. (a) What final loss do you expect: near 3.2 (nothing learned), near 1.5, or near 0.1? (b) Describe in one sentence what the text sampled at temperature 0.5 will look like, and in another the text at temperature 1.5. Write your guesses below; the answers come in Steps 6.1 and 6.2.
+
+# %%
+# Imagine first: the loss after training on TOY_TEXT, and the generated text at two temperatures
+my_final_loss = None     # your guess for the final training loss (start is about ln V = 3.3)
+my_text_t05 = ""         # one sentence: what will the text at temperature 0.5 look like?
+my_text_t15 = ""         # one sentence: and at temperature 1.5?
+
+# %% [markdown]
+# ### Step 6.1. Train the model on TOY_TEXT
+#
+# We make a helper `fit` that builds a `TinyGPT` with the shared settings (and any change you pass as an argument) and trains it with `train_lm` from the Setup, and a helper `tail` that averages the last 20 losses (one step's loss is noisy). Then we train the model once, print the loss every 50 steps, and plot the curve on a log scale with ln V as a dashed line. Training is autoregressive: the model sees `x`, the characters 0 to 31 of a window, and must predict `y`, the characters 1 to 32, at all 32 positions *at once* (thanks to the causal mask, see Step 5.1).
+
+# %%
+STEPS6 = 40 if QUICK else 500
+CFG = dict(d=64, n_heads=4, n_layers=2, block_size=32)
+
+def fit(seed=SEED, data=DATA, steps=STEPS6, lr=3e-3, verbose=False, **kw):
+    """Build a TinyGPT (CFG updated with kw) and train it. Returns the model and its loss curve."""
+    cfg = {**CFG, **kw}
     torch.manual_seed(seed)
-    model = TinyLM(len(chars), n_ctx=T, causal=causal).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=3e-3)
-    losses = []
-    for step in range(steps + 1):
-        x, y = get_batch()
-        loss = nn.functional.cross_entropy(model(x).reshape(-1, len(chars)), y.reshape(-1))
-        opt.zero_grad(); loss.backward(); opt.step()
-        losses.append(loss.item())
-        if step % 100 == 0:
-            print(f"  step {step:4d}  loss {loss.item():.3f}")
+    model = TinyGPT(data.vocab_size, **cfg)
+    t0 = time.time()
+    losses = train_lm(model, data, steps=steps, batch_size=32, block_size=cfg["block_size"], lr=lr, seed=seed, verbose=verbose)
+    print("   trained %d steps in %.1f s, parameters %d" % (steps, time.time() - t0, sum(p.numel() for p in model.parameters())))
     return model, losses
 
+def tail(losses, k=20): return float(np.mean(losses[-k:]))      # average of the last k steps: less noisy than one step
 
-STEPS = 150 if QUICK else 400
-print("training WITH the causal mask")
-model, losses_masked = train(causal=True, steps=STEPS)
-
-assert len(chars) == 11
-assert losses_masked[-1] < losses_masked[0], "the loss should go down"
-print("✓ the loss went down:", round(losses_masked[0], 3), "->", round(losses_masked[-1], 3))
+model_a, loss_a = fit(verbose=True)
+final_a = tail(loss_a)
+print("start %.3f | final (mean of last 20 steps) %.3f | perplexity %.2f | ln V %.3f" % (loss_a[0], final_a, math.exp(final_a), math.log(V)))
+plt.figure(figsize=(6, 3.2)); plt.plot(loss_a); plt.yscale("log"); plt.axhline(math.log(V), color="gray", ls="--", lw=0.8)
+plt.xlabel("step"); plt.ylabel("training loss"); plt.title("TinyGPT on TOY_TEXT"); plt.tight_layout(); plt.show()
+if not QUICK: assert loss_a[0] > 3.0 and final_a < 1.0
+assert final_a < loss_a[0]
+RESULTS["p6_final_loss"] = round(final_a, 3)
 
 # %% [markdown]
-# ### ✏️ Your turn: what loss should a random guesser have?
+# **What you should see.**
 #
-# A model that guesses uniformly among 11 characters has loss `ln 11`. Compute it and store it (3 decimals) in `answer`. Compare it with the first loss printed above. Also think: why is `y` the input shifted by one?
+# The loss starts at **3.200** (ln V is 3.178), falls to 1.244 after 50 steps, 0.663 after 100, 0.366 after 150, 0.277 after 200, 0.190 after 300, 0.157 after 400 and 0.125 at the last step. The average of the last 20 steps is **0.148**, which is a **perplexity of 1.16**: on average, the model is as unsure about the next character as if it were choosing between 1.16 equally likely ones. (Training took about 10 seconds on the machine used to write this lab; yours may differ.) The model has 105,216 parameters. The curve drops steeply in the first 100 steps, where the model learns which characters follow which, and then slowly, as it picks up the longer patterns (a word it has seen, a sentence it can finish).
+#
+#    This is a very low loss, and you should be suspicious of it: the corpus has only a few hundred characters, and a model with 105,216 parameters has more than enough room to memorise it. Step 6.2 tests exactly that.
+#
+# Tips and common mistakes:
+#
+# - Different seeds give slightly different curves; with `SEED = 42` you should see the numbers above, up to small differences between PyTorch versions.
+# - `train_lm` clips the gradient norm at 1.0 and uses AdamW; the learning rate 3e-3 is large for big models and fine for this tiny one (Step 6.6 tests it).
+# - Always plot the curve, not only the last number. A curve that falls and then jumps up is a sign of a learning rate that is too large.
+#
+# Try also (optional):
+#
+# - Train for 1,000 steps. Does the loss keep falling? Where does it flatten?
+# - Use `block_size = 16` instead of 32 (pass `block_size=16` to `fit`). Does the loss get better or worse after the same number of steps?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.1
+#
+# Compute the perplexity of the trained model from its final loss and store it in `ppl_a`. Why it matters: Perplexity is the standard way to report a language model's quality, and you will meet it again with large models in Week 9.
 
 # %%
-answer = None  # YOUR CODE HERE, for example: answer = round(math.log(11), 3)
+ppl_a = None   # YOUR CODE: the perplexity of the trained model, exp(final loss), using final_a
 
 # %%
-# Check
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
+if ppl_a is None:
+    print("Fill in ppl_a above, then run this cell again.")
 else:
-    check("ln 11", abs(answer - math.log(11)) < 0.005, "ln means the natural logarithm (math.log).")
+    check("perplexity", abs(ppl_a - math.exp(final_a)) < 0.01, "perplexity is exp(loss)")
+    print("Out of %d characters the model is, on average, as unsure as if choosing among %.1f of them." % (V, ppl_a))
 
 # %% [markdown]
 # <details><summary>Show a possible answer</summary>
 #
 # ```python
-# answer = round(math.log(11), 3)   # 2.398
+# ppl_a = math.exp(final_a)
+# print(round(ppl_a, 2))
 # ```
 #
-# The first loss is usually somewhat close to 2.4 (it can be higher or lower because the weights are random). `y` is `x` shifted by one because every position learns to predict the character that comes *after* it, and all positions are trained at the same time.
+# `math.exp(final_a)` = 1.16. In words: the model has learned this text so well that it is nearly sure of every next character. The honest question is whether it has learned *language* or *this text*; the next step answers it.
 #
 # </details>
 
 # %% [markdown]
-# ## Step 5: generate, then break it
+# ### Step 6.2. Sampling at different temperatures; overfitting
 #
-# Generation feeds the text so far into the model and appends the most likely next character, again and again. We cut the context to the last `T` characters because the positional table only has `T` rows.
+# To **sample**, `sample_lm` gives the model the prompt `the `, takes the logits of the *last* position, divides them by the **temperature**, turns them into probabilities with a softmax, draws one character from them, appends it and repeats. Low temperature makes the distribution sharper (the likely character almost always wins); high temperature flattens it. With `top_k` the draw is only among the k most likely characters. We generate 200 characters with each of four settings, five samples each, and measure the **word hit rate**: the fraction of the generated words that are real words of the training text. Then we test overfitting: the loss on the training text against the loss on a text of our own that is *not* in the corpus.
 
 # %%
-def generate(model, prompt, n=30):
-    model.eval()
-    ids = torch.tensor([[stoi[c] for c in prompt]], device=device)
+train_words = set(w.strip(".") for w in TOY_TEXT.split())
+def word_hit_rate(text, vocab_words):
+    """Fraction of the words of `text` (split on spaces, full stops removed) that are real words of the training text."""
+    words = [w.strip(".") for w in text.split() if w.strip(".")]
+    return sum(w in vocab_words for w in words) / max(len(words), 1)
+
+settings = [("temperature 0.5", dict(temperature=0.5)), ("temperature 1.0", dict(temperature=1.0)), ("temperature 1.5", dict(temperature=1.5)), ("top_k = 3, temperature 1.0", dict(temperature=1.0, top_k=3))]
+rates = {}
+for name, kw in settings:
+    texts = [sample_lm(model_a, DATA, "the ", n_new=200, block_size=32, seed=s, **kw) for s in range(5)]     # 5 samples per setting
+    rates[name] = float(np.mean([word_hit_rate(t, train_words) for t in texts]))
+    print("--", name, "| word hit rate (mean of 5 samples) %.2f" % rates[name]); print(texts[0])
+RESULTS["p6_hit_rates"] = {k: round(v, 2) for k, v in rates.items()}
+
+# %% [markdown]
+# The held-out test. We write a new text that uses only characters of the vocabulary but is not in `TOY_TEXT`, cut it into windows of 32 and compute the average loss. A model that learned only to copy will do much worse on it.
+
+# %%
+def eval_loss(model, data, text, block_size=32):
+    """Average next-character loss on `text` (cut into non-overlapping windows of block_size)."""
+    ids = torch.tensor(data.encode(text)); model.eval(); tot, n = 0.0, 0
     with torch.no_grad():
-        for _ in range(n):
-            nxt = model(ids[:, -T:])[:, -1].argmax(-1, keepdim=True)
-            ids = torch.cat([ids, nxt], dim=1)
-    return "".join(chars[i] for i in ids[0].tolist())
+        for i in range(0, len(ids) - block_size - 1, block_size):
+            x, y = ids[i:i + block_size][None], ids[i + 1:i + block_size + 1][None]
+            tot += float(F.cross_entropy(model(x).reshape(-1, data.vocab_size), y.reshape(-1))); n += 1
+    model.train(); return tot / n
 
-
-print(repr(generate(model, "the cat s")))
-
-# %% [markdown]
-# Now the experiment. We train the **same model with `causal=False`**: every position may look at every other position, including the one it is supposed to predict. We plot both loss curves.
-
-# %%
-print("training WITHOUT the causal mask")
-model_nomask, losses_nomask = train(causal=False, steps=STEPS)
-
-plt.figure(figsize=(6, 3))
-plt.plot(losses_masked, label="with causal mask")
-plt.plot(losses_nomask, label="without mask")
-plt.xlabel("step")
-plt.ylabel("loss")
-plt.legend()
-plt.tight_layout()
-plt.show()
-
-print("final loss with mask   :", round(float(np.mean(losses_masked[-20:])), 3))
-print("final loss without mask:", round(float(np.mean(losses_nomask[-20:])), 3))
-print("generated with mask   :", repr(generate(model, "the cat s")))
-print("generated without mask:", repr(generate(model_nomask, "the cat s")))
+HELD = "the students help the teachers and the club looks at the robot every week. the robots turn the wheels and the sensor reads the battery. "
+assert all(c in DATA.stoi for c in HELD)
+tr, ho = eval_loss(model_a, DATA, TOY_TEXT), eval_loss(model_a, DATA, HELD)
+print("loss on the training text      : %.3f (perplexity %.2f)" % (tr, math.exp(tr)))
+print("loss on a text it has not seen : %.3f (perplexity %.2f)" % (ho, math.exp(ho)))
+RESULTS["p6_train_vs_heldout"] = (round(tr, 3), round(ho, 3))
 
 # %% [markdown]
-# ### ✏️ Your turn: explain what the unmasked model learned
+# **What you should see.**
 #
-# Compare the two loss curves and the two generated texts. In your own words (2 to 3 sentences), what did the unmasked model learn to do instead of predicting? Why does its generated text fail even though its training loss looks so good? Write your answer in `answer`.
+# The four settings gave mean word hit rates of **0.97** (temperature 0.5), **0.91** (1.0), **0.83** (1.5) and **0.97** (`top_k = 3`, temperature 1.0), and a first sample for each. At temperature 0.5 the model writes *the code on the robots. every robot has a motor and a sensor and a battery. the sensor reads the line and the motor turns the wheels.* These are sentences of the training text: almost a copy. At temperature 1.0 it starts on a sentence and slips: *the teachers help the students the build small rook a athe bllow and teacy.* There are real words and invented ones. At 1.5 the slips come more often (*the tearyt eachers hbsollow*). With `top_k = 3` the text is again made of whole sentences of the training text. So temperature controls how much risk the sampler takes, and a model trained on a tiny text mostly reproduces it.
+#
+#    The held-out test confirms it. The loss on the training text is **0.149** (perplexity 1.16), but on the new text it is **1.844** (perplexity **6.32**): about 12 times higher. The model did not learn English; it learned this one paragraph, and on text it has not seen it is as unsure as if it were choosing between six characters. That is **overfitting**, and with a corpus this small it is unavoidable. Real language models avoid it with an enormous amount of text (Week 9), not with a different architecture.
+#
+# Tips and common mistakes:
+#
+# - The word hit rate is a crude measure: a sample made of whole sentences of the training text scores about 1 even though the model invented nothing. High is not 'good' here.
+# - Each sample is random; we average five samples per setting, with fixed seeds 0 to 4, so that one lucky or unlucky sample does not decide the table.
+# - Temperature 0 would always pick the most likely character; `sample_lm` uses 1e-6 as the smallest value, so that the division is safe.
+#
+# Try also (optional):
+#
+# - Sample with temperature 0.1 and with 3.0. What does each look like?
+# - Write your own held-out sentence of 60 characters (letters from the vocabulary only). Is your loss higher or lower than 1.844?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.2
+#
+# Write a function `my_hit_rate(text, vocab_words)` that returns the fraction of the words of `text` that are in the set `vocab_words`, ignoring full stops. Why it matters: A simple, countable measure lets you compare settings without relying on how the text looks to you.
 
 # %%
-answer = ""  # YOUR ANSWER HERE, in a few sentences
+def my_hit_rate(text, vocab_words):
+    """Fraction of the words in `text` that are in vocab_words (ignore full stops)."""
+    return None   # YOUR CODE HERE
 
 # %%
-# Check (loose: looks for the key idea)
-if not answer.strip():
-    print("Fill in your answer above, then run this cell again.")
+r = my_hit_rate("the robot xyzq", {"the", "robot", "motor"})
+if r is None:
+    print("Write my_hit_rate above, then run this cell again.")
 else:
-    t = answer.lower()
-    check("mentions copying / seeing the answer / next token",
-          any(w in t for w in ["copy", "cheat", "answer", "next token", "next character", "future", "look ahead", "peek"]),
-          "The model can read the target from the next position instead of predicting it.")
+    check("2 of 3 words are real", abs(r - 2 / 3) < 1e-6, "split the text, count the words that are in vocab_words, divide by the number of words")
+    check("full stops ignored", abs(my_hit_rate("the motor.", {"the", "motor"}) - 1.0) < 1e-6, "strip the full stop from each word")
 
 # %% [markdown]
 # <details><summary>Show a possible answer</summary>
 #
-# Without the mask, position `t` can attend to position `t+1`, which holds exactly the character it is supposed to predict. The model learns to copy it from there, so the training loss falls quickly without any real prediction. At generation time the future characters do not exist yet, so the copying trick has nothing to copy and the output is poor. The mask is what forces the model to learn the pattern from the past only.
+# ```python
+# def my_hit_rate(text, vocab_words):
+#     words = [w.strip(".") for w in text.split() if w.strip(".")]
+#     return sum(w in vocab_words for w in words) / max(len(words), 1)
+# ```
+#
+# Split the text on spaces, strip the full stop from each word, and divide the count of words that are in `vocab_words` by the number of words. For `"the robot xyzq"` and the set `{the, robot, motor}` that is 2 / 3. The check also tries `"the motor."` to make sure that the full stop is ignored.
 #
 # </details>
 
 # %% [markdown]
-# ### Sanity check on the mask
+# ### Step 6.3. Ablation A: remove the causal mask
 #
-# One last test with a quick proof: the output at position 3 of the **masked** model must not change when we change a *later* character, but the unmasked model's output does change.
+# **Ablation A: remove the causal mask.** We train the same model with `causal=False`: every position may attend to every other position, *including the future*. The target of position `t` is the character at position `t + 1`, and that character is now sitting in the input, one position to the right. The model can simply copy it. We expect the training loss to drop suspiciously fast to a suspiciously low value, and the text sampled from the model to be garbage, because when we generate there is no future to peek at.
 
 # %%
-x1 = data[:T].unsqueeze(0).to(device)
-x2 = x1.clone()
-x2[0, 10] = (x2[0, 10] + 1) % len(chars)      # change a later character
-model.eval(); model_nomask.eval()
-with torch.no_grad():
-    same_masked = torch.allclose(model(x1)[0, 3], model(x2)[0, 3], atol=1e-5)
-    same_nomask = torch.allclose(model_nomask(x1)[0, 3], model_nomask(x2)[0, 3], atol=1e-5)
-assert same_masked, "the masked model must not see the future"
-assert not same_nomask, "the unmasked model reads later positions"
-print("✓ masked output at position 3 ignores later characters; unmasked output changes")
+model_nm, loss_nm = fit(causal=False)
+k = min(200, STEPS6 - 1)
+m200 = float(np.mean(loss_a[k - 10:k + 10])); n200 = float(np.mean(loss_nm[k - 10:k + 10]))
+print("loss around step %d | with mask %.3f | without mask %.3f" % (k, m200, n200))
+print("final loss          | with mask %.3f | without mask %.3f" % (final_a, tail(loss_nm)))
+plt.figure(figsize=(6, 3.2)); plt.plot(loss_a, label="with mask"); plt.plot(loss_nm, label="no mask"); plt.yscale("log")
+plt.xlabel("step"); plt.ylabel("training loss"); plt.legend(); plt.title("Removing the causal mask"); plt.tight_layout(); plt.show()
+txt_nm = [sample_lm(model_nm, DATA, "the ", n_new=200, block_size=32, seed=s) for s in range(5)]
+rate_nm = float(np.mean([word_hit_rate(t, train_words) for t in txt_nm]))
+print("no mask, sampled text:", repr(txt_nm[0][:120]))
+print("temperature 1.0, word hit rate (mean of 5 samples) | with mask %.2f | no mask %.2f" % (rates["temperature 1.0"], rate_nm))
+RESULTS["p6_nomask"] = (round(m200, 3), round(n200, 3), round(rate_nm, 2))
+
+# %% [markdown]
+# **What you should see.**
+#
+# Around step 200 the loss of the masked model is **0.253** and that of the unmasked model **0.043**. At the end the numbers are **0.148** and **0.015**. The unmasked model has a *better* training loss, and the curve of the plot lies below the masked one the whole time. But look at its text: *the w wele leluuuuwewcwthelpwcpwe studencscdeisstscode coooobobot lbowot fowowk...* The mean word hit rate is **0.11**, against 0.91 for the masked model at the same temperature. It learned to copy the next character from the input; when sampling, the next character does not exist yet, and the model has nothing to copy.
+#
+#    This is the most important lesson of the part: **a low training loss is not a good model if the loss can be cheated.** The mask is what makes the training task the same as the generation task. If a model trains 'too well' in the first hundred steps, check for leakage before celebrating.
+#
+# Tips and common mistakes:
+#
+# - If you ever see a loss close to 0.0 after a few steps on real text, suspect leakage: a missing mask, targets that are not shifted, or the target included in the input.
+# - The no-mask model still has a causal-looking path in sampling because `sample_lm` takes the logits of the last position only: that position can look at the whole prefix, which is not where it learned to look.
+#
+# Try also (optional):
+#
+# - Evaluate both models on the held-out text of Step 6.2 with `eval_loss`. Which is better?
+# - Train the no-mask model for only 50 steps. How low is its loss already?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.3
+#
+# Is the training loss at the end lower without the mask than with it? Store True or False in `lower_without_mask`. Why it matters: The right answer is a surprise to many people, and it is the point of the experiment.
+
+# %%
+lower_without_mask = None   # YOUR CODE: True or False: is the training loss at the end LOWER without the mask than with it?
+
+# %%
+if lower_without_mask is None:
+    print("Fill in lower_without_mask above, then run this cell again.")
+else:
+    truth = tail(loss_nm) < final_a
+    check("training loss without mask", bool(lower_without_mask) == truth, "compare final_a with tail(loss_nm)")
+    print("A lower training loss here is NOT a better model: look at the sampled text.")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# lower_without_mask = tail(loss_nm) < final_a
+# print(lower_without_mask)
+# ```
+#
+# True: 0.015 is lower than 0.148. A lower training loss does not mean a better model when the model can see its own answer. The check prints a reminder to look at the sampled text.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 6.4. Ablation B: remove the positional encoding
+#
+# **Ablation B: remove the positional encoding** (`use_pos=False`). Without positions, a block cannot tell *where* a token is. We try two texts. `PATTERN_TEXT` is a pair of sentences repeated 20 times (*the cat sat on the mat. the dog sat on the log.*). And `BLOCKS` is `aaaabbbbccccdddd` repeated 40 times, built to be unfair to a model without positions: after the character `a`, the next character is another `a` or a `b` depending on how many `a`s came just before. There is one more fact to keep in mind, and it is a real one: a *causal* decoder can sometimes work out its position from the mask alone (a token that sees three tokens knows something about how many came before), so removing positions may hurt less than the lesson suggests. We measure and report what is true. Each of the four models trains for 300 steps.
+
+# %%
+BLOCKS = "aaaabbbbccccdddd" * 40                  # the next character depends on the position inside a run
+DATA_B, DATA_P = CharData(BLOCKS), CharData(PATTERN_TEXT)
+steps_b = 40 if QUICK else 300
+res_b = {}
+for dname, dat in (("PATTERN_TEXT", DATA_P), ("BLOCKS", DATA_B)):
+    for use_pos in (True, False):
+        print(dname, "| positions:", use_pos)
+        m_, l_ = fit(data=dat, steps=steps_b, use_pos=use_pos)
+        res_b[(dname, use_pos)] = (tail(l_), l_, m_)
+print()
+print("%-14s %-16s %-16s" % ("data", "with positions", "without positions"))
+for dname in ("PATTERN_TEXT", "BLOCKS"):
+    print("%-14s %-16.4f %-16.4f" % (dname, res_b[(dname, True)][0], res_b[(dname, False)][0]))
+fig, ax = plt.subplots(1, 2, figsize=(9, 3.2))
+for a_, dname in zip(ax, ("PATTERN_TEXT", "BLOCKS")):
+    a_.plot(res_b[(dname, True)][1], label="with positions"); a_.plot(res_b[(dname, False)][1], label="no positions")
+    a_.set_yscale("log"); a_.set_title(dname); a_.set_xlabel("step"); a_.legend()
+plt.tight_layout(); plt.show()
+RESULTS["p6_nopos"] = {k[0] + ("_pos" if k[1] else "_nopos"): round(v[0], 4) for k, v in res_b.items()}
+
+# %% [markdown]
+# **What you should see.**
+#
+# The table of final losses (mean of the last 20 steps):
+#
+#    - `PATTERN_TEXT`: **0.0600** with positions and **0.0544** without. No harm; the model without positions is even a little lower. Every character of these sentences is predictable from the *content* just before it, and the repeated text lets the model identify where it is from the words themselves.
+#    - `BLOCKS`: **0.0463** with positions and **0.1508** without positions. About 3 times higher. Here the content before a token is `aaa...`, and to know whether the next character is `a` or `b` the model must count how many `a`s it has just seen: that depends on order and distance. Without positions it does not do this well, in these 300 steps.
+#
+#    So the honest summary: on ordinary repeated text the position encoding made **no visible difference** in this experiment; on a task where the answer depends on the position inside a run of identical symbols, it mattered a lot. Do not conclude from `PATTERN_TEXT` that positions are useless; do not conclude from `BLOCKS` that a model without positions cannot learn anything. A model without positions can still infer some order from the causal mask, and its gap would shrink with more training and more text.
+#
+# Tips and common mistakes:
+#
+# - The comparison is fair only if the two models see the same data in the same order: `fit` uses the same seed for the initial weights and the batches.
+# - Remember the number of parameters: without positions the model has 2,048 fewer (the position table is 32 by 64), as the printed counts show (101,888 against 103,936 on `PATTERN_TEXT`).
+# - A single seed is a single experiment. If you want a conclusion, repeat with seeds 0, 1, 2 and compare the ranges.
+#
+# Try also (optional):
+#
+# - Change `BLOCKS` to a run length of 2 (`aabbccdd` repeated). Does the gap between the two models grow or shrink?
+# - Repeat the `BLOCKS` experiment with `seed=1` and `seed=2` and see whether the no-position model is always worse.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.4
+#
+# For `PATTERN_TEXT`, compute the final loss without positions minus the final loss with positions and store it in `diff_pattern`. Why it matters: A negative or near-zero difference is a result too; reporting it honestly is part of good practice.
+
+# %%
+diff_pattern = None   # YOUR CODE: final loss WITHOUT positions minus final loss WITH positions, on PATTERN_TEXT (a number)
+
+# %%
+if diff_pattern is None:
+    print("Fill in diff_pattern above, then run this cell again.")
+else:
+    ref = res_b[("PATTERN_TEXT", False)][0] - res_b[("PATTERN_TEXT", True)][0]
+    check("difference", abs(diff_pattern - ref) < 0.005, "tail of the no-position curve minus tail of the with-position curve")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# diff_pattern = res_b[("PATTERN_TEXT", False)][0] - res_b[("PATTERN_TEXT", True)][0]
+# print(round(diff_pattern, 4))
+# ```
+#
+# The difference is 0.0544 - 0.0600 = -0.0056: slightly negative, so on this text the model without positions did not do worse. Compare it with the difference on `BLOCKS`, 0.1508 - 0.0463 = +0.1045. The sign and the size of the effect depend on the task.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 6.5. Ablation C: heads and depth
+#
+# **Ablation C: heads and depth.** We train three models on `TOY_TEXT` for the same 500 steps: one head and one layer, four heads and one layer, and four heads and two layers (the model of Step 6.1). The parameter counts tell a story of their own: heads are free in parameters (the width `d` is *split* among them), layers are not.
+
+# %%
+configs = [(1, 1), (4, 1), (4, 2)]
+res_c = {}
+for h_, L_ in configs:
+    print("heads", h_, "layers", L_)
+    m_, l_ = fit(n_heads=h_, n_layers=L_)
+    res_c[(h_, L_)] = (sum(p.numel() for p in m_.parameters()), tail(l_), l_)
+print()
+print("%-8s %-8s %-12s %-12s" % ("heads", "layers", "parameters", "final loss"))
+for (h_, L_), (n_, f_, _) in res_c.items(): print("%-8d %-8d %-12d %-12.3f" % (h_, L_, n_, f_))
+plt.figure(figsize=(6, 3.2))
+for (h_, L_), (n_, f_, l_) in res_c.items(): plt.plot(l_, label="%d heads, %d layers" % (h_, L_))
+plt.yscale("log"); plt.xlabel("step"); plt.ylabel("training loss"); plt.legend(); plt.title("Heads and depth"); plt.tight_layout(); plt.show()
+RESULTS["p6_heads_layers"] = {"%dh%dl" % k: (v[0], round(v[1], 3)) for k, v in res_c.items()}
+
+# %% [markdown]
+# **What you should see.**
+#
+# | heads | layers | parameters | final loss |
+#    |---|---|---|---|
+#    | 1 | 1 | 55,232 | 0.155 |
+#    | 4 | 1 | 55,232 | 0.151 |
+#    | 4 | 2 | 105,216 | 0.148 |
+#
+#    First the counts: the one-head and the four-head model with one layer have exactly the same 55,232 parameters, because the four projections are `d` by `d` whether there is one head or four; adding a layer nearly doubles the count to 105,216. Now the losses. They differ by less than 0.01: 0.155, 0.151 and 0.148, the larger models slightly better. On a corpus of this size, which every model can memorise, **the differences are small** and we should not read much into them (another seed could reorder them). The benefit of many heads and many layers shows on harder data and longer training. What you can say is this: with the same parameters, four heads were no worse than one, and the model with twice as many parameters was a little better.
+#
+# Tips and common mistakes:
+#
+# - A table of three numbers that differ by 0.003 is not evidence of a ranking. Say 'about the same' unless the difference is larger than the change you see between seeds.
+# - To see the effect of heads you need a task where different relations matter at the same time; the lesson's figures show what heads can specialise in once a large model is trained.
+#
+# Try also (optional):
+#
+# - Repeat the three runs with `seed=1`. Does the order of the three final losses stay the same?
+# - Try (8, 1) with `d = 64`: 8 heads of width 8. Does the parameter count change?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.5
+#
+# Which (heads, layers) pair has the lowest final loss in `res_c`? Store it as a tuple in `best_config`. Why it matters: Reading a result table correctly, and then qualifying it, is the skill this part trains.
+
+# %%
+best_config = None   # YOUR CODE: the (heads, layers) pair with the lowest final loss in res_c, as a tuple
+
+# %%
+if best_config is None:
+    print("Fill in best_config above, then run this cell again.")
+else:
+    ref = min(res_c, key=lambda k: res_c[k][1])
+    check("lowest final loss", tuple(best_config) == ref, "look at the last column of the table")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# best_config = min(res_c, key=lambda k: res_c[k][1])
+# print(best_config)
+# ```
+#
+# (4, 2), with 0.148. But the margin over (4, 1) is 0.003, so your conclusion is 'about the same on this small text, slightly better with more layers', not 'depth wins'.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 6.6. Learning-rate sensitivity
+#
+# The learning rate is the setting that most often decides whether training works. We train the same model for 300 steps with five learning rates: 1e-4, 1e-3, 3e-3, 1e-2 and 3e-2. A rate that is too small learns slowly; a rate that is too large overshoots, jumps around, or even makes the loss grow. There is usually a sweet spot in between. Each run takes a few seconds.
+
+# %%
+lrs = [1e-4, 1e-3, 3e-3, 1e-2, 3e-2]
+steps_lr = 40 if QUICK else 300
+res_lr = {}
+for lr in lrs:
+    print("lr", lr)
+    m_, l_ = fit(steps=steps_lr, lr=lr)
+    res_lr[lr] = (tail(l_), l_)
+print()
+print("%-10s %-12s" % ("lr", "final loss"))
+for lr, (f_, _) in res_lr.items(): print("%-10g %-12.3f" % (lr, f_))
+plt.figure(figsize=(6, 3.2))
+for lr, (f_, l_) in res_lr.items(): plt.plot(l_, label="lr %g" % lr)
+plt.yscale("log"); plt.xlabel("step"); plt.ylabel("training loss"); plt.legend(fontsize=8); plt.title("Learning-rate sweep"); plt.tight_layout(); plt.show()
+RESULTS["p6_lr"] = {str(k): round(v[0], 3) for k, v in res_lr.items()}
+
+# %% [markdown]
+# **What you should see.**
+#
+# | learning rate | final loss |
+#    |---|---|
+#    | 1e-4 | 1.928 |
+#    | 1e-3 | 0.267 |
+#    | 3e-3 | 0.197 |
+#    | 1e-2 | 0.607 |
+#    | 3e-2 | 1.940 |
+#
+#    The curve of the losses is U-shaped in the learning rate. At 1e-4 the model hardly moves in 300 steps: 1.928 is well above the 0.2 of the better runs and still falling, so the model is far from done. At 1e-3 it learns well (0.267) but is still falling; at **3e-3** the loss is the lowest (**0.197**). At 1e-2 it is worse (0.607), and at 3e-2 it is bad again (1.940): the steps are so big that the model keeps overshooting and does not settle (the gradient clipping of `train_lm` limits the damage). The sweet spot here is about 3e-3, which is why it is the default of the part. Large models need much smaller rates (often 1e-4 to 6e-4) and a warm-up; the best rate depends on the size of the model and the batch.
+#
+# Tips and common mistakes:
+#
+# - A learning-rate sweep is a log-scale search: try 3 times bigger or smaller, not 10 percent.
+# - The 300-step budget favours larger rates a bit; a rate of 1e-3 trained for 1,000 steps may catch up.
+# - A loss that goes up, or to NaN, means the rate is too high (or the data has a problem). A loss that decreases very slowly means it is too low.
+#
+# Try also (optional):
+#
+# - Run 1e-3 for 1,000 steps. Does it reach the loss that 3e-3 reached in 300?
+# - Try 6e-4 and 6e-3. Is the minimum between 1e-3 and 1e-2?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.6
+#
+# Which learning rate in `res_lr` gave the lowest final loss? Store it in `best_lr`. Why it matters: You will tune a learning rate in almost every project you do; the habit of trying a few values on a log scale is the one that transfers.
+
+# %%
+best_lr = None   # YOUR CODE: the learning rate with the lowest final loss in res_lr
+
+# %%
+if best_lr is None:
+    print("Fill in best_lr above, then run this cell again.")
+else:
+    ref = min(res_lr, key=lambda k: res_lr[k][0])
+    check("best learning rate", abs(best_lr - ref) < 1e-12, "min(res_lr, key=...)")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# best_lr = min(res_lr, key=lambda k: res_lr[k][0])
+# print(best_lr)
+# ```
+#
+# 3e-3 (0.197). Notice that the neighbours 1e-3 and 1e-2 are both worse (0.267 and 0.607) and that the extremes are much worse (1.928 and 1.940): the U shape is the typical picture of a learning-rate sweep.
+#
+# </details>
+
+# %% [markdown]
+# ## Part 7. Scale it up on paper, design and reflect (15 min)
+#
+# *Lesson sections: "Big picture" and "Putting together".* You have built and trained a model with 105,216 parameters. GPT-2 small has 124 million, and the models of today have billions. In this last part you do the arithmetic of scale on paper: count parameters and memory without building any of these models, compare the rule of thumb `12 * L * d²` with the exact count, design a Transformer for a real problem from your school or community, print your key numbers, and answer four reflection questions. ==The step from a toy to a large model is mostly the same block, repeated and widened; the new problems are memory and data.==
+#
+# This part uses `count_params` from Step 5.3 and `V` from Step 5.2 (it is safest to run Part 5 first in the same session).
+#
+# **Imagine first.** For GPT-2 small, which is bigger: the memory for all the weights, or the memory for all the attention score tables (every head of every layer) for one sequence of 1,024 tokens? And by roughly how much? Write your guess below; Step 7.2 computes it.
+
+# %%
+# Imagine first: for GPT-2 small, which is bigger: the memory for all the weights, or for all the attention score tables of one sequence of 1,024 tokens?
+my_guess_memory = ""     # "weights" or "scores", and by roughly how much
+
+# %% [markdown]
+# ### Step 7.1. Counting GPT-2-sized models without building them
+#
+# We use `count_params` on three models: the school-sized model of the lesson, GPT-2 small, and GPT-2 medium (24 layers, `d = 1024`, 16 heads, `d_ff = 4096`, a vocabulary of 50,257 tokens, context 1,024). The lesson gives the totals only for GPT-2 small, so the medium count is **computed** by our function, not quoted from memory. For each model we also print the rule of thumb `12 * L * d²` for the parameters of the blocks (attention `4d²` plus feed-forward `8d²` when `d_ff = 4d`, ignoring the small bias and norm terms), and how far off it is, for the blocks alone and for the whole model.
+
+# %%
+models = {
+    "school model (yours to change)": dict(vocab=65, d=64, n_heads=4, d_ff=256, n_layers=2, ctx=64),
+    "GPT-2 small":  dict(vocab=50257, d=768,  n_heads=12, d_ff=3072, n_layers=12, ctx=1024),
+    "GPT-2 medium": dict(vocab=50257, d=1024, n_heads=16, d_ff=4096, n_layers=24, ctx=1024),
+}
+print("%-30s %13s %14s %14s %9s %9s" % ("model", "exact total", "blocks exact", "12 * L * d^2", "off(blk)", "off(tot)"))
+PARAMS = {}
+for name, c in models.items():
+    exact = count_params(c["vocab"], c["d"], c["n_heads"], c["d_ff"], c["n_layers"], c["ctx"], tie=True)
+    d_, L_ = c["d"], c["n_layers"]
+    blocks = L_ * (4 * d_ * d_ + 4 * d_ + 2 * d_ * c["d_ff"] + c["d_ff"] + d_ + 4 * d_)      # the L blocks only
+    rule = 12 * L_ * d_ ** 2
+    PARAMS[name] = exact
+    print("%-30s %13s %14s %14s %8.2f%% %8.2f%%" % (name, f"{exact:,}", f"{blocks:,}", f"{rule:,}", 100 * (blocks - rule) / blocks, 100 * (exact - rule) / exact))
+assert PARAMS["GPT-2 small"] == 124_439_808
+print("GPT-2 medium is computed by our function (24 layers, d 1024), not quoted from memory.")
+RESULTS["p7_params"] = dict(PARAMS)
+
+# %% [markdown]
+# **What you should see.**
+#
+# | model | exact total | blocks exact | 12 L d² | off (blocks) | off (total) |
+#    |---|---|---|---|---|---|
+#    | school model | 108,352 | 99,968 | 98,304 | 1.66% | 9.27% |
+#    | GPT-2 small | 124,439,808 | 85,054,464 | 84,934,656 | 0.14% | 31.75% |
+#    | GPT-2 medium | 354,823,168 | 302,309,376 | 301,989,888 | 0.11% | 14.89% |
+#
+#    Read the last two columns together. For the **blocks**, the rule of thumb is very good: 0.14 percent off for GPT-2 small (84,934,656 against 85,054,464) and 0.11 percent for medium; the only things it ignores are the biases and layer norms. For the **whole model** it is much worse (31.75 percent for small), because the embedding table (38.6 million) and the positions are not in the rule: for a model with a large vocabulary and few layers the embedding is a big share. GPT-2 medium has 354,823,168 parameters by our function (check that you can follow the arithmetic: embedding 51,463,168, positions 1,048,576, 24 blocks of 12,596,224 plus 2,048 for the final norm). The school model is the small one that fits in this lab: 108,352, and its blocks are only 92 percent of it.
+#
+# Tips and common mistakes:
+#
+# - Say 'about 355 million' for GPT-2 medium only if you have computed it: here you have, with the formula and the model sizes of GPT-2 medium (24 layers, d = 1024, 16 heads).
+# - `12 * L * d²` is a rule for estimating; use `count_params` when you need the exact number.
+#
+# Try also (optional):
+#
+# - Add a fourth model of your own to the dictionary (say, 6 layers and `d = 384`) and see its numbers.
+# - For which kind of model (many layers, or a huge vocabulary) is the rule of thumb worst for the total?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 7.1
+#
+# Choose a model by changing `my_model` (or keep the default), compute its exact parameter count with `count_params` (tied output) and store it in `my_params`. The check also prints what `12 * L * d²` would say. Why it matters: This is the calculation you would do before asking for a GPU.
+
+# %%
+my_model = dict(vocab=100, d=128, n_heads=8, d_ff=512, n_layers=4, ctx=128)   # change the numbers if you like
+my_params = None   # YOUR CODE: the exact parameter count of my_model (tied output), using count_params
+
+# %%
+if my_params is None:
+    print("Fill in my_params above, then run this cell again.")
+else:
+    ref = count_params(my_model["vocab"], my_model["d"], my_model["n_heads"], my_model["d_ff"], my_model["n_layers"], my_model["ctx"], tie=True)
+    check("count", my_params == ref, "count_params(vocab, d, n_heads, d_ff, n_layers, ctx)")
+    print("12 * L * d^2 would say", 12 * my_model["n_layers"] * my_model["d"] ** 2, "- how far off?")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# my_params = count_params(my_model["vocab"], my_model["d"], my_model["n_heads"], my_model["d_ff"], my_model["n_layers"], my_model["ctx"], tie=True)
+# print(my_params)
+# ```
+#
+# For the default `my_model` (vocabulary 100, d = 128, 4 layers, d_ff = 512, context 128) the exact count is 822,528 and the rule gives 786,432 for the blocks: close, the difference being the biases, the layer norms and the embedding tables.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 7.2. Memory arithmetic
+#
+# Memory is the other half of scale. Each parameter takes 4 bytes in `float32` and 2 in `float16`, so a model of `n` parameters needs `4n` or `2n` bytes for its weights (training needs several times more, for the gradients and the optimiser). Attention adds a table of scores: `n` by `n` numbers for every head of every layer, for every sequence in the batch. We compute the weights of our three models in both precisions, the score table of one head for `n = 1024` and the tables of all 12 heads in all 12 layers of GPT-2 small.
+
+# %%
+def fmt_bytes(b):
+    return "%.1f GB" % (b / 1e9) if b >= 1e9 else "%.1f MB" % (b / 1e6)
+
+print("%-32s %12s %12s" % ("model", "float32", "float16"))
+for name, n in PARAMS.items(): print("%-32s %12s %12s" % (name, fmt_bytes(4 * n), fmt_bytes(2 * n)))
+n_ctx = 1024
+one_table = n_ctx * n_ctx * 4                                   # one n x n score table in float32
+all_tables = one_table * 12 * 12                                # 12 heads x 12 layers in GPT-2 small
+print()
+print("one %d x %d score table (float32): %s" % (n_ctx, n_ctx, fmt_bytes(one_table)))
+print("all heads and layers of GPT-2 small, one sequence: %s" % fmt_bytes(all_tables))
+print("weights of GPT-2 small in float32: %s" % fmt_bytes(4 * PARAMS["GPT-2 small"]))
+RESULTS["p7_score_tables_MB"] = round(all_tables / 1e6, 1)
+
+# %% [markdown]
+# **What you should see.**
+#
+# The school model needs 0.4 MB in float32 (0.2 MB in float16), GPT-2 small 497.8 MB (248.9 MB), and GPT-2 medium 1.4 GB (709.6 MB). One score table for `n = 1024` in float32 is 1,024 * 1,024 * 4 = 4.2 MB. All the tables of GPT-2 small, 12 heads times 12 layers = 144 tables for one sequence, are **604.0 MB**, *more* than the 497.8 MB of the weights. So for long sequences the scores can outweigh the model. That is the practical meaning of the `n²` cost of attention (Week 7), and the reason that efficient implementations compute the scores in small tiles and never store the full table.
+#
+# Tips and common mistakes:
+#
+# - These are 'one sequence' numbers; with a batch of 8 multiply the score tables by 8.
+# - In practice the scores are often kept in float16 or computed in tiles, so the real cost can be lower; the table is the cost of the straightforward implementation we wrote.
+# - 1 MB here is 1,000,000 bytes, as a disk maker counts; with 1,048,576 bytes per MB the numbers would be about 5 percent smaller.
+#
+# Try also (optional):
+#
+# - Compute the score tables for `n = 4096`. How many times more than for 1,024?
+# - How long a sequence makes the score tables of GPT-2 small as large as its float32 weights?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 7.2
+#
+# Compute the float16 weight memory of the school model in megabytes (1 MB is 1,000,000 bytes) and store it in `mb16`. Why it matters: Fitting a model into memory is the first practical question about any model.
+
+# %%
+mb16 = None   # YOUR CODE: the float16 weight memory of the school model, in megabytes (1 MB = 1,000,000 bytes)
+
+# %%
+if mb16 is None:
+    print("Fill in mb16 above, then run this cell again.")
+else:
+    ref = 2 * PARAMS["school model (yours to change)"] / 1e6
+    check("float16 memory", abs(mb16 - ref) < 0.01, "2 bytes per parameter")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# mb16 = 2 * PARAMS["school model (yours to change)"] / 1e6
+# print(round(mb16, 3))
+# ```
+#
+# 2 bytes times 108,352 parameters = 216,704 bytes = 0.217 MB. GPT-2 small in float16 needs about 1,150 times more.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 7.3. Imagination design: a Transformer for your school or community
+#
+# Now design. Choose a real small problem from your school or community where a Transformer on text could help, for example a typhoon-warning text classifier, a Tagalog next-word keyboard, or a jeepney route description generator. Fill in the `design` dictionary: the vocabulary (what are the tokens, and how many), `d_model`, heads, layers, `d_ff`, the context length, the positional encoding (sinusoidal or learned, and why), the training text (where it comes from and why you may use it), how you would test it, and one risk. The cell prints your design as a card and computes the parameters and memory from your numbers with `count_params`. Use sizes that fit the problem: a keyboard on a phone is small, a route description generator is not.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 7.3
+#
+# Fill in all the fields of `design` with your own choices and run the cell. Include the reason for your choice of positional encoding and one test that would tell you the model works. Why it matters: Choosing sizes and justifying them is what an engineer does before any training run; the card is part of what you hand in.
+
+# %%
+design = {
+    "problem": "",             # e.g. "a Tagalog next-word keyboard", "a typhoon-warning text classifier", "a jeepney route description generator"
+    "vocabulary": 0,           # size, and what the tokens are (characters? words? pieces?)
+    "d_model": 0,
+    "n_heads": 0,
+    "n_layers": 0,
+    "d_ff": 0,
+    "context": 0,              # how many tokens it can look at
+    "positions": "",           # "sinusoidal" or "learned", and why
+    "training_text": "",       # where the text comes from and why you may use it
+    "test": "",                # how you would know that it works
+    "risk": "",                # one thing that could go wrong
+}
+if not design["problem"]:
+    print("Fill in the design dictionary above, then run this cell again.")
+else:
+    n = count_params(design["vocabulary"], design["d_model"], design["n_heads"], design["d_ff"], design["n_layers"], design["context"], tie=True)
+    print("=" * 60); print("DESIGN CARD:", design["problem"]); print("=" * 60)
+    for k, v in design.items():
+        if k != "problem": print("%-14s %s" % (k, v))
+    print("parameters      %s | float32 %s | float16 %s" % (f"{n:,}", fmt_bytes(4 * n), fmt_bytes(2 * n)))
+    check("design is complete", all(design[k] for k in design), "every field needs an entry")
+    RESULTS["p7_design"] = dict(design, parameters=n)
+
+# %% [markdown]
+# **What you should see.**
+#
+# You will see a card with your choices and one line with the parameter count and the memory in float32 and float16, for example, for the sample design in the answer below (vocabulary 8,000, `d = 256`, 4 heads, 4 layers, `d_ff = 1,024`, context 64): `parameters 5,223,936 | float32 20.9 MB | float16 10.4 MB`. Your numbers will be your own. A good design is *consistent* (heads divide `d_model`, `d_ff` is about `4 * d_model`, the context is long enough for the task) and *honest* (the risk is real, not decorative).
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# design = {
+#     "problem": "a Tagalog next-word keyboard for a school messaging app",
+#     "vocabulary": 8000,          # word pieces made from Tagalog and English school text
+#     "d_model": 256, "n_heads": 4, "n_layers": 4, "d_ff": 1024,
+#     "context": 64,               # a message is short
+#     "positions": "learned: the context is short and fixed, and a learned table is simple",
+#     "training_text": "messages that students agreed to share, with names and numbers removed",
+#     "test": "next-word accuracy on messages from a different class than the training ones",
+#     "risk": "the model may repeat private information or rude words from the training messages",
+# }
+# ```
+# With these numbers `count_params` gives 5,223,936 parameters: 20.9 MB in float32 and 10.4 MB in float16, small enough for a phone.
+#
+# A strong card names a concrete use (who would use it), a vocabulary that fits the language (a Tagalog keyboard needs the characters and common words of Tagalog), a context that fits the task (a word keyboard needs 20 to 50 tokens, not 1,024), a test that does not use the training text, and a risk such as bias in the training text, private information in messages, or the model inventing a wrong warning.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 7.4. The results summary
+#
+# Print the key numbers you stored during the lab. They go into the notebook you hand in, so that anyone can see your results at a glance.
+
+# %%
+print("Your RESULTS (key numbers saved in Parts 5 to 7):")
+for k, v in RESULTS.items(): print("  %-24s %s" % (k, v))
+check("results from Part 5 and Part 6 are present", all(k in RESULTS for k in ("p5_initial_loss", "p6_final_loss")), "run Parts 5 and 6 first")
+
+# %% [markdown]
+# **What you should see.**
+#
+# You should see one line per stored result. Keys that start with `p5_` come from Part 5 (the initial loss 3.189, the overfit loss 0.045 and your sentence about the residual connections), `p6_` from Part 6 (the final loss 0.148, the hit rates, the train and held-out losses 0.149 and 1.844, the no-mask pair 0.253 and 0.043 with the hit rate 0.11, the position ablation, the heads and layers table, the learning-rate table) and `p7_` from this part (the parameter counts, the 604.0 MB of score tables and, if you filled them in, your design and reflection). Check them against your tables above.
+
+# %% [markdown]
+# ### Step 7.5. Four reflection questions
+#
+# Answer the four questions in your own words, in at least 25 words each, using at least one number or example from this lab in each answer. There are no trick questions: the goal is to say clearly what you understood. If you cannot answer one, go back to the step named in brackets.
+
+# %%
+reflection = {
+    "1_positions": "",     # Why does a Transformer need positional encoding? (Part 6.4, Imagine-first of Part 1)
+    "2_residual_norm": "", # What do residual connections and layer norm do? (Part 4)
+    "3_parallel": "",      # Why can training be parallel while generation is sequential? (Part 6)
+    "4_ablations": "",     # What did the ablations show you? (Part 6)
+}
+short = [k for k, v in reflection.items() if len(v.split()) < 25]
+if len(short) == len(reflection):
+    print("Write your four answers in `reflection` above (at least 25 words each), then run this cell again.")
+else:
+    check("all four answers have at least 25 words", not short, "still short: " + ", ".join(short))
+RESULTS["p7_reflection"] = reflection
+
+# %% [markdown]
+# **What you should see.**
+#
+# **What a good answer contains.**
+#
+#    - *Why positions:* attention treats its input as a set: Part 1 showed that permuting the tokens just permutes the output rows. Order must be added to the input. In Step 6.4 the model without positions had a loss of 0.1508 against 0.0463 on `BLOCKS`, where the answer depends on position, but 0.0544 against 0.0600 on `PATTERN_TEXT`, where the content was enough: positions matter when order carries the answer (and the causal mask alone lets a model infer a little).
+#    - *Residuals and layer norm:* the residual path gives the gradient a road (the first-layer gradient was 1.91 with residuals against 3.65e-05 without, Step 4.4); the layer norm keeps every token's numbers at a sensible scale (post-norm 1.000 against pre-norm growing from 1.224 to 2.291 over 12 layers, Step 4.5).
+#    - *Parallel training, sequential generation:* in training, the whole text is known and the causal mask lets every position predict its next character in one forward pass; in generation, character `t + 1` depends on the sampled character `t`, so we need one pass per new character (Part 3). The no-mask model of Step 6.3 shows why the mask is needed: its loss was 0.015 but its text was garbage.
+#    - *The ablations:* removing the mask made the loss look better and the text worse (0.043 against 0.253 at step 200); removing positions mattered on one task and not on the other; one head against four, and one layer against two, made little difference on this small text (0.155, 0.151, 0.148); the learning rate mattered most (1.928 to 0.197 to 1.940).
+
+# %% [markdown]
+# ### Step 7.6. Go further
+#
+# If you want to see these ideas in a complete tutorial, read the UvA Deep Learning tutorial *Transformers and Multi-Head Attention* (Tutorial 6, University of Amsterdam, by Phillip Lippe): `https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial6/Transformers_and_MHAttention.html`. It covers multi-head attention, the Transformer encoder, positional encoding and a sequence-reversal experiment, with classes named `MultiheadAttention`, `EncoderBlock` and `PositionalEncoding`. Read it as a second explanation of what you built: compare its attention shapes with yours, and see how its encoder block differs from your decoder block (it has no causal mask).
 
 # %% [markdown]
 # ## Wrap-up
 #
-# - Positional encoding gives attention the order information it lacks, and multi-head attention with a causal mask is the core of an autoregressive Transformer block.
-# - Training predicts the next token at every position at once, with targets equal to the input shifted by one. A uniform guess has loss ln(vocab size).
-# - Removing the causal mask lets the model read the answer, so the loss looks great but generation fails.
+# **What you learned in Parts 4 to 7**
 #
-# **Reflection.** Double-click here to write short answers: (a) why does the feed-forward network see each token separately? (b) What would happen to word order if you removed the positional encoding? (c) Why is the mask needed in training but automatic in generation?
+# - A Transformer block is attention plus a position-wise feed-forward network, each wrapped in a residual connection and a layer norm. You wrote layer norm by hand, measured how the residual path carries the gradient (about 1.9 at the first layer against 3.65e-05 without it) and saw that pre-norm leaves the residual stream to grow (1.224 to 2.291 over 12 layers) while post-norm keeps it at 1.
+# - You assembled a tiny GPT from its pieces, counted its parameters by formula (28,032 for the Imagine-first model, 108,352 for the school-sized model, 124,439,808 for GPT-2 small without building it), checked the initial loss against ln V and trained it from 3.200 down to 0.148 (perplexity 1.16), then saw that it memorises its tiny corpus (held-out loss 1.844).
+# - You broke the model on purpose: without the causal mask the loss looks better (0.043 against 0.253 at step 200) but the text is garbage; positions mattered on a position-dependent task (0.1508 against 0.0463) and not on ordinary repeated text; heads and layers made little difference on a text this small; and the learning rate mattered most.
 #
-# **Stretch goals.** Stack three blocks; sample with temperature instead of `argmax`; change `n_heads` from 4 to 1 and compare the final loss.
+# **Reflect.** Double-click this cell and write two sentences: which ablation surprised you most, and what would you test next?
 #
-# Files in `/content` disappear when the Colab session ends, so download anything you want to keep (File → Download). Submit your work the way your instructor asks; dates and weights are announced by your instructor.
+# **Next week (Week 9)** brings pretraining: the same decoder block, but trained on an enormous amount of text, and the two families that grew from the Transformer, the GPT models (decoders, like yours) and the BERT models (encoders, without the causal mask). The code you wrote today is the core of both.
 #
-# **Go further.** Tutorial 6, *Transformers and Multi-Head Attention*, by Phillip Lippe, University of Amsterdam (UvA Deep Learning Tutorials, MIT licence): [Transformers and Multi-Head Attention](https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial6/Transformers_and_MHAttention.html). It builds `MultiheadAttention`, `EncoderBlock` and `PositionalEncoding` classes and trains a Transformer on the reverse-sequence task, where the heads learn to attend to the flipped position. It uses PyTorch Lightning and downloads data, so it takes longer to set up than this notebook.
+# **Go further.** The UvA Deep Learning tutorial *Transformers and Multi-Head Attention* (Tutorial 6, University of Amsterdam, by Phillip Lippe): `https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial6/Transformers_and_MHAttention.html`.
+#
+# **Before you close this tab.** Files on the Colab runtime disappear when the session ends. Use **File → Save a copy in Drive** (and download the notebook with its outputs if you want a copy on your computer). Submit your work the way your instructor asks.

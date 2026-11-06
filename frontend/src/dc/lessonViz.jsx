@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -1677,4 +1677,131 @@ function HardSoft({ spec, fig }) {
   );
 }
 
-export const VIZ = { seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- tfblock (parts, shapes and parameters of a decoder-only Transformer)
+const TF_PARTS = {
+  emb: ['Token embedding', 'Looks up one d-dimensional vector per token id (Week 6). Table of V × d numbers.'],
+  pos: ['Positional encoding', 'Adds a vector that says where in the sequence each token is. Sinusoidal: no parameters. Learned: n_ctx × d numbers.'],
+  attn: ['Multi-head self-attention', 'Every token mixes in information from the earlier tokens: W_Q, W_K, W_V and W_O, each d × d (plus biases).'],
+  ffn: ['Feed-forward network', 'Processes each token on its own: d → d_ff → d, with a non-linearity (ReLU or GELU) in between.'],
+  ln: ['Layer norm (two per block)', 'Re-centres and re-scales each token vector; learns a scale and a shift of d numbers each.'],
+  res: ['Residual connections', 'Add the input of a sub-layer to its output: x + F(x). No parameters, but they keep gradients flowing.'],
+  fin: ['Final layer norm', 'One more layer norm after the last block.'],
+  head: ['Output layer (unembedding)', 'A d × V matrix turning each final vector into one score per vocabulary token; often tied to (shared with) the embedding table.'],
+};
+function TfBlock({ spec, fig }) {
+  const [cfg, setCfg] = useState({ vocab: spec.vocab ?? 50257, d: spec.d ?? 768, heads: spec.heads ?? 12, dff: spec.dff ?? 3072, layers: spec.layers ?? 12, ctx: spec.ctx ?? 1024, posLearned: spec.posLearned ?? true, tied: spec.tied ?? true });
+  const [sel, setSel] = useState('attn');
+  const set = (p) => setCfg((c) => ({ ...c, ...p }));
+  const P = tfParams(cfg);
+  const fmt = (n) => n.toLocaleString();
+  const dh = cfg.d / cfg.heads;
+  const ok = Number.isInteger(dh);
+  const rows = [
+    ['emb', `V × d = ${fmt(cfg.vocab)} × ${fmt(cfg.d)}`, `(n, d)`, P.emb, 1],
+    ['pos', cfg.posLearned ? `n_ctx × d = ${fmt(cfg.ctx)} × ${fmt(cfg.d)} (learned)` : 'sinusoidal: computed, nothing to learn', `(n, d)`, P.pos, 1],
+    ['attn', `${cfg.heads} heads of ${ok ? dh : '?'} · 4·d² + 4·d`, `(n, d)`, P.attn, cfg.layers],
+    ['ffn', `d → ${fmt(cfg.dff)} → d`, `(n, d)`, P.ffn, cfg.layers],
+    ['ln', '2 × (2·d)', `(n, d)`, P.ln, cfg.layers],
+    ['fin', '2·d', `(n, d)`, P.finalLn, 1],
+    ['head', cfg.tied ? 'tied to the embedding table' : 'd × V', `(n, V)`, P.head, 1],
+  ];
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-row" style={{ gap: 12, marginBottom: 10 }}>
+        <label className="vz-sel">d_model <select value={cfg.d} onChange={(e) => set({ d: +e.target.value })}>{[64, 128, 256, 512, 768, 1024, 2048].map((q) => <option key={q}>{q}</option>)}</select></label>
+        <label className="vz-sel">heads <select value={cfg.heads} onChange={(e) => set({ heads: +e.target.value })}>{[1, 2, 4, 8, 12, 16, 32].map((q) => <option key={q}>{q}</option>)}</select></label>
+        <label className="vz-sel">d_ff <select value={cfg.dff} onChange={(e) => set({ dff: +e.target.value })}>{[256, 512, 1024, 2048, 3072, 4096, 8192].map((q) => <option key={q}>{q}</option>)}</select></label>
+        <label className="vz-sel">blocks <select value={cfg.layers} onChange={(e) => set({ layers: +e.target.value })}>{[1, 2, 4, 6, 12, 24, 48].map((q) => <option key={q}>{q}</option>)}</select></label>
+        <label className="vz-sel">vocabulary <select value={cfg.vocab} onChange={(e) => set({ vocab: +e.target.value })}>{[65, 1000, 8000, 32000, 50257, 100000].map((q) => <option key={q} value={q}>{fmt(q)}</option>)}</select></label>
+        <button type="button" className={'wg-chip' + (cfg.posLearned ? ' on' : '')} aria-pressed={cfg.posLearned} onClick={() => set({ posLearned: !cfg.posLearned })}>learned positions</button>
+        <button type="button" className={'wg-chip' + (cfg.tied ? ' on' : '')} aria-pressed={cfg.tied} onClick={() => set({ tied: !cfg.tied })}>tied output</button>
+      </div>
+      {!ok ? <p className="wg-why bad" role="alert">d_model must divide evenly by the number of heads (d_model ÷ heads = {Number(dh.toFixed(2))}).</p> : null}
+      <div className="vz-scroll">
+        <table className="vz-mlp" aria-label="Parts, shapes and parameters">
+          <thead><tr><th>Part</th><th>Size</th><th>Output shape</th><th>Parameters each</th><th>Copies</th><th>Total</th></tr></thead>
+          <tbody>
+            {rows.map(([k, size, shape, p, n]) => (
+              <tr key={k} className={sel === k ? 'sel' : ''} onClick={() => setSel(k)} style={{ cursor: 'pointer' }}>
+                <td><button type="button" className="vz-link" onClick={() => setSel(k)}>{TF_PARTS[k][0]}</button></td><td>{size}</td><td>{shape}</td><td>{fmt(p)}</td><td>× {n}</td><td>{fmt(p * n)}</td>
+              </tr>
+            ))}
+            <tr className="tot"><td colSpan={5}><strong>Total trainable parameters</strong></td><td><strong>{fmt(P.total)}</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="wg-p" aria-live="polite" style={{ margin: '10px 0 0' }}><strong>{TF_PARTS[sel][0]}.</strong> {TF_PARTS[sel][1]}</p>
+      <p className="wg-note">Shapes are for one sequence of n tokens; the (n, d) shape stays the same through every block, which is what lets residual connections add the input to the output and blocks be stacked. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- causalmask (the mask that stops a token looking at the future)
+function CausalMask({ spec, fig }) {
+  const toks = spec.tokens;
+  const [masked, setMasked] = useState(true);
+  const [row, setRow] = useState(spec.row ?? toks.length - 1);
+  const W = useMemo(() => maskedSoftmax(spec.scores, masked), [spec, masked]);
+  const f = (q) => Number(q.toFixed(2)).toString();
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-tabs" role="tablist">{[true, false].map((k) => <button key={String(k)} type="button" role="tab" aria-selected={masked === k} className={'wg-tab' + (masked === k ? ' on' : '')} onClick={() => setMasked(k)}>{k ? 'With the causal mask' : 'Without the mask'}</button>)}</div>
+      <div className="vz-scroll">
+        <table className="vz-mlp vz-attn" aria-label="Attention weights">
+          <thead><tr><th>query ↓ key →</th>{toks.map((t, j) => <th key={j}>{t}</th>)}</tr></thead>
+          <tbody>
+            {W.map((r, i) => (
+              <tr key={i} className={i === row ? 'sel' : ''} onClick={() => setRow(i)} style={{ cursor: 'pointer' }}>
+                <td><button type="button" className="vz-link" onClick={() => setRow(i)}>{toks[i]}</button></td>
+                {r.map((q, j) => <td key={j} style={{ background: j > i && masked ? 'repeating-linear-gradient(45deg,var(--surface2),var(--surface2) 4px,transparent 4px,transparent 8px)' : `color-mix(in srgb, var(--accent) ${Math.round(q * 70)}%, var(--surface2))` }}>{j > i && masked ? '−∞→0' : f(q)}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="vz-calc" aria-live="polite">row “{toks[row]}”: scores ({spec.scores[row].map(f).join(', ')}){masked ? ` → future positions set to −∞` : ''} → softmax = ({W[row].map(f).join(', ')}) · sum {f(W[row].reduce((a, b) => a + b, 0))}</p>
+      <p className="wg-note">With the mask, row i can only use tokens 1…i, so the whole sentence can be trained in one pass without cheating. Without it, each token sees the word it is supposed to predict. {spec.note || 'The scores are made up for the demonstration.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- shiftloss (teacher forcing: inputs, shifted targets and the loss at each position)
+function ShiftLoss({ spec, fig }) {
+  const toks = spec.tokens;
+  const p = spec.p;
+  const [sel, setSel] = useState(0);
+  const losses = p.map((q) => -Math.log(q));
+  const mean = losses.reduce((a, b) => a + b, 0) / losses.length;
+  const mx = Math.max(...losses, 1e-9);
+  const f = (q) => Number(q.toFixed(3)).toString();
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="vz-scroll">
+        <table className="vz-mlp" aria-label="Inputs, targets and losses">
+          <thead><tr><th>Position</th>{p.map((_, i) => <th key={i}>{i + 1}</th>)}</tr></thead>
+          <tbody>
+            <tr><td>input (what the model sees)</td>{p.map((_, i) => <td key={i} className={sel === i ? 'sel' : ''}><button type="button" className="vz-link" onClick={() => setSel(i)}>{toks[i]}</button></td>)}</tr>
+            <tr><td>target (the next token)</td>{p.map((_, i) => <td key={i} className={sel === i ? 'sel' : ''}><strong>{toks[i + 1]}</strong></td>)}</tr>
+            <tr><td>probability given to the target</td>{p.map((q, i) => <td key={i} className={sel === i ? 'sel' : ''}>{f(q)}</td>)}</tr>
+            <tr><td>loss −ln p</td>{losses.map((l, i) => <td key={i} className={sel === i ? 'sel' : ''}><span className="vz-vbar" style={{ width: `${(l / mx) * 40}px`, background: 'var(--amber)' }} />{f(l)}</td>)}</tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="wg-p" aria-live="polite" style={{ margin: '10px 0 0' }}><strong>Position {sel + 1}:</strong> having read “{toks.slice(0, sel + 1).join(' ')}”, the model must predict “{toks[sel + 1]}”. It gave that token probability {f(p[sel])}, so the loss is −ln {f(p[sel])} = {f(losses[sel])}.</p>
+      <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div className="out"><span className="wg-k">Training loss (mean)</span><span className="vz-big">{f(mean)}</span><span className="wg-note">the average of the {p.length} losses</span></div>
+        <div><span className="wg-k">Perplexity</span><span className="vz-big">{f(Math.exp(mean))}</span><span className="wg-note">exp of the loss</span></div>
+        <div><span className="wg-k">Tokens trained in one pass</span><span className="vz-big">{p.length}</span><span className="wg-note">one prediction per position</span></div>
+      </div>
+      <p className="wg-note">The target sequence is the input sequence shifted left by one: each position learns to predict the token after it, and all positions are trained at once. {spec.note || 'The probabilities are made up for the demonstration.'}</p>
+    </div>
+  );
+}
+
+export const VIZ = { tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

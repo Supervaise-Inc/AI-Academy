@@ -245,6 +245,15 @@ Use it whenever a lesson introduces a formula: every symbol is a `{t, id}` term 
 ### `calc` kind `attn_cost`
 `{ "type": "calc", "kind": "attn_cost", "title": "…" }`: sliders for sequence length n and head size d; shows the n × n score table, about 4·n²·d multiply-adds, and "1 step vs n steps" against an RNN.
 
+### `tfblock` (parts, shapes and parameters of a decoder-only Transformer)
+`{ "type": "tfblock", "title": "…", "intro": "…", "vocab": 50257, "d": 768, "heads": 12, "dff": 3072, "layers": 12, "ctx": 1024, "posLearned": true, "tied": true, "note": "…", "checks": [ { "total": 124439808, "block": 7087872, "attn": 2362368, "ffn": 4722432 } ] }`. A table of the parts (token embedding, positional encoding, multi-head attention, feed-forward, layer norms, final layer norm, output layer) with sizes, output shapes, parameters and copies; drop-downs change d_model, heads, d_ff, blocks and vocabulary; toggles switch learned positions and tied output; click a part for a one-line explanation. Counts include biases as in GPT-2: attention 4d² + 4d, feed-forward 2·d·d_ff + d_ff + d, two layer norms per block (4d) and a final layer norm (2d). Measured: the GPT-2 small setting above gives 124,439,808 parameters (embedding 38,597,376; learned positions 786,432; one block 7,087,872; 12 blocks 85,054,464). `checks` (any of `total`, `block`, `attn`, `ffn`, optionally overriding `vocab`, `d`, `dff`, `layers`, `ctx`, `posLearned`, `tied`) are recomputed by the validator.
+
+### `causalmask` (the mask that hides the future)
+`{ "type": "causalmask", "title": "…", "intro": "…", "tokens": ["the","cat","sat","down"], "scores": [[…n numbers] × n], "row": 3, "note": "…", "checks": [ { "causal": true, "row": 1, "col": 0, "value": 0.27 } ] }`. An n × n matrix of raw attention scores; tabs switch the causal mask on or off; the table shows the softmax weights (masked cells hatched), a row can be selected to see its scores, the −∞ step and the weights. `checks` give a `row`, `col`, `causal` flag and the expected weight (±0.002).
+
+### `shiftloss` (teacher forcing: inputs, shifted targets and the loss at every position)
+`{ "type": "shiftloss", "title": "…", "intro": "…", "tokens": ["the","cat","sat","on","the","mat"], "p": [0.2, 0.1, 0.4, 0.3, 0.15], "note": "…", "checks": [ { "loss": 1.6, "perplexity": 4.95 } ] }`. `p[i]` is the probability the model gave to `tokens[i+1]` after reading `tokens[0..i]` (length = tokens − 1; authored, flagged illustrative). Shows input row, target row (the input shifted by one), the probabilities, each −ln p, the mean loss and the perplexity; select a position to read its sentence. `checks` (`loss`, `perplexity`) are recomputed.
+
 ### `calc` kind `split`
 `{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`

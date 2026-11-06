@@ -405,3 +405,10 @@
   /* Week 7 figures */
   .wp-prose .vz-hsrow{display:grid;grid-template-columns:minmax(0,1fr) 110px 48px;gap:10px;align-items:center}
   @media (max-width:560px){.wp-prose .vz-hsrow{grid-template-columns:1fr 70px 44px}}
+
+  /* Week 8 figures */
+  .wp-prose .vz-mlp tr.sel td{background:var(--accent-soft-bg)}
+  .wp-prose .vz-mlp tr.tot td{border-top:2px solid var(--divider)}
+  .wp-prose .vz-link{all:unset;cursor:pointer;color:var(--text);font-weight:700;border-bottom:1px dotted var(--text3)}
+  .wp-prose .vz-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .wp-prose .vz-attn td{text-align:center;min-width:46px}

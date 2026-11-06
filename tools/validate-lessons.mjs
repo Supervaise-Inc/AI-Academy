@@ -257,6 +257,33 @@ function check(file) {
           (c.hardOut || []).forEach((q, i) => { if (Math.abs(r.hardOut[i] - q) > 0.002) at(`check ${k + 1}: hard output ${i + 1} expected ${q}, computed ${r.hardOut[i].toFixed(4)}`); });
         });
       },
+      tfblock: () => {
+        if (!(s.d % s.heads === 0)) at('d must be divisible by heads');
+        if (![s.vocab, s.d, s.dff, s.layers, s.heads].every((q) => q >= 1)) at('vocab, d, dff, layers and heads are required');
+        (s.checks || []).forEach((c, k) => {
+          const P = M.tfParams({ vocab: c.vocab ?? s.vocab, d: c.d ?? s.d, dff: c.dff ?? s.dff, layers: c.layers ?? s.layers, ctx: c.ctx ?? s.ctx ?? 0, posLearned: c.posLearned ?? s.posLearned ?? true, tied: c.tied ?? s.tied ?? true });
+          if (c.total != null && P.total !== c.total) at(`check ${k + 1}: total expected ${c.total}, computed ${P.total}`);
+          if (c.block != null && P.block !== c.block) at(`check ${k + 1}: block expected ${c.block}, computed ${P.block}`);
+          if (c.attn != null && P.attn !== c.attn) at(`check ${k + 1}: attention expected ${c.attn}, computed ${P.attn}`);
+          if (c.ffn != null && P.ffn !== c.ffn) at(`check ${k + 1}: ffn expected ${c.ffn}, computed ${P.ffn}`);
+        });
+      },
+      causalmask: () => {
+        const n = (s.tokens || []).length;
+        if (n < 3 || !Array.isArray(s.scores) || s.scores.length !== n || s.scores.some((r) => !Array.isArray(r) || r.length !== n)) return at('tokens (≥3) and an n×n scores matrix are required');
+        (s.checks || []).forEach((c, k) => {
+          const W = M.maskedSoftmax(s.scores, !!c.causal);
+          if (Math.abs(W[c.row][c.col] - c.value) > 0.002) at(`check ${k + 1}: weight [${c.row}][${c.col}] expected ${c.value}, computed ${W[c.row][c.col].toFixed(4)}`);
+        });
+      },
+      shiftloss: () => {
+        if (!Array.isArray(s.tokens) || s.tokens.length < 4 || !Array.isArray(s.p) || s.p.length !== s.tokens.length - 1 || s.p.some((q) => !(q > 0 && q <= 1))) return at('tokens (≥4) and p (one probability in (0,1] per position, length tokens−1) are required');
+        const mean = s.p.reduce((a, q) => a - Math.log(q), 0) / s.p.length;
+        (s.checks || []).forEach((c, k) => {
+          if (c.loss != null && Math.abs(mean - c.loss) > 0.002) at(`check ${k + 1}: mean loss expected ${c.loss}, computed ${mean.toFixed(4)}`);
+          if (c.perplexity != null && Math.abs(Math.exp(mean) - c.perplexity) > 0.01) at(`check ${k + 1}: perplexity expected ${c.perplexity}, computed ${Math.exp(mean).toFixed(3)}`);
+        });
+      },
       mlp: () => { if (!Array.isArray(s.layers) || s.layers.length < 3 || s.layers.some((n) => !(n >= 1))) at('layers must be ≥3 positive numbers'); },
       curve: () => {
         if (!(s.series || []).length || s.series.some((x) => !M.FN[x.fn])) at(`series fn must be one of ${Object.keys(M.FN).join(', ')}`);

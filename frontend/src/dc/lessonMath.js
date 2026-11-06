@@ -502,3 +502,29 @@ export function softHard(scores, values, temp = 1) {
   const mix = (w) => values[0].map((_, d) => w.reduce((a, wi, i) => a + wi * values[i][d], 0));
   return { soft, hard, softOut: mix(soft), hardOut: mix(hard), arg };
 }
+
+// ---- Week 8: the Transformer block and autoregressive training
+// Parameter counts of a decoder-only Transformer. posLearned: n_ctx*d learned position vectors (0 for sinusoidal). tied: the output layer reuses the embedding matrix.
+// Biases are counted (as in GPT-2): attention Q,K,V,O each d*d + d; FFN d*dff + dff + dff*d + d; two LayerNorms per block (2*d each) and one final LayerNorm.
+export function tfParams({ vocab, d, dff, layers, ctx = 0, posLearned = false, tied = true, bias = true }) {
+  const b = bias ? 1 : 0;
+  const emb = vocab * d;
+  const pos = posLearned ? ctx * d : 0;
+  const attn = 4 * d * d + 4 * d * b;
+  const ffn = 2 * d * dff + (dff + d) * b;
+  const ln = 2 * (2 * d);
+  const block = attn + ffn + ln;
+  const finalLn = 2 * d;
+  const head = tied ? 0 : vocab * d;
+  return { emb, pos, attn, ffn, ln, block, blocks: block * layers, finalLn, head, total: emb + pos + block * layers + finalLn + head };
+}
+// Row-wise softmax of a score matrix; with causal = true, entries above the diagonal are masked out (set to -infinity first).
+export function maskedSoftmax(S, causal = false) {
+  return S.map((row, i) => {
+    const z = row.map((v, j) => (causal && j > i ? -Infinity : v));
+    const m = Math.max(...z);
+    const e = z.map((v) => (v === -Infinity ? 0 : Math.exp(v - m)));
+    const s = e.reduce((a, b) => a + b, 0);
+    return e.map((v) => v / s);
+  });
+}
