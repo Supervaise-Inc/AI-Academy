@@ -438,3 +438,31 @@ export function convShapes(input, layers) {
     return { type: L.type, shape: [h, w, c], params, rf: L.type === 'fc' || L.type === 'flatten' ? null : rf, valid: h >= 1 && w >= 1 };
   });
 }
+
+// ---- Week 6: tokens, vocabularies and embeddings
+// For a corpus of [word, count] pairs and a sample text: how big the vocabulary is and how many tokens the text needs when words are
+// split into characters (0 merges), into BPE pieces (m merges), or kept whole (word level; unseen words become <unk>).
+export function tokenStats(corpus, text, merges) {
+  const { words, learned } = learnBPE(corpus, merges);
+  const vocab = new Set();
+  words.forEach((w) => w.t.forEach((t) => vocab.add(t)));
+  const sample = text.toLowerCase().split(/\s+/).filter(Boolean);
+  const pieces = sample.map((w) => applyBPE(w, learned));
+  const known = new Set(corpus.map(([w]) => w));
+  const totalCount = corpus.reduce((s, [, c]) => s + c, 0);
+  const corpusTokens = words.reduce((s, w) => s + w.t.length * w.c, 0);
+  return {
+    vocabSize: vocab.size,
+    learned,
+    pieces,
+    textTokens: pieces.reduce((s, p) => s + p.length, 0),
+    wordLevel: { vocabSize: known.size, textTokens: sample.length, unk: sample.filter((w) => !known.has(w)).length },
+    charLevel: { vocabSize: new Set(corpus.flatMap(([w]) => [...w]).concat(['</w>'])).size, textTokens: sample.reduce((s, w) => s + w.length + 1, 0) },
+    tokensPerWord: corpusTokens / totalCount,
+  };
+}
+export function cosineSim(a, b) {
+  const dot = a.reduce((s, x, i) => s + x * b[i], 0);
+  const na = Math.sqrt(a.reduce((s, x) => s + x * x, 0)), nb = Math.sqrt(b.reduce((s, x) => s + x * x, 0));
+  return { dot, na, nb, cos: na && nb ? dot / (na * nb) : 0 };
+}

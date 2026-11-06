@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -65,6 +65,7 @@ function Pipeline({ spec, fig }) {
 // ---------------------------------------------------------------- calc (parameter / memory calculators)
 const human = (x) => {
   const a = Math.abs(x);
+  if (a >= 1e15) return `10^${Math.round(Math.log10(a))}`.replace(/\^(\d+)/, (m, e) => '^' + e);
   if (a >= 1e12) return f2(x / 1e12, 2) + ' T';
   if (a >= 1e9) return f2(x / 1e9, 2) + ' B';
   if (a >= 1e6) return f2(x / 1e6, 2) + ' M';
@@ -84,9 +85,9 @@ function Slider({ label, min, max, step, value, onChange, show }) {
 }
 
 function Calc({ spec, fig }) {
-  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : 24);
-  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : 0);
-  const [c3, setC3] = useState(15);
+  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : 24);
+  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : 0);
+  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : 15);
   let body = null;
   if (spec.kind === 'fc_vs_conv') {
     const cin = spec.channels || 1;
@@ -139,6 +140,24 @@ function Calc({ spec, fig }) {
           </li>
         </ul>
         <p className="wg-note">Weights only: parameters × bytes per parameter (GB = 10⁹ bytes). “Training, Adam” uses the common mixed-precision estimate of 16 bytes per parameter (weights, gradients, FP32 master copy and two Adam moments). Activations, the KV cache and framework overhead come on top.</p>
+      </>
+    );
+  } else if (spec.kind === 'ngram_space') {
+    const possible = Math.pow(a, b);
+    const corpus = c3 * 1e6;
+    const seen = Math.min(possible, corpus);
+    const sci = (x) => (x >= 1e6 ? x.toExponential(1).replace('e+', ' × 10^') : x.toLocaleString());
+    body = (
+      <>
+        <Slider label="Vocabulary size V (different words)" min={1000} max={200000} step={1000} value={a} onChange={setA} show={(q) => q.toLocaleString()} />
+        <Slider label="n (length of the n-gram)" min={1} max={5} step={1} value={b} onChange={setB} />
+        <Slider label="Training text (millions of words)" min={1} max={10000} step={1} value={c3} onChange={setC3} show={(q) => q.toLocaleString()} />
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Possible {b}-grams (V^{b})</span><span className="vz-big">{sci(possible)}</span><span className="wg-note">the table you would need</span></div>
+          <div><span className="wg-k">Words of training text</span><span className="vz-big">{sci(corpus)}</span><span className="wg-note">at most this many different {b}-grams can ever be seen</span></div>
+          <div className="out"><span className="wg-k">Share of all {b}-grams that can ever appear</span><span className="vz-big">{seen / possible >= 0.01 ? (100 * seen / possible).toFixed(1) + '%' : (100 * seen / possible).toExponential(1) + '%'}</span><span className="wg-note">the rest are unseen: their count is 0</span></div>
+        </div>
+        <p className="wg-note">Most possible n-grams never occur in any text, so an n-gram model gives them probability 0 unless you smooth. This is the sparsity problem. {spec.note || ''}</p>
       </>
     );
   } else if (spec.kind === 'split') {
@@ -1460,4 +1479,79 @@ function CnnStack({ spec, fig }) {
   );
 }
 
-export const VIZ = { convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- vocabtrade (characters, sub-words or whole words as tokens)
+function VocabTrade({ spec, fig }) {
+  const maxM = spec.maxMerges || 12;
+  const [m, setM] = useState(spec.merges ?? 4);
+  const [text, setText] = useState(spec.text || '');
+  const all = useMemo(() => Array.from({ length: maxM + 1 }, (_, k) => tokenStats(spec.corpus, spec.text || '', k)), [spec, maxM]);
+  const cur = useMemo(() => tokenStats(spec.corpus, text, m), [spec, text, m]);
+  const maxV = Math.max(...all.map((a) => a.vocabSize), cur.wordLevel.vocabSize);
+  const show = (t) => t.replace('</w>', '·');
+  const W = 560, H = 150;
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="BPE merges learned (0 = characters)" min={0} max={Math.min(maxM, all[maxM].learned.length)} step={1} value={Math.min(m, all[maxM].learned.length)} onChange={setM} />
+      <label className="vz-try"><span>Sentence to split (try a word the corpus never contained):</span>
+        <input type="text" value={text} onChange={(e) => setText(e.target.value.toLowerCase().replace(/[^a-z ]/g, ''))} aria-label="Sentence to tokenise" />
+      </label>
+      <div className="vz-cmp" style={{ margin: '12px 0', gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Characters</span><span className="vz-big">{cur.charLevel.textTokens} tokens</span><span className="wg-note">vocabulary {cur.charLevel.vocabSize} symbols</span></div>
+        <div className="out"><span className="wg-k">BPE, {Math.min(m, cur.learned.length)} merges</span><span className="vz-big">{cur.textTokens} tokens</span><span className="wg-note">vocabulary {cur.vocabSize} pieces</span></div>
+        <div><span className="wg-k">Whole words</span><span className="vz-big">{cur.wordLevel.textTokens} tokens</span><span className="wg-note">vocabulary {cur.wordLevel.vocabSize} words{cur.wordLevel.unk ? ` · ${cur.wordLevel.unk} unknown` : ''}</span></div>
+      </div>
+      <p className="vz-toks" style={{ margin: '0 0 10px' }} aria-live="polite">{cur.pieces.map((p, i) => <span key={i} className="vz-wpiece">{p.map((t, k) => <span key={k} className="vz-tok">{show(t)}</span>)}</span>)}</p>
+      <svg viewBox={`0 0 ${W} ${H}`} className="vz-plot" role="img" aria-label="Vocabulary size and tokens for the sentence as merges grow">
+        <line x1="40" x2={W - 10} y1={H - 20} y2={H - 20} className="vz-grid" />
+        {all.map((a, k) => { const x = 40 + (k / maxM) * (W - 60); const y = H - 20 - (a.vocabSize / maxV) * (H - 40); return <circle key={k} cx={x} cy={y} r={k === Math.min(m, maxM) ? 6 : 3.5} fill={k === Math.min(m, maxM) ? 'var(--accent)' : 'var(--text3)'} />; })}
+        <path d={all.map((a, k) => `${k ? 'L' : 'M'}${40 + (k / maxM) * (W - 60)} ${H - 20 - (a.vocabSize / maxV) * (H - 40)}`).join(' ')} fill="none" stroke="var(--accent)" strokeWidth="2" />
+        <text x="40" y={H - 4} className="vz-tick">0 merges</text>
+        <text x={W - 10} y={H - 4} textAnchor="end" className="vz-tick">{maxM} merges</text>
+        <text x="44" y="14" className="vz-tick">vocabulary size (grows with merges)</text>
+      </svg>
+      <p className="wg-note">More merges give a bigger vocabulary but shorter sequences. A word-level vocabulary has no way to write a word it has never seen, while characters and BPE pieces always can. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- vecsim (dot product, norms and cosine of two word vectors)
+function VecSim({ spec, fig }) {
+  const words = spec.words;
+  const [ia, setIa] = useState(spec.a ?? 0);
+  const [ib, setIb] = useState(spec.b ?? 1);
+  const A = words[ia], B = words[ib];
+  const r = cosineSim(A.v, B.v);
+  const dims = spec.dims || A.v.map((_, i) => `d${i + 1}`);
+  const mx = Math.max(...words.flatMap((w) => w.v.map(Math.abs)), 1e-9);
+  const f = (n) => Number(n.toFixed(2)).toString();
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-row" style={{ gap: 14, marginBottom: 8 }}>
+        <label className="vz-sel">word 1 <select value={ia} onChange={(e) => setIa(+e.target.value)}>{words.map((w, i) => <option key={i} value={i}>{w.label}</option>)}</select></label>
+        <label className="vz-sel">word 2 <select value={ib} onChange={(e) => setIb(+e.target.value)}>{words.map((w, i) => <option key={i} value={i}>{w.label}</option>)}</select></label>
+      </div>
+      <div className="vz-scroll">
+        <table className="vz-mlp" aria-label="Vector entries and products">
+          <thead><tr><th></th>{dims.map((d, i) => <th key={i}>{d}</th>)}</tr></thead>
+          <tbody>
+            <tr><td><strong>{A.label}</strong></td>{A.v.map((x, i) => <td key={i}><span className="vz-vbar" style={{ width: `${Math.abs(x) / mx * 46}px`, background: x >= 0 ? 'var(--accent)' : 'var(--cyan)' }} />{f(x)}</td>)}</tr>
+            <tr><td><strong>{B.label}</strong></td>{B.v.map((x, i) => <td key={i}><span className="vz-vbar" style={{ width: `${Math.abs(x) / mx * 46}px`, background: x >= 0 ? 'var(--accent)' : 'var(--cyan)' }} />{f(x)}</td>)}</tr>
+            <tr><td>product</td>{A.v.map((x, i) => <td key={i}>{f(x * B.v[i])}</td>)}</tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="vz-cmp" style={{ marginTop: 12, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Dot product (sum of products)</span><span className="vz-big">{f(r.dot)}</span></div>
+        <div><span className="wg-k">Lengths</span><span className="vz-big">{f(r.na)} · {f(r.nb)}</span></div>
+        <div className="out"><span className="wg-k">Cosine similarity</span><span className="vz-big">{f(r.cos)}</span><span className="wg-note">{f(r.dot)} ÷ ({f(r.na)} × {f(r.nb)}); 1 = same direction, 0 = unrelated, −1 = opposite</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'Illustrative vectors, written for teaching; real embeddings have hundreds of dimensions learned from text.'}</p>
+    </div>
+  );
+}
+
+export const VIZ = { vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

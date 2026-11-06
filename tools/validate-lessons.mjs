@@ -131,7 +131,7 @@ function check(file) {
         if ((s.steps || []).length < 3) at('needs ≥3 steps');
         (s.steps || []).forEach((st, k) => { if (!isStr(st.title) || !isStr(st.body, 30)) at(`step ${k + 1} needs title and body`); (st.active || []).forEach((a) => !ids.includes(a) && at(`step ${k + 1} activates unknown node "${a}"`)); if (!(st.active || []).length) at(`step ${k + 1} needs an active list`); });
       },
-      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling or split'); },
+      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split or ngram_space'); },
       network: () => {
         const L = s.layers;
         if (!Array.isArray(L) || L.length < 3 || L.some((n) => !(n >= 1 && n <= 5))) return at('layers must be ≥3 numbers, each 1..5');
@@ -209,6 +209,27 @@ function check(file) {
           if (c.shape && c.shape.join() !== r.shape.join()) at(`check ${k + 1}: shape expected ${c.shape}, computed ${r.shape}`);
           if (c.params != null && c.params !== r.params) at(`check ${k + 1}: params expected ${c.params}, computed ${r.params}`);
           if (c.rf != null && c.rf !== r.rf) at(`check ${k + 1}: receptive field expected ${c.rf}, computed ${r.rf}`);
+        });
+      },
+      vocabtrade: () => {
+        if (!Array.isArray(s.corpus) || s.corpus.length < 4 || s.corpus.some((c) => !Array.isArray(c) || !/^[a-z]+$/.test(c[0]) || !(c[1] >= 1))) return at('corpus must be ≥4 [lowercase word, count] pairs');
+        if (!isStr(s.text) || !/^[a-z ]+$/.test(s.text)) return at('text must be a lowercase sentence (letters and spaces)');
+        (s.checks || []).forEach((c, k) => {
+          const r = M.tokenStats(s.corpus, c.text != null ? c.text : s.text, c.merges);
+          if (c.vocabSize != null && r.vocabSize !== c.vocabSize) at(`check ${k + 1}: vocabulary expected ${c.vocabSize}, computed ${r.vocabSize}`);
+          if (c.textTokens != null && r.textTokens !== c.textTokens) at(`check ${k + 1}: text tokens expected ${c.textTokens}, computed ${r.textTokens}`);
+          if (c.unk != null && r.wordLevel.unk !== c.unk) at(`check ${k + 1}: unknown words expected ${c.unk}, computed ${r.wordLevel.unk}`);
+          if (c.wordVocab != null && r.wordLevel.vocabSize !== c.wordVocab) at(`check ${k + 1}: word vocabulary expected ${c.wordVocab}, computed ${r.wordLevel.vocabSize}`);
+        });
+      },
+      vecsim: () => {
+        if (!Array.isArray(s.words) || s.words.length < 3 || s.words.some((w) => !isStr(w.label) || !Array.isArray(w.v) || w.v.length < 2 || w.v.length !== s.words[0].v.length)) return at('words need ≥3 {label, v[]} with equal-length vectors');
+        (s.checks || []).forEach((c, k) => {
+          const a = s.words.find((w) => w.label === c.a), b = s.words.find((w) => w.label === c.b);
+          if (!a || !b) return at(`check ${k + 1}: unknown word label`);
+          const r = M.cosineSim(a.v, b.v);
+          if (c.cos != null && Math.abs(r.cos - c.cos) > 0.005) at(`check ${k + 1}: cosine(${c.a}, ${c.b}) expected ${c.cos}, computed ${r.cos.toFixed(3)}`);
+          if (c.dot != null && Math.abs(r.dot - c.dot) > 0.005) at(`check ${k + 1}: dot(${c.a}, ${c.b}) expected ${c.dot}, computed ${r.dot.toFixed(3)}`);
         });
       },
       mlp: () => { if (!Array.isArray(s.layers) || s.layers.length < 3 || s.layers.some((n) => !(n >= 1))) at('layers must be ≥3 positive numbers'); },

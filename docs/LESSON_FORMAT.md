@@ -224,6 +224,15 @@ Use it whenever a lesson introduces a formula: every symbol is a `{t, id}` term 
 ### `cnnstack` (shapes, parameters and receptive field)
 `{ "type": "cnnstack", "title": "…", "intro": "…", "input": [28,28,1], "layers": [ {"type":"conv","k":5,"filters":6,"pad":2}, {"type":"pool","k":2}, {"type":"conv","k":5,"filters":16}, {"type":"pool","k":2}, {"type":"flatten"}, {"type":"fc","units":120}, {"type":"fc","units":84}, {"type":"fc","units":10} ], "checks": [ { "layer": 0, "shape": [28,28,6], "params": 156, "rf": 5 }, { "total": 61706 } ] }`. A table of output shapes, parameters (k·k·C_in·filters + filters for conv; in·out + out for fc) and receptive field; the student changes kernel size, stride, padding and filters per conv layer (`stride` defaults to 1, `pad` to 0; a pool's stride defaults to its size). `checks` entries use `layer` (index into `layers`) with `shape`/`params`/`rf`, or a bare `total`. The example above is LeNet-style: 156, 2,416, 48,120, 10,164, 850 parameters, 61,706 in total.
 
+### `vocabtrade` (characters, sub-words or whole words as tokens)
+`{ "type": "vocabtrade", "title": "…", "intro": "…", "corpus": [["low",5],["lower",2],["newest",6],["widest",3]], "text": "the lowest and the newest", "maxMerges": 12, "merges": 4, "note": "…", "checks": [ { "merges": 4, "vocabSize": 14, "textTokens": 9, "unk": 1, "wordVocab": 4 } ] }`. The corpus is [lowercase word, count] pairs (as in `bpe`); the sample `text` is lowercase letters and spaces. A slider sets the number of BPE merges; three cards compare the number of tokens and the vocabulary size at character level, BPE level and word level (unseen words count as unknown at word level), the pieces of each word are shown, and a chart plots vocabulary size against merges. The student can type any sentence. `checks` (any of `vocabSize`, `textTokens`, `unk`, `wordVocab`, with `merges` and optionally another `text`) are recomputed by the validator: use them for every number the text quotes.
+
+### `vecsim` (dot product, length and cosine similarity of word vectors)
+`{ "type": "vecsim", "title": "…", "intro": "…", "dims": ["animal","food","size"], "words": [ { "label": "cat", "v": [0.9,0.1,0.2] }, … ≥3, equal length ], "a": 0, "b": 1, "note": "…", "checks": [ { "a": "cat", "b": "dog", "cos": 0.99, "dot": 0.9 } ] }`. Two drop-downs choose words; a table shows each entry, the per-dimension products, the dot product, the two lengths and the cosine. Say in the `note` that the vectors are illustrative.
+
+### `calc` kind `ngram_space`
+`{ "type": "calc", "kind": "ngram_space", "title": "…" }`: sliders for vocabulary size V, n and the size of the training text; shows V^n possible n-grams against the number of words, and the share that can ever appear (the sparsity problem).
+
 ### `calc` kind `split`
 `{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`
