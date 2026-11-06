@@ -383,3 +383,58 @@ export function gradNorms({ depth = 10, width = 16, act = 'sigmoid', scale = 1, 
   }
   return norms;
 }
+
+// ---- Week 4: convolutional networks
+export const outSize = (n, k, s = 1, p = 0) => Math.floor((n + 2 * p - k) / s) + 1;
+
+// Gradients of y = conv(x, K) (cross-correlation, as in deep learning) given G = dL/dy.
+// dx[i][j] sums G[p][q] * K[a][c] over every output cell (p,q) and kernel cell (a,c) that touched x[i][j]; dK[a][c] sums G[p][q] * x[...].
+export function convGrad(inp, ker, G, stride = 1, pad = 0) {
+  const n = inp.length, m = inp[0].length, k = ker.length;
+  const dx = inp.map((r) => r.map(() => 0));
+  const dK = ker.map((r) => r.map(() => 0));
+  for (let p = 0; p < G.length; p++) for (let q = 0; q < G[0].length; q++) for (let a = 0; a < k; a++) for (let c = 0; c < k; c++) {
+    const i = p * stride - pad + a, j = q * stride - pad + c;
+    if (i < 0 || j < 0 || i >= n || j >= m) continue;
+    dx[i][j] += G[p][q] * ker[a][c];
+    dK[a][c] += G[p][q] * inp[i][j];
+  }
+  return { dx, dK };
+}
+
+export function pool2d(inp, size = 2, stride = 2, mode = 'max') {
+  const oh = outSize(inp.length, size, stride), ow = outSize(inp[0].length, size, stride);
+  return Array.from({ length: oh }, (_, i) => Array.from({ length: ow }, (_, j) => {
+    const vals = [];
+    for (let a = 0; a < size; a++) for (let c = 0; c < size; c++) vals.push(inp[i * stride + a][j * stride + c]);
+    return mode === 'avg' ? vals.reduce((s, v) => s + v, 0) / vals.length : Math.max(...vals);
+  }));
+}
+
+// layers: {type:'conv',k,filters,stride,pad} | {type:'pool',k,stride} | {type:'flatten'} | {type:'fc',units}
+// Returns one row per layer with output shape [h,w,c], parameter count, receptive field (of one unit, in input pixels) and jump.
+export function convShapes(input, layers) {
+  let [h, w, c] = input;
+  let rf = 1, jump = 1;
+  let flat = null;
+  return layers.map((L) => {
+    let params = 0;
+    if (L.type === 'conv') {
+      const s = L.stride || 1, p = L.pad || 0;
+      params = L.k * L.k * c * L.filters + L.filters;
+      rf += (L.k - 1) * jump; jump *= s;
+      h = outSize(h, L.k, s, p); w = outSize(w, L.k, s, p); c = L.filters;
+    } else if (L.type === 'pool') {
+      const s = L.stride || L.k;
+      rf += (L.k - 1) * jump; jump *= s;
+      h = outSize(h, L.k, s); w = outSize(w, L.k, s);
+    } else if (L.type === 'flatten') {
+      flat = h * w * c; h = 1; w = 1; c = flat;
+    } else if (L.type === 'fc') {
+      const inN = flat != null ? flat : h * w * c;
+      params = inN * L.units + L.units;
+      flat = L.units; h = 1; w = 1; c = L.units;
+    }
+    return { type: L.type, shape: [h, w, c], params, rf: L.type === 'fc' || L.type === 'flatten' ? null : rf, valid: h >= 1 && w >= 1 };
+  });
+}

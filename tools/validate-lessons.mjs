@@ -174,6 +174,39 @@ function check(file) {
         });
       },
       fold: () => { if (s.layers != null && !(s.layers >= 1 && s.layers <= 6)) at('layers must be 1..6'); },
+      convgrad: () => {
+        const sq = (m) => Array.isArray(m) && m.length >= 1 && m.every((r) => Array.isArray(r) && r.length === m[0].length && r.every((q) => typeof q === 'number'));
+        if (!sq(s.input) || !sq(s.kernel) || !sq(s.upstream)) return at('input, kernel and upstream must be number grids');
+        if (s.kernel.length !== s.kernel[0].length) return at('kernel must be square');
+        const y = M.convolve(s.input, s.kernel, s.stride || 1, s.padding || 0);
+        if (y.length !== s.upstream.length || y[0].length !== s.upstream[0].length) return at(`upstream must be ${y.length}×${y[0].length} (the output size)`);
+        const g = M.convGrad(s.input, s.kernel, s.upstream, s.stride || 1, s.padding || 0);
+        (s.checks || []).forEach((c, k) => {
+          const got = c.kind === 'dx' ? g.dx[c.i][c.j] : c.kind === 'dK' ? g.dK[c.i][c.j] : c.kind === 'y' ? y[c.i][c.j] : null;
+          if (got == null || Math.abs(got - c.value) > 0.005) at(`check ${k + 1} (${c.kind}): expected ${c.value}, computed ${got}`);
+        });
+      },
+      filters: () => {
+        if (!Array.isArray(s.image) || s.image.length < 6 || s.image.some((r) => !/^[0-9]+$/.test(r) || r.length !== s.image[0].length)) at('image must be ≥6 rows of equal-length digit strings');
+        if (!Array.isArray(s.presets) || !s.presets.length || s.presets.some((p) => !isStr(p.name) || !Array.isArray(p.kernel) || p.kernel.length !== 3 || p.kernel.some((r) => r.length !== 3))) at('presets need {name, kernel 3×3}');
+      },
+      pool: () => {
+        if (!Array.isArray(s.input) || s.input.length < 4 || s.input.some((r) => r.length !== s.input[0].length)) at('input must be a grid of at least 4 rows');
+        else { const k = s.size || 2, st = s.stride || k; if ((s.input.length - k) % st || (s.input[0].length - k) % st) at('window and stride must tile the input exactly'); }
+      },
+      cnnstack: () => {
+        if (!Array.isArray(s.input) || s.input.length !== 3 || !Array.isArray(s.layers) || s.layers.length < 3) return at('needs input [h,w,c] and ≥3 layers');
+        const rows = M.convShapes(s.input, s.layers);
+        if (rows.some((r) => !r.valid)) at('a layer produces an empty output');
+        (s.checks || []).forEach((c, k) => {
+          if (c.total != null) { if (c.total !== rows.reduce((q, z) => q + z.params, 0)) at(`check ${k + 1}: total expected ${c.total}`); if (c.layer == null) return; }
+          const r = rows[c.layer];
+          if (!r) return at(`check ${k + 1}: no layer ${c.layer}`);
+          if (c.shape && c.shape.join() !== r.shape.join()) at(`check ${k + 1}: shape expected ${c.shape}, computed ${r.shape}`);
+          if (c.params != null && c.params !== r.params) at(`check ${k + 1}: params expected ${c.params}, computed ${r.params}`);
+          if (c.rf != null && c.rf !== r.rf) at(`check ${k + 1}: receptive field expected ${c.rf}, computed ${r.rf}`);
+        });
+      },
       mlp: () => { if (!Array.isArray(s.layers) || s.layers.length < 3 || s.layers.some((n) => !(n >= 1))) at('layers must be ≥3 positive numbers'); },
       curve: () => {
         if (!(s.series || []).length || s.series.some((x) => !M.FN[x.fn])) at(`series fn must be one of ${Object.keys(M.FN).join(', ')}`);

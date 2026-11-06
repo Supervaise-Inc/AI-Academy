@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -1299,4 +1299,165 @@ function Fold({ spec, fig }) {
   );
 }
 
-export const VIZ = { backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- convgrad (backward pass of a convolution)
+function ConvGrad({ spec, fig }) {
+  const stride = spec.stride || 1, pad = spec.padding || 0;
+  const k = spec.kernel.length;
+  const y = useMemo(() => convolve(spec.input, spec.kernel, stride, pad), [spec, stride, pad]);
+  const { dx, dK } = useMemo(() => convGrad(spec.input, spec.kernel, spec.upstream, stride, pad), [spec, stride, pad]);
+  const [sel, setSel] = useState({ kind: 'x', i: 1, j: 1 });
+  const n = spec.input.length, m = spec.input[0].length;
+  const terms = [];
+  let gMark = () => false;
+  if (sel.kind === 'x') {
+    for (let p = 0; p < spec.upstream.length; p++) for (let q = 0; q < spec.upstream[0].length; q++) {
+      const a = sel.i - (p * stride - pad), c = sel.j - (q * stride - pad);
+      if (a >= 0 && a < k && c >= 0 && c < k) terms.push({ p, q, text: `${spec.upstream[p][q]}×${spec.kernel[a][c]}` });
+    }
+  } else {
+    for (let p = 0; p < spec.upstream.length; p++) for (let q = 0; q < spec.upstream[0].length; q++) {
+      const i = p * stride - pad + sel.i, j = q * stride - pad + sel.j;
+      if (i >= 0 && j >= 0 && i < n && j < m) terms.push({ p, q, text: `${spec.upstream[p][q]}×${spec.input[i][j]}` });
+    }
+  }
+  gMark = (p, q) => terms.some((t) => t.p === p && t.q === q);
+  const total = sel.kind === 'x' ? dx[sel.i][sel.j] : dK[sel.i][sel.j];
+  const tone = (v) => (v === 0 ? undefined : `color-mix(in srgb, ${v > 0 ? 'var(--accent)' : 'var(--cyan)'} ${Math.min(55, 12 + Math.abs(v) * 7)}%, var(--surface2))`);
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="vz-conv">
+        <div><span className="wg-k" style={{ textTransform: "none" }}>Input x</span><Grid data={spec.input} mark={(i, j) => sel.kind === 'x' && sel.i === i && sel.j === j} onPick={(i, j) => setSel({ kind: 'x', i, j })} /></div>
+        <span className="vz-op">∗</span>
+        <div><span className="wg-k" style={{ textTransform: "none" }}>Kernel K</span><Grid data={spec.kernel} cls="ker" mark={(i, j) => sel.kind === 'k' && sel.i === i && sel.j === j} onPick={(i, j) => setSel({ kind: 'k', i, j })} /></div>
+        <span className="vz-op">=</span>
+        <div><span className="wg-k" style={{ textTransform: "none" }}>Output y</span><Grid data={y} cls="out" /></div>
+      </div>
+      <div className="vz-conv" style={{ marginTop: 14 }}>
+        <div><span className="wg-k" style={{ textTransform: "none" }}>Upstream gradient G = dL/dy</span><Grid data={spec.upstream} mark={gMark} tone={tone} /></div>
+        <span className="vz-op">→</span>
+        <div><span className="wg-k" style={{ textTransform: "none" }}>dL/dK</span><Grid data={dK} cls="ker" tone={tone} mark={(i, j) => sel.kind === 'k' && sel.i === i && sel.j === j} /></div>
+        <div><span className="wg-k" style={{ textTransform: "none" }}>dL/dx</span><Grid data={dx} tone={tone} mark={(i, j) => sel.kind === 'x' && sel.i === i && sel.j === j} /></div>
+      </div>
+      <p className="wg-p" aria-live="polite" style={{ margin: '12px 0 0' }}>
+        <strong>{sel.kind === 'x' ? `dL/dx(${sel.i + 1}, ${sel.j + 1})` : `dL/dK(${sel.i + 1}, ${sel.j + 1})`}</strong> = <span className="vz-calc">{terms.length ? terms.map((t) => t.text).join(' + ') : '0 (no output used this cell)'} = {Number.isInteger(total) ? total : total.toFixed(2)}</span>
+      </p>
+      <p className="wg-note">Select an input cell to see which output gradients flowed back into it (each multiplied by the kernel weight that connected them), or a kernel cell to see which input values it met (each multiplied by the output gradient there). The kernel is shared, so its gradient is a sum over every position. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- filters (apply a kernel to a small picture)
+function Filters({ spec, fig }) {
+  const img = useMemo(() => spec.image.map((r) => r.split('').map(Number)), [spec]);
+  const presets = spec.presets;
+  const [pi, setPi] = useState(0);
+  const [custom, setCustom] = useState([[0, 0, 0], [0, 1, 0], [0, 0, 0]]);
+  const [relu, setRelu] = useState(!!spec.relu);
+  const isCustom = pi === presets.length;
+  const ker = isCustom ? custom : presets[pi].kernel;
+  const raw = useMemo(() => convolve(img, ker, 1, spec.padding || 0), [img, ker, spec]);
+  const out = relu ? raw.map((r) => r.map((x) => Math.max(0, x))) : raw;
+  const mx = Math.max(1, ...out.flat().map(Math.abs));
+  const px = (val, signed) => (signed ? (val >= 0 ? `color-mix(in srgb, var(--accent) ${Math.round((val / mx) * 85)}%, var(--surface2))` : `color-mix(in srgb, var(--cyan) ${Math.round((-val / mx) * 85)}%, var(--surface2))`) : `color-mix(in srgb, var(--text) ${Math.round((val / 9) * 85)}%, var(--surface2))`);
+  const cyc = (i, j) => setCustom((c) => c.map((r, a) => r.map((q, b) => (a === i && b === j ? (q >= 2 ? -2 : q + 1) : q))));
+  const Pix = ({ data, signed }) => (
+    <div className="vz-pix" style={{ gridTemplateColumns: `repeat(${data[0].length}, 1fr)` }} role="img" aria-label="picture as a grid of numbers">
+      {data.map((r, i) => r.map((q, j) => <i key={i + '-' + j} style={{ background: px(q, signed) }} title={String(Number(q.toFixed(1)))} />))}
+    </div>
+  );
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-row" style={{ marginBottom: 10 }}>
+        {presets.map((p, i) => <button key={p.name} type="button" className={'wg-chip' + (pi === i ? ' on' : '')} aria-pressed={pi === i} onClick={() => setPi(i)}>{p.name}</button>)}
+        <button type="button" className={'wg-chip' + (isCustom ? ' on' : '')} aria-pressed={isCustom} onClick={() => setPi(presets.length)}>your own</button>
+        <button type="button" className={'wg-chip' + (relu ? ' on' : '')} aria-pressed={relu} onClick={() => setRelu(!relu)}>ReLU after</button>
+      </div>
+      <div className="vz-conv" style={{ alignItems: 'flex-start' }}>
+        <div><span className="wg-k">Picture {img.length}×{img[0].length}</span><Pix data={img} signed={false} /></div>
+        <span className="vz-op">∗</span>
+        <div><span className="wg-k">{isCustom ? 'Kernel (click a cell to change it)' : 'Kernel 3×3'}</span><Grid data={ker} cls="ker" onPick={isCustom ? cyc : null} /></div>
+        <span className="vz-op">=</span>
+        <div><span className="wg-k">Feature map {out.length}×{out[0].length}</span><Pix data={out} signed /></div>
+      </div>
+      <p className="wg-note">{isCustom ? 'Click kernel cells to cycle each weight from −2 to 2. ' : presets[pi].note ? presets[pi].note + ' ' : ''}Green means a strong positive response, blue a negative one, grey no response. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- pool (max and average pooling by hand)
+function Pool({ spec, fig }) {
+  const [mode, setMode] = useState('max');
+  const size = spec.size || 2, stride = spec.stride || size;
+  const out = useMemo(() => pool2d(spec.input, size, stride, mode), [spec, size, stride, mode]);
+  const [sel, setSel] = useState([0, 0]);
+  const [si, sj] = sel;
+  const win = [];
+  for (let a = 0; a < size; a++) for (let c = 0; c < size; c++) win.push(spec.input[si * stride + a][sj * stride + c]);
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-tabs" role="tablist">{['max', 'avg'].map((k) => <button key={k} type="button" role="tab" aria-selected={mode === k} className={'wg-tab' + (mode === k ? ' on' : '')} onClick={() => setMode(k)}>{k === 'max' ? 'Max pooling' : 'Average pooling'}</button>)}</div>
+      <div className="vz-conv" style={{ marginTop: 10 }}>
+        <div><span className="wg-k">Input {spec.input.length}×{spec.input[0].length}</span><Grid data={spec.input} mark={(i, j) => i >= si * stride && i < si * stride + size && j >= sj * stride && j < sj * stride + size} /></div>
+        <span className="vz-op">→</span>
+        <div><span className="wg-k">Output {out.length}×{out[0].length} (window {size}×{size}, stride {stride})</span><Grid data={out} cls="out" mark={(i, j) => i === si && j === sj} onPick={(i, j) => setSel([i, j])} /></div>
+      </div>
+      <p className="wg-p" aria-live="polite" style={{ margin: '12px 0 0' }}><strong>Output cell ({si + 1}, {sj + 1}):</strong> <span className="vz-calc">{mode === 'max' ? `max(${win.join(', ')}) = ${Math.max(...win)}` : `(${win.join(' + ')}) ÷ ${win.length} = ${Number((win.reduce((s, q) => s + q, 0) / win.length).toFixed(2))}`}</span></p>
+      <p className="wg-note">Select an output cell to see its window. Pooling has no weights to learn: it only shrinks the map and keeps the strongest (or the average) response. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- cnnstack (shapes, parameters and receptive field through a CNN)
+function CnnStack({ spec, fig }) {
+  const [layers, setLayers] = useState(spec.layers.map((l) => ({ ...l })));
+  const rows = useMemo(() => convShapes(spec.input, layers), [spec, layers]);
+  const total = rows.reduce((s, r) => s + r.params, 0);
+  const set = (i, patch) => setLayers((ls) => ls.map((l, k) => (k === i ? { ...l, ...patch } : l)));
+  const fmt = (n) => n.toLocaleString();
+  const first = rows.findIndex((r) => r.type === 'flatten');
+  const flatN = first >= 0 ? rows[first].shape[2] : null;
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="vz-scroll">
+        <table className="vz-mlp" aria-label="Layer by layer shapes and parameters">
+          <thead><tr><th>Layer</th><th>Settings</th><th>Output shape (H × W × C)</th><th>Parameters</th><th>Receptive field</th></tr></thead>
+          <tbody>
+            <tr><td>input</td><td></td><td>{spec.input[0]} × {spec.input[1]} × {spec.input[2]}</td><td>0</td><td>1 × 1</td></tr>
+            {layers.map((L, i) => (
+              <tr key={i} className={rows[i].valid ? '' : 'bad'}>
+                <td>{L.type === 'conv' ? 'conv' : L.type === 'pool' ? 'max pool' : L.type}</td>
+                <td>
+                  {L.type === 'conv' ? (<>
+                    <label className="vz-sel">k <select value={L.k} onChange={(e) => set(i, { k: +e.target.value })}>{[1, 3, 5, 7].map((q) => <option key={q}>{q}</option>)}</select></label>{' '}
+                    <label className="vz-sel">stride <select value={L.stride || 1} onChange={(e) => set(i, { stride: +e.target.value })}>{[1, 2].map((q) => <option key={q}>{q}</option>)}</select></label>{' '}
+                    <label className="vz-sel">pad <select value={L.pad || 0} onChange={(e) => set(i, { pad: +e.target.value })}>{[0, 1, 2, 3].map((q) => <option key={q}>{q}</option>)}</select></label>{' '}
+                    <label className="vz-sel">filters <select value={L.filters} onChange={(e) => set(i, { filters: +e.target.value })}>{[4, 6, 8, 16, 32, 64].map((q) => <option key={q}>{q}</option>)}</select></label>
+                  </>) : L.type === 'pool' ? `${L.k}×${L.k}, stride ${L.stride || L.k}` : L.type === 'fc' ? `${L.units} units` : ''}
+                </td>
+                <td>{rows[i].valid ? `${rows[i].shape[0]} × ${rows[i].shape[1]} × ${rows[i].shape[2]}` : 'too small!'}</td>
+                <td>{fmt(rows[i].params)}</td>
+                <td>{rows[i].rf ? `${rows[i].rf} × ${rows[i].rf}` : '–'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="vz-cmp" style={{ marginTop: 12, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div className="out"><span className="wg-k">Total parameters</span><span className="vz-big">{fmt(total)}</span><span className="wg-note">the sum of the column above</span></div>
+        <div><span className="wg-k">Pixels in the input</span><span className="vz-big">{fmt(spec.input[0] * spec.input[1] * spec.input[2])}</span><span className="wg-note">a dense layer sees all of them at once</span></div>
+        <div><span className="wg-k">Numbers fed to the first dense layer</span><span className="vz-big">{flatN != null ? fmt(flatN) : '–'}</span><span className="wg-note">after convolution and pooling</span></div>
+      </div>
+      <p className="wg-note">Change a layer’s settings and watch every shape after it update. Output size is ⌊(n + 2p − k) ÷ s⌋ + 1; if it reaches 0 the layer does not fit. A conv layer’s parameters are k × k × (input channels) × filters + filters. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+export const VIZ = { convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

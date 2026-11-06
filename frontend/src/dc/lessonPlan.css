@@ -376,3 +376,11 @@
   .wp-prose .vz-mlp th{text-align:left;font-size:12.5px;font-weight:600;color:var(--text3);padding:6px 10px;border-bottom:1px solid var(--divider)}
   .wp-prose .vz-mlp td{padding:6px 10px;border-bottom:1px solid var(--divider);color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:13.5px}
   .wp-prose .vz-mlp td:first-child{font-family:inherit}
+
+  /* Week 4 figures */
+  .wp-prose .vz-pix{display:grid;gap:1px;width:min(100%,260px);aspect-ratio:1;background:var(--divider);border:1px solid var(--divider);border-radius:6px;overflow:hidden}
+  .wp-prose .vz-pix i{display:block}
+  .wp-prose .vz-scroll{overflow-x:auto}
+  .wp-prose .vz-mlp tr.bad td{color:var(--amber);font-weight:700}
+  .wp-prose .vz-sel{display:inline-flex;gap:4px;align-items:center;font-family:inherit;font-size:12.5px;color:var(--text3);white-space:nowrap}
+  .wp-prose .vz-sel select{font:inherit;font-size:12.5px;padding:2px 4px;border-radius:6px;border:1px solid var(--surface2-border);background:var(--surface2);color:var(--text)}

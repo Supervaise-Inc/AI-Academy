@@ -212,6 +212,18 @@ Use it whenever a lesson introduces a formula: every symbol is a `{t, id}` term 
 ### `fold` (why depth helps)
 `{ "type": "fold", "title": "…", "intro": "…", "layers": 2, "note": "…" }`. A slider stacks 1–6 "tent" layers (two ReLU units each); the zig-zag has 2^k straight pieces. A one-hidden-layer ReLU network with m units has at most m + 1 pieces, so it needs at least 2^k − 1 units.
 
+### `convgrad` (the backward pass of a convolution)
+`{ "type": "convgrad", "title": "…", "intro": "…", "input": [[..]], "kernel": [[..]], "upstream": [[..]], "stride": 1, "padding": 0, "note": "…", "checks": [ { "kind": "y", "i": 0, "j": 0, "value": 0 }, { "kind": "dx", "i": 1, "j": 2, "value": 0 }, { "kind": "dK", "i": 1, "j": 0, "value": 3 } ] }`. Shows x ∗ K = y and then, for an upstream gradient G = dL/dy (same size as y), the gradients dL/dK and dL/dx. Selecting an input cell lists the terms `G × K` that make dL/dx; selecting a kernel cell lists the terms `G × x` that make dL/dK. Convolution here is the deep-learning kind (cross-correlation, no kernel flip). The validator checks the sizes and recomputes `checks` (kind `y`, `dx`, `dK`).
+
+### `filters` (a kernel applied to a small picture)
+`{ "type": "filters", "title": "…", "intro": "…", "image": ["0000000000", …≥6 rows of digits 0–9], "presets": [ { "name": "vertical edges", "kernel": [[-1,0,1],[-2,0,2],[-1,0,1]], "note": "…" }, … ], "relu": false, "padding": 0, "note": "…" }`. Preset chips plus a "your own" kernel (click a cell to cycle −2..2) and a ReLU toggle; the feature map is drawn as colours (green positive, blue negative).
+
+### `pool` (max and average pooling)
+`{ "type": "pool", "title": "…", "intro": "…", "input": [[..]], "size": 2, "stride": 2, "note": "…" }`. The window and stride must tile the input exactly. Tabs switch between max and average; selecting an output cell shows its window and arithmetic.
+
+### `cnnstack` (shapes, parameters and receptive field)
+`{ "type": "cnnstack", "title": "…", "intro": "…", "input": [28,28,1], "layers": [ {"type":"conv","k":5,"filters":6,"pad":2}, {"type":"pool","k":2}, {"type":"conv","k":5,"filters":16}, {"type":"pool","k":2}, {"type":"flatten"}, {"type":"fc","units":120}, {"type":"fc","units":84}, {"type":"fc","units":10} ], "checks": [ { "layer": 0, "shape": [28,28,6], "params": 156, "rf": 5 }, { "total": 61706 } ] }`. A table of output shapes, parameters (k·k·C_in·filters + filters for conv; in·out + out for fc) and receptive field; the student changes kernel size, stride, padding and filters per conv layer (`stride` defaults to 1, `pad` to 0; a pool's stride defaults to its size). `checks` entries use `layer` (index into `layers`) with `shape`/`params`/`rf`, or a bare `total`. The example above is LeNet-style: 156, 2,416, 48,120, 10,164, 850 parameters, 61,706 in total.
+
 ### `calc` kind `split`
 `{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`
