@@ -528,3 +528,36 @@ export function maskedSoftmax(S, causal = false) {
     return e.map((v) => v / s);
   });
 }
+
+// ---- Week 9: LLM families, scaling laws, mixture of experts, emergent abilities
+// Parametric loss of the Chinchilla form L(N, D) = E + A / N^alpha + B / D^beta, with the constants of the re-fit by Besiroglu et al. (2024).
+// (The constants printed in the original paper for this form give a compute-optimal ratio far above 20 tokens per parameter, which does not match the paper's own headline result.)
+export const CHIN = { E: 1.8172, A: 482.01, B: 2085.43, alpha: 0.3478, beta: 0.3658 };
+export const chinLoss = (N, D) => CHIN.E + CHIN.A / Math.pow(N, CHIN.alpha) + CHIN.B / Math.pow(D, CHIN.beta);
+// For a compute budget C = 6 N D, the N that minimises chinLoss (ternary search on log N); returns {N, D, loss, ratio}
+export function chinOptimal(C) {
+  let lo = Math.log(1e6), hi = Math.log(C / 6 / 1e6);
+  for (let i = 0; i < 200; i++) {
+    const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3;
+    const f = (x) => chinLoss(Math.exp(x), C / 6 / Math.exp(x));
+    if (f(m1) < f(m2)) hi = m2; else lo = m1;
+  }
+  const N = Math.exp((lo + hi) / 2), D = C / 6 / N;
+  return { N, D, loss: chinLoss(N, D), ratio: D / N };
+}
+// Mixture of experts: for every token keep the k highest router scores and soften them with a softmax over the kept scores.
+export function moeRoute(scores, k) {
+  return scores.map((row) => {
+    const idx = row.map((s, i) => [s, i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]).slice(0, k);
+    const m = Math.max(...idx.map((q) => q[0]));
+    const e = idx.map((q) => Math.exp(q[0] - m));
+    const sum = e.reduce((a, b) => a + b, 0);
+    return idx.map((q, j) => ({ expert: q[1], score: q[0], weight: e[j] / sum }));
+  });
+}
+export const moeParams = (E, k, d, dff) => { const one = 2 * d * dff + dff + d; return { one, total: E * one, active: k * one }; };
+// Per-token accuracy p grows smoothly with scale (a logistic in log10 of the parameter count); exact match on an answer of L tokens is p^L.
+export function emergence({ pMin = 0.3, pMax = 0.99, mid = 9.5, width = 0.9 }, logN, L) {
+  const p = pMin + (pMax - pMin) / (1 + Math.exp(-(logN - mid) / width));
+  return { p, em: Math.pow(p, L) };
+}

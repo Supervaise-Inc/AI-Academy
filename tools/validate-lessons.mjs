@@ -71,6 +71,7 @@ function check(file) {
       return;
     }
     const at = (m) => err(`block ${i + 1} (${b.kind}${s.type ? ' ' + s.type : ''}): ${m}`);
+    if (/\[\[[^\]\n]*\|/.test(b.text)) at('contains a [[term|definition]]: glossary terms are only supported in prose, not inside figure JSON');
     if (b.kind === 'quiz') {
       quizzes++;
       if (!/^[a-z0-9-]{1,34}$/.test(s.id || '')) at('id must match [a-z0-9-] and be at most 34 characters');
@@ -282,6 +283,36 @@ function check(file) {
         (s.checks || []).forEach((c, k) => {
           if (c.loss != null && Math.abs(mean - c.loss) > 0.002) at(`check ${k + 1}: mean loss expected ${c.loss}, computed ${mean.toFixed(4)}`);
           if (c.perplexity != null && Math.abs(Math.exp(mean) - c.perplexity) > 0.01) at(`check ${k + 1}: perplexity expected ${c.perplexity}, computed ${Math.exp(mean).toFixed(3)}`);
+        });
+      },
+      llmfamily: () => {
+        if (!Array.isArray(s.tokens) || s.tokens.length < 4 || s.tokens.length > 10) return at('tokens needs 4–10 items');
+        if (!Array.isArray(s.families) || s.families.length < 2) return at('families needs ≥2 entries');
+        s.families.forEach((f, k) => {
+          if (!isStr(f.name) || !['bidirectional', 'causal', 'prefix'].includes(f.mask) || !isStr(f.maskName) || !isStr(f.objective) || !isStr(f.input) || !isStr(f.target) || !isStr(f.uses) || !isStr(f.examples)) at(`family ${k + 1} needs name, mask (bidirectional|causal|prefix), maskName, objective, input, target, uses, examples`);
+        });
+      },
+      moe: () => {
+        const sc = s.scores;
+        if (!Array.isArray(s.tokens) || !Array.isArray(sc) || sc.length !== s.tokens.length || sc.some((r) => !Array.isArray(r) || r.length !== sc[0].length) || sc[0].length < 3) return at('tokens and a scores matrix (tokens × ≥3 experts) are required');
+        (s.checks || []).forEach((c, k) => {
+          const r = M.moeRoute(sc, c.k)[c.token];
+          if (c.experts && r.map((q) => q.expert).join() !== c.experts.join()) at(`check ${k + 1}: experts expected ${c.experts}, computed ${r.map((q) => q.expert)}`);
+          if (c.weights) c.weights.forEach((w, j) => { if (Math.abs(r[j].weight - w) > 0.002) at(`check ${k + 1}: weight ${j + 1} expected ${w}, computed ${r[j].weight.toFixed(4)}`); });
+          if (c.total != null || c.active != null) { const P = M.moeParams(sc[0].length, c.k, s.d ?? 512, s.dff ?? 2048); if (c.total != null && P.total !== c.total) at(`check ${k + 1}: total expected ${c.total}, computed ${P.total}`); if (c.active != null && P.active !== c.active) at(`check ${k + 1}: active expected ${c.active}, computed ${P.active}`); }
+        });
+      },
+      scalinglaw: () => {
+        (s.checks || []).forEach((c, k) => {
+          if (c.N != null && c.D != null && c.loss != null) { const L = M.chinLoss(c.N, c.D); if (Math.abs(L - c.loss) > 0.002) at(`check ${k + 1}: loss(N, D) expected ${c.loss}, computed ${L.toFixed(4)}`); }
+          if (c.C != null) { const o = M.chinOptimal(c.C); if (c.optN != null && Math.abs(o.N / c.optN - 1) > 0.03) at(`check ${k + 1}: optimal N expected ${c.optN}, computed ${o.N.toExponential(3)}`); if (c.optRatio != null && Math.abs(o.ratio - c.optRatio) > 0.6) at(`check ${k + 1}: tokens per parameter expected ${c.optRatio}, computed ${o.ratio.toFixed(2)}`); }
+        });
+      },
+      emergent: () => {
+        (s.checks || []).forEach((c, k) => {
+          const r = M.emergence(s.curve || {}, c.logN, c.length);
+          if (c.p != null && Math.abs(r.p - c.p) > 0.005) at(`check ${k + 1}: p expected ${c.p}, computed ${r.p.toFixed(3)}`);
+          if (c.em != null && Math.abs(r.em - c.em) > 0.005) at(`check ${k + 1}: exact match expected ${c.em}, computed ${r.em.toFixed(3)}`);
         });
       },
       mlp: () => { if (!Array.isArray(s.layers) || s.layers.length < 3 || s.layers.some((n) => !(n >= 1))) at('layers must be ≥3 positive numbers'); },

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -1804,4 +1804,160 @@ function ShiftLoss({ spec, fig }) {
   );
 }
 
-export const VIZ = { tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- llmfamily (encoder-only, decoder-only, encoder-decoder: masks and training tasks)
+function LlmFamily({ spec, fig }) {
+  const fams = spec.families;
+  const [i, setI] = useState(spec.start ?? 0);
+  const f = fams[i];
+  const toks = spec.tokens;
+  const n = toks.length;
+  const allowed = (r, c) => (f.mask === 'causal' ? c <= r : f.mask === 'prefix' ? (c < (f.prefix ?? Math.floor(n / 2)) || c <= r) : true);
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-tabs" role="tablist">{fams.map((x, k) => <button key={k} type="button" role="tab" aria-selected={i === k} className={'wg-tab' + (i === k ? ' on' : '')} onClick={() => setI(k)}>{x.name}</button>)}</div>
+      <div className="vz-two" style={{ marginTop: 10 }}>
+        <div>
+          <span className="wg-k">Who may look at whom ({f.maskName})</span>
+          <div className="vz-maskgrid" style={{ gridTemplateColumns: `34px repeat(${n}, 1fr)` }} role="img" aria-label={`${f.maskName}: row = the token being read, column = the token it may use`}>
+            <i />
+            {toks.map((t, c) => <b key={c}>{t}</b>)}
+            {toks.map((t, r) => (
+              <React.Fragment key={r}>
+                <b>{t}</b>
+                {toks.map((_, c) => <i key={c} className={allowed(r, c) ? 'on' : ''} />)}
+              </React.Fragment>
+            ))}
+          </div>
+          <p className="wg-note" style={{ margin: '6px 0 0' }}>Green = the row token may use the column token.</p>
+        </div>
+        <div>
+          <p className="wg-p" style={{ margin: '0 0 6px' }}><strong>{f.objective}</strong></p>
+          <p className="vz-calc">input:  {f.input}{'\n'}target: {f.target}</p>
+          <p className="wg-p" style={{ margin: '6px 0 0' }}><strong>Typical uses:</strong> {f.uses}</p>
+          <p className="wg-p" style={{ margin: '4px 0 0' }}><strong>Examples:</strong> {f.examples}</p>
+        </div>
+      </div>
+      <p className="wg-note">{spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- moe (a router sends each token to a few experts)
+function Moe({ spec, fig }) {
+  const E = spec.scores[0].length;
+  const [k, setK] = useState(spec.k ?? 2);
+  const [d] = useState(spec.d ?? 512);
+  const [dff, setDff] = useState(spec.dff ?? 2048);
+  const route = useMemo(() => moeRoute(spec.scores, k), [spec, k]);
+  const load = Array(E).fill(0);
+  route.forEach((r) => r.forEach((q) => { load[q.expert] += 1; }));
+  const P = moeParams(E, k, d, dff);
+  const dense = moeParams(1, 1, d, dff);
+  const f = (q) => Number(q.toFixed(2)).toString();
+  const mx = Math.max(...load, 1);
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label={`Experts used per token (top-k) out of ${E}`} min={1} max={E} step={1} value={k} onChange={setK} />
+      <div className="vz-scroll">
+        <table className="vz-mlp vz-attn" aria-label="Router choices">
+          <thead><tr><th>token</th>{Array.from({ length: E }, (_, j) => <th key={j}>expert {j + 1}</th>)}</tr></thead>
+          <tbody>
+            {route.map((r, i) => (
+              <tr key={i}>
+                <td><strong>{spec.tokens[i]}</strong></td>
+                {Array.from({ length: E }, (_, j) => { const q = r.find((z) => z.expert === j); return <td key={j} style={{ background: q ? `color-mix(in srgb, var(--accent) ${Math.round(q.weight * 70)}%, var(--surface2))` : undefined, color: q ? 'var(--text)' : 'var(--text3)' }}>{q ? f(q.weight) : `· (${f(spec.scores[i][j])})`}</td>; })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="wg-note" style={{ margin: '6px 0 8px' }}>A number is the weight given to that expert's answer (softmax over the chosen experts' scores). A dot means the expert is skipped for that token; the router score is in brackets.</p>
+      <ul className="wg-bars">
+        {load.map((q, j) => <li key={j} style={{ gridTemplateColumns: '90px minmax(0,1fr) 70px' }}><span className="wg-bar-l" style={{ fontFamily: 'inherit' }}>expert {j + 1}</span><span className="wg-bar-track"><span className={'wg-bar-fill' + (q === 0 ? ' warn' : '')} style={{ width: `${(q / mx) * 100}%` }} /></span><span className="wg-bar-p">{q} tokens</span></li>)}
+      </ul>
+      <div className="vz-cmp" style={{ marginTop: 12, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Dense feed-forward (1 expert)</span><span className="vz-big">{(dense.total / 1e6).toFixed(2)} M</span><span className="wg-note">d = {d}, d_ff = {dff}</span></div>
+        <div><span className="wg-k">All {E} experts stored</span><span className="vz-big">{(P.total / 1e6).toFixed(2)} M</span><span className="wg-note">memory you must hold</span></div>
+        <div className="out"><span className="wg-k">Used per token (top-{k})</span><span className="vz-big">{(P.active / 1e6).toFixed(2)} M</span><span className="wg-note">compute per token ≈ {k} experts, not {E}</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'Router scores are made up. Real routers are small learned linear layers, trained with a loss that spreads tokens across experts.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- scalinglaw (Chinchilla's fitted loss and the compute-optimal size)
+function ScalingLaw({ spec, fig }) {
+  const [logC, setLogC] = useState(spec.logC ?? 23.77);
+  const [logN, setLogN] = useState(spec.logN ?? 10.8);
+  const C = 10 ** logC;
+  const opt = useMemo(() => chinOptimal(C), [C]);
+  const N = 10 ** logN, D = C / 6 / N;
+  const lo = Math.log10(opt.N) - 2, hi = Math.log10(opt.N) + 2;
+  const pts = Array.from({ length: 81 }, (_, i) => { const x = lo + ((hi - lo) * i) / 80; const n = 10 ** x; return [x, chinLoss(n, C / 6 / n)]; });
+  const ys = pts.map((p) => p[1]);
+  const y0 = Math.min(...ys), y1 = Math.min(Math.max(...ys), y0 + 1.2);
+  const W = 560, H = 170;
+  const sx = (x) => 30 + ((x - lo) / (hi - lo)) * (W - 50);
+  const sy = (y) => H - 24 - ((Math.min(y, y1) - y0) / (y1 - y0)) * (H - 44);
+  const L = chinLoss(N, D);
+  const sci = (x) => x.toExponential(2).replace('e+', ' × 10^');
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Compute budget C (log10 FLOPs)" min={20} max={26} step={0.05} value={logC} onChange={setLogC} show={(q) => `10^${q.toFixed(2)}`} />
+      <Slider label="Your model size N (log10 parameters)" min={Math.max(7, lo)} max={Math.min(13, hi)} step={0.02} value={Math.min(Math.max(logN, lo), hi)} onChange={setLogN} show={(q) => `${(10 ** q / 1e9).toFixed(2)} B`} />
+      <svg viewBox={`0 0 ${W} ${H}`} className="vz-plot" role="img" aria-label="Loss against model size at a fixed compute budget; the minimum is the compute-optimal size">
+        <line x1="30" x2={W - 20} y1={H - 24} y2={H - 24} className="vz-grid" />
+        <path d={pts.map((p, i) => `${i ? 'L' : 'M'}${sx(p[0]).toFixed(1)} ${sy(p[1]).toFixed(1)}`).join(' ')} fill="none" stroke="var(--accent)" strokeWidth="2.4" />
+        <line x1={sx(Math.log10(opt.N))} x2={sx(Math.log10(opt.N))} y1="8" y2={H - 24} stroke="var(--cyan)" strokeDasharray="5 4" />
+        <circle cx={sx(Math.min(Math.max(logN, lo), hi))} cy={sy(L)} r="6" fill="var(--amber)" />
+        <text x="30" y={H - 6} className="vz-tick">smaller model, more data</text>
+        <text x={W - 20} y={H - 6} textAnchor="end" className="vz-tick">bigger model, less data</text>
+      </svg>
+      <div className="vz-cmp" style={{ marginTop: 8, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div className="out"><span className="wg-k">Compute-optimal (fitted law)</span><span className="vz-big">{(opt.N / 1e9).toFixed(1)} B</span><span className="wg-note">{(opt.D / 1e9).toFixed(0)} B tokens · {opt.ratio.toFixed(0)} tokens per parameter · loss {opt.loss.toFixed(3)}</span></div>
+        <div><span className="wg-k">The 20-tokens-per-parameter rule</span><span className="vz-big">{(Math.sqrt(C / 120) / 1e9).toFixed(1)} B</span><span className="wg-note">N = √(C ÷ 120), D = 20·N</span></div>
+        <div><span className="wg-k">Your choice</span><span className="vz-big">{L.toFixed(3)}</span><span className="wg-note">N = {(N / 1e9).toFixed(2)} B, D = {(D / 1e9).toFixed(0)} B tokens</span></div>
+      </div>
+      <p className="wg-note">C = 6·N·D FLOPs is the usual estimate of training compute. The loss comes from the formula L = {CHIN.E} + {CHIN.A}/N^{CHIN.alpha} + {CHIN.B}/D^{CHIN.beta}, the Chinchilla form with constants from a published re-fit (Besiroglu et al., 2024); treat it as a fitted curve, not a law of nature. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- emergent (smooth skill, sharp-looking metric)
+function Emergent({ spec, fig }) {
+  const [L, setL] = useState(spec.length ?? 8);
+  const cfg = spec.curve || {};
+  const xs = Array.from({ length: 61 }, (_, i) => 7 + (i / 60) * 5);
+  const rows = xs.map((x) => ({ x, ...emergence(cfg, x, L) }));
+  const W = 560, H = 170;
+  const sx = (x) => 36 + ((x - 7) / 5) * (W - 56);
+  const sy = (y) => H - 24 - y * (H - 40);
+  const half = rows.find((r) => r.em >= 0.5);
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Answer length L (tokens that must all be right)" min={1} max={30} step={1} value={L} onChange={setL} />
+      <svg viewBox={`0 0 ${W} ${H}`} className="vz-plot" role="img" aria-label="Per-token accuracy and exact-match accuracy against model size">
+        {[0, 0.5, 1].map((y) => <g key={y}><line x1="36" x2={W - 20} y1={sy(y)} y2={sy(y)} className="vz-grid" /><text x="32" y={sy(y) + 4} textAnchor="end" className="vz-tick">{y}</text></g>)}
+        <path d={rows.map((r, i) => `${i ? 'L' : 'M'}${sx(r.x).toFixed(1)} ${sy(r.p).toFixed(1)}`).join(' ')} fill="none" stroke="var(--cyan)" strokeWidth="2.4" />
+        <path d={rows.map((r, i) => `${i ? 'L' : 'M'}${sx(r.x).toFixed(1)} ${sy(r.em).toFixed(1)}`).join(' ')} fill="none" stroke="var(--amber)" strokeWidth="2.8" />
+        {[7, 8, 9, 10, 11, 12].map((x) => <text key={x} x={sx(x)} y={H - 6} textAnchor="middle" className="vz-tick">1e{x}</text>)}
+      </svg>
+      <div className="wg-row vz-legend">
+        <span className="vz-key"><i style={{ background: 'var(--cyan)' }} />per-token accuracy p (partial credit): rises smoothly</span>
+        <span className="vz-key"><i style={{ background: 'var(--amber)' }} />exact match p^{L} (all {L} tokens right)</span>
+      </div>
+      <p className="wg-p" aria-live="polite" style={{ margin: '8px 0 0' }}>{half ? `Exact match first passes 50% at about ${(10 ** half.x / 1e9).toFixed(1)} billion parameters.` : 'Exact match never reaches 50% in this range.'} At L = 1 the two curves are the same line; the longer the answer, the more the amber curve looks like a sudden jump even though the skill underneath improves smoothly.</p>
+      <p className="wg-note">{spec.note || 'Illustrative curves, not measurements of any real model: parameters on the horizontal axis (log scale), a logistic skill curve underneath.'}</p>
+    </div>
+  );
+}
+
+export const VIZ = { llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

@@ -412,3 +412,9 @@
   .wp-prose .vz-link{all:unset;cursor:pointer;color:var(--text);font-weight:700;border-bottom:1px dotted var(--text3)}
   .wp-prose .vz-link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   .wp-prose .vz-attn td{text-align:center;min-width:46px}
+
+  /* Week 9 figures */
+  .wp-prose .vz-maskgrid{display:grid;gap:3px;align-items:center;max-width:420px}
+  .wp-prose .vz-maskgrid b{font-size:11.5px;font-weight:600;color:var(--text3);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wp-prose .vz-maskgrid i{display:block;height:26px;border-radius:5px;background:var(--surface2);border:1px solid var(--surface2-border)}
+  .wp-prose .vz-maskgrid i.on{background:var(--accent-soft-bg);border-color:var(--accent)}
