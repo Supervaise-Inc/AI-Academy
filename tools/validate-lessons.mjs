@@ -348,6 +348,34 @@ function check(file) {
         const g = s.input;
         if (!Array.isArray(g) || g.length < 3 || g.length > 5 || g.some((r) => !Array.isArray(r) || r.length !== g.length)) at('input must be a 3×3 to 5×5 square matrix of numbers');
       },
+      schedule: () => {
+        (s.checks || []).forEach((c, k) => {
+          const sc = M.schedule(s.T || 1000, c.kind || s.kind || 'linear');
+          if (c.abar != null) { const q = sc.abar[c.t]; if (Math.abs(q - c.abar) > Math.max(1e-4, Math.abs(c.abar) * 0.01)) at(`check ${k + 1}: ᾱ(${c.t}) expected ${c.abar}, computed ${q}`); }
+          if (c.snr != null) { const q = sc.abar[c.t] / (1 - sc.abar[c.t]); if (Math.abs(q - c.snr) > Math.max(1e-3, Math.abs(c.snr) * 0.01)) at(`check ${k + 1}: SNR(${c.t}) expected ${c.snr}, computed ${q}`); }
+        });
+      },
+      sampler1d: () => {
+        const w = s.weights || [0.5, 0.5], m = s.means || [-2, 3];
+        if (w.length !== m.length || Math.abs(w.reduce((a, b) => a + b, 0) - 1) > 1e-6) return at('weights must match means and sum to 1');
+        (s.checks || []).forEach((c, k) => {
+          const R = M.diffSample1d({ means: m, weights: w, sd0: s.sd0 ?? 0.4, T: s.T || 200, n: s.n || 600, seed: s.seed || 5, stochastic: c.stochastic ?? s.stochastic ?? true });
+          const x = R.traj[0], mean = x.reduce((a, b) => a + b, 0) / x.length, left = x.filter((q) => q < (m[0] + m[1]) / 2).length / x.length;
+          if (c.meanMin != null && mean < c.meanMin) at(`check ${k + 1}: final mean ${mean.toFixed(2)} < ${c.meanMin}`);
+          if (c.meanMax != null && mean > c.meanMax) at(`check ${k + 1}: final mean ${mean.toFixed(2)} > ${c.meanMax}`);
+          if (c.leftMin != null && left < c.leftMin) at(`check ${k + 1}: share in the left mode ${left.toFixed(2)} < ${c.leftMin}`);
+          if (c.leftMax != null && left > c.leftMax) at(`check ${k + 1}: share in the left mode ${left.toFixed(2)} > ${c.leftMax}`);
+        });
+      },
+      unet: () => {
+        const size = s.size ?? 16, L = s.levels ?? 3;
+        if (size % 2 ** (L - 1)) return at('size must be divisible by 2^(levels − 1)');
+        (s.checks || []).forEach((c, k) => {
+          const U = M.unetShapes({ size, inCh: s.inCh ?? 1, base: c.base ?? s.base ?? 16, levels: c.levels ?? L, timeDim: c.timeDim ?? s.timeDim ?? 32 });
+          if (c.total != null && U.total !== c.total) at(`check ${k + 1}: total expected ${c.total}, computed ${U.total}`);
+          if (c.layer && c.params != null) { const r = U.rows.find((q) => q.name.startsWith(c.layer)); if (!r) at(`check ${k + 1}: no layer starting "${c.layer}"`); else if (r.params !== c.params) at(`check ${k + 1}: ${c.layer} params expected ${c.params}, computed ${r.params}`); }
+        });
+      },
       mlp: () => { if (!Array.isArray(s.layers) || s.layers.length < 3 || s.layers.some((n) => !(n >= 1))) at('layers must be ≥3 positive numbers'); },
       curve: () => {
         if (!(s.series || []).length || s.series.some((x) => !M.FN[x.fn])) at(`series fn must be one of ${Object.keys(M.FN).join(', ')}`);

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT, schedule, diffSample1d, unetShapes } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -2204,4 +2204,145 @@ function Upsample({ spec, fig }) {
   );
 }
 
-export const VIZ = { ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- schedule (the noise schedule and the signal-to-noise trade)
+function Schedule({ spec, fig }) {
+  const T = spec.T || 1000;
+  const [kind, setKind] = useState(spec.kind || 'linear');
+  const [t, setT] = useState(spec.t ?? 300);
+  const sch = useMemo(() => ({ linear: schedule(T, 'linear'), cosine: schedule(T, 'cosine') }), [T]);
+  const cur = sch[kind], other = sch[kind === 'linear' ? 'cosine' : 'linear'];
+  const ab = cur.abar[t];
+  const W = 560, H = 170;
+  const sx = (i) => 36 + (i / T) * (W - 56), sy = (y) => H - 24 - y * (H - 40);
+  const path = (arr, f) => arr.map((q, i) => `${i ? 'L' : 'M'}${sx(i).toFixed(1)} ${sy(f(q)).toFixed(1)}`).join(' ');
+  const f = (q) => (q >= 0.01 ? Number(q.toFixed(4)).toString() : q.toExponential(2));
+  const snr = ab / (1 - ab);
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-tabs" role="tablist">{['linear', 'cosine'].map((k) => <button key={k} type="button" role="tab" aria-selected={kind === k} className={'wg-tab' + (kind === k ? ' on' : '')} onClick={() => setKind(k)}>{k === 'linear' ? 'Linear schedule (β from 0.0001 to 0.02)' : 'Cosine schedule'}</button>)}</div>
+      <Slider label="Step t" min={0} max={T} step={1} value={t} onChange={setT} />
+      <svg viewBox={`0 0 ${W} ${H}`} className="vz-plot" role="img" aria-label={`At step ${t} the signal share ᾱ is ${f(ab)}`}>
+        {[0, 0.5, 1].map((y) => <g key={y}><line x1="36" x2={W - 20} y1={sy(y)} y2={sy(y)} className="vz-grid" /><text x="32" y={sy(y) + 4} textAnchor="end" className="vz-tick">{y}</text></g>)}
+        <path d={path(other.abar, (q) => q)} fill="none" stroke="var(--text3)" strokeWidth="1.6" strokeDasharray="5 4" />
+        <path d={path(cur.abar, (q) => Math.sqrt(q))} fill="none" stroke="var(--accent)" strokeWidth="2.4" />
+        <path d={path(cur.abar, (q) => Math.sqrt(1 - q))} fill="none" stroke="var(--amber)" strokeWidth="2.4" />
+        <path d={path(cur.abar, (q) => q)} fill="none" stroke="var(--cyan)" strokeWidth="2.4" />
+        <line x1={sx(t)} x2={sx(t)} y1="8" y2={H - 24} stroke="var(--text)" strokeDasharray="3 3" />
+        <text x="36" y={H - 6} className="vz-tick">t = 0 (clean)</text>
+        <text x={W - 20} y={H - 6} textAnchor="end" className="vz-tick">t = {T} (noise)</text>
+      </svg>
+      <div className="wg-row vz-legend">
+        <span className="vz-key"><i style={{ background: 'var(--cyan)' }} />ᾱ_t, the signal share</span>
+        <span className="vz-key"><i style={{ background: 'var(--accent)' }} />√ᾱ_t, the weight of the picture</span>
+        <span className="vz-key"><i style={{ background: 'var(--amber)' }} />√(1 − ᾱ_t), the weight of the noise</span>
+        <span className="vz-key"><i style={{ background: 'var(--text3)' }} />ᾱ_t of the other schedule</span>
+      </div>
+      <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div className="out"><span className="wg-k" style={{ textTransform: "none" }}>ᾱ_t at t = {t}</span><span className="vz-big">{f(ab)}</span><span className="wg-note">fraction of the original signal power that is left</span></div>
+        <div><span className="wg-k" style={{ textTransform: "none" }}>x_t = {f(Math.sqrt(ab))}·x₀ + {f(Math.sqrt(1 - ab))}·ε</span><span className="vz-big">{f(Math.sqrt(ab))} | {f(Math.sqrt(1 - ab))}</span><span className="wg-note">weight of the picture | weight of the noise</span></div>
+        <div><span className="wg-k" style={{ textTransform: "none" }}>Signal-to-noise ratio ᾱ ÷ (1 − ᾱ)</span><span className="vz-big">{f(snr)}</span><span className="wg-note">above 1 the picture still dominates</span></div>
+      </div>
+      <p className="wg-note">{spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- sampler1d (the reverse process run with the exact denoiser)
+function Sampler1d({ spec, fig }) {
+  const opt = { means: spec.means || [-2, 3], weights: spec.weights || [0.5, 0.5], sd0: spec.sd0 ?? 0.4, T: spec.T || 200, n: spec.n || 600, seed: spec.seed || 5 };
+  const [stoch, setStoch] = useState(spec.stochastic ?? true);
+  const R = useMemo(() => diffSample1d({ ...opt, stochastic: stoch }), [stoch, spec]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [k, setK] = useState(0);
+  const [play, setPlay] = useState(false);
+  const kRef = useRef(0); kRef.current = k;
+  useEffect(() => {
+    if (!play) return undefined;
+    const id = setInterval(() => { if (kRef.current >= opt.T) { setPlay(false); return; } setK(Math.min(opt.T, kRef.current + 3)); }, 60);
+    return () => clearInterval(id);
+  }, [play]); // eslint-disable-line react-hooks/exhaustive-deps
+  const t = opt.T - k;
+  const xs = R.traj[t];
+  const lo = -5, hi = 6, bins = 44, W = 560, H = 170;
+  const counts = Array(bins).fill(0);
+  xs.forEach((q) => { const b = Math.floor(((q - lo) / (hi - lo)) * bins); if (b >= 0 && b < bins) counts[b]++; });
+  const mx = Math.max(...counts, 1);
+  const dens = (x) => opt.weights.reduce((s, w, i) => s + w * Math.exp(-((x - opt.means[i]) ** 2) / (2 * opt.sd0 ** 2)) / (opt.sd0 * Math.sqrt(2 * Math.PI)), 0);
+  const dmax = Math.max(...Array.from({ length: 200 }, (_, i) => dens(lo + ((hi - lo) * i) / 199)));
+  const sx = (x) => 20 + ((x - lo) / (hi - lo)) * (W - 40);
+  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+  const sd = Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / xs.length);
+  const f2_ = (q) => Number(q.toFixed(2)).toString();
+  const ab = R.abar[t];
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Reverse steps taken" min={0} max={opt.T} step={1} value={k} onChange={setK} show={(q) => `${q} of ${opt.T}  (now at t = ${opt.T - q})`} />
+      <svg viewBox={`0 0 ${W} ${H}`} className="vz-plot" role="img" aria-label={`Histogram of ${xs.length} particles at step t = ${t}: mean ${f2_(mean)}, spread ${f2_(sd)}`}>
+        <line x1="20" x2={W - 20} y1={H - 24} y2={H - 24} className="vz-grid" />
+        {counts.map((c, i) => <rect key={i} x={20 + (i / bins) * (W - 40) + 1} width={(W - 40) / bins - 2} y={H - 24 - (c / mx) * (H - 44)} height={(c / mx) * (H - 44)} fill="var(--accent)" opacity="0.75" />)}
+        <path d={Array.from({ length: 200 }, (_, i) => { const x = lo + ((hi - lo) * i) / 199; return `${i ? 'L' : 'M'}${sx(x).toFixed(1)} ${(H - 24 - (dens(x) / dmax) * (H - 44)).toFixed(1)}`; }).join(' ')} fill="none" stroke="var(--text)" strokeWidth="2" strokeDasharray="5 4" />
+        {[-4, -2, 0, 2, 4].map((x) => <text key={x} x={sx(x)} y={H - 6} textAnchor="middle" className="vz-tick">{x}</text>)}
+      </svg>
+      <div className="wg-row vz-legend">
+        <span className="vz-key"><i style={{ background: 'var(--accent)' }} />{xs.length} particles now</span>
+        <span className="vz-key"><i style={{ background: 'var(--text)' }} />the data distribution to recover</span>
+      </div>
+      <p className="wg-p" aria-live="polite" style={{ margin: '8px 0' }}>Step t = <strong>{t}</strong> · signal share ᾱ_t = <strong>{ab >= 0.01 ? f2_(ab) : ab.toExponential(1)}</strong> · mean <strong>{f2_(mean)}</strong> · spread <strong>{f2_(sd)}</strong>. {t === opt.T ? 'Pure noise: a bell curve centred at 0.' : t === 0 ? 'Done: two separate groups appeared out of one bell curve.' : 'The denoiser is nudging every particle towards where data are likely.'}</p>
+      <div className="wg-row">
+        <button type="button" className="wg-btn" onClick={() => { if (k >= opt.T) setK(0); setPlay(!play); }}>{play ? 'Pause' : k >= opt.T ? 'Replay' : 'Play the reverse process'}</button>
+        <button type="button" className="wg-btn ghost" onClick={() => { setPlay(false); setK(0); }}>Back to noise</button>
+        <button type="button" className={'wg-chip' + (stoch ? ' on' : '')} aria-pressed={stoch} onClick={() => setStoch(!stoch)}>add fresh noise at each step</button>
+      </div>
+      <p className="wg-note">Here the denoiser is the exact one for this simple data set (a mixture of two bell curves), so no network is needed: the reverse step is x_(t−1) = (x_t − β_t/√(1−ᾱ_t)·ε̂)/√(1−β_t) + σ_t·z. In a real model a neural network learns ε̂ from examples. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- unet (shapes, skips and parameters of a small UNet denoiser)
+function Unet({ spec, fig }) {
+  const [cfg, setCfg] = useState({ base: spec.base ?? 16, levels: spec.levels ?? 3, timeDim: spec.timeDim ?? 32 });
+  const size = spec.size ?? 16, inCh = spec.inCh ?? 1;
+  const ok = size % 2 ** (cfg.levels - 1) === 0;
+  const U = useMemo(() => unetShapes({ size, inCh, base: cfg.base, levels: cfg.levels, timeDim: cfg.timeDim }), [size, inCh, cfg]);
+  const L = cfg.levels;
+  const W = 560, H = 40 + L * 52;
+  const colW = (W - 40) / (2 * L - 1);
+  const pos = (col, lvl) => [20 + col * colW + colW / 2, 30 + lvl * 52];
+  const boxes = [];
+  for (let i = 0; i < L; i++) boxes.push({ col: i, lvl: i, label: `${cfg.base * 2 ** i}c · ${size / 2 ** i}²`, kind: i === L - 1 ? 'bn' : 'down' });
+  for (let i = L - 2; i >= 0; i--) boxes.push({ col: 2 * L - 2 - i, lvl: i, label: `${cfg.base * 2 ** i}c · ${size / 2 ** i}²`, kind: 'up' });
+  const fmt = (n) => n.toLocaleString();
+  const set = (p) => setCfg((c) => ({ ...c, ...p }));
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-row" style={{ gap: 12, marginBottom: 8 }}>
+        <label className="vz-sel">base channels <select value={cfg.base} onChange={(e) => set({ base: +e.target.value })}>{[8, 16, 32, 64].map((q) => <option key={q}>{q}</option>)}</select></label>
+        <label className="vz-sel">levels <select value={cfg.levels} onChange={(e) => set({ levels: +e.target.value })}>{[2, 3, 4].map((q) => <option key={q}>{q}</option>)}</select></label>
+        <label className="vz-sel">time-embedding size <select value={cfg.timeDim} onChange={(e) => set({ timeDim: +e.target.value })}>{[16, 32, 64, 128].map((q) => <option key={q}>{q}</option>)}</select></label>
+      </div>
+      {!ok ? <p className="wg-why bad" role="alert">{size} cannot be halved {L - 1} times: use fewer levels.</p> : null}
+      <svg viewBox={`0 0 ${W} ${H}`} className="vz-netsvg" role="img" aria-label="A U-shaped network: the picture is shrunk step by step, then grown back, with skip connections across the U">
+        {boxes.filter((b) => b.kind === 'up').map((b, k) => { const [x1, y1] = pos(2 * L - 2 - b.lvl, b.lvl), [x0] = pos(b.lvl, b.lvl); return <line key={'s' + k} x1={x0 + 34} y1={y1} x2={x1 - 34} y2={y1} stroke="var(--amber)" strokeWidth="2" strokeDasharray="5 4" />; })}
+        {boxes.slice(0, -1).map((b, k) => { const n = boxes[k + 1]; const [x1, y1] = pos(b.col, b.lvl), [x2, y2] = pos(n.col, n.lvl); return <line key={'a' + k} x1={x1} y1={y1} x2={x2} y2={y2} stroke="var(--text3)" strokeWidth="1.6" />; })}
+        {boxes.map((b, k) => { const [x, y] = pos(b.col, b.lvl); return <g key={k}><rect x={x - 34} y={y - 15} width="68" height="30" rx="7" fill="var(--card-bg)" /><rect x={x - 34} y={y - 15} width="68" height="30" rx="7" fill={b.kind === 'bn' ? 'var(--amber-soft-bg)' : b.kind === 'down' ? 'var(--cyan-soft-bg)' : 'var(--accent-soft-bg)'} stroke="var(--surface2-border)" /><text x={x} y={y + 4} textAnchor="middle" className="vz-lab" style={{ fontSize: 10.5 }}>{b.label}</text></g>; })}
+        <text x="20" y={H - 4} className="vz-tick">input picture + time t</text>
+        <text x={W - 20} y={H - 4} textAnchor="end" className="vz-tick">predicted noise (same shape as the input)</text>
+      </svg>
+      <p className="wg-note" style={{ margin: '0 0 8px' }}>Blue boxes shrink the picture, the orange box is the bottleneck, green boxes grow it back; dashed orange lines are the skip connections that copy the early, detailed maps across to the decoder.</p>
+      <div className="vz-scroll">
+        <table className="vz-mlp" aria-label="Layers, shapes and parameters of the UNet">
+          <thead><tr><th>Layer</th><th>Output shape (channels × H × W)</th><th>Parameters</th></tr></thead>
+          <tbody>{U.rows.map((r, i) => <tr key={i}><td>{r.name}</td><td>{r.shape}</td><td>{fmt(r.params)}</td></tr>)}<tr className="tot"><td colSpan={2}><strong>Total parameters</strong></td><td><strong>{fmt(U.total)}</strong></td></tr></tbody>
+        </table>
+      </div>
+      <p className="wg-note">Every block adds a learned projection of the time embedding to its feature maps, so the same network knows how noisy the input is. The 16 × 16 greyscale pictures are an example size. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+export const VIZ = { schedule: Schedule, sampler1d: Sampler1d, unet: Unet, ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

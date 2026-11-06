@@ -26,7 +26,8 @@ marked.use({
       level: 'inline',
       start: (src) => src.indexOf('=='),
       tokenizer(src) {
-        const m = /^==(?!=)([^=\n]+?)==/.exec(src);
+        // a highlight may contain single '=' signs (formulas such as x = 2); it ends at the next '=='
+        const m = /^==(?!=)((?:(?!==)[^\n])+?)==/.exec(src);
         if (m) return { type: 'mark', raw: m[0], text: m[1], tokens: this.lexer.inlineTokens(m[1]) };
         return undefined;
       },

@@ -667,3 +667,66 @@ export function transposeConvPad(inp, ker, stride = 2, pad = 0) {
   const oh = full.length - 2 * pad, ow = full[0].length - 2 * pad;
   return Array.from({ length: oh }, (_, i) => Array.from({ length: ow }, (_, j) => full[i + pad][j + pad]));
 }
+
+// ---- Week 13: diffusion models
+// beta schedule and cumulative signal products. kind 'linear': beta_t from b0 to b1 over T steps; 'cosine' (Nichol and Dhariwal 2021): abar_t = f(t)/f(0), f(t) = cos^2(((t/T) + s)/(1 + s) * pi/2).
+export function schedule(T = 1000, kind = 'linear', b0 = 1e-4, b1 = 0.02, s = 0.008) {
+  const abar = [1], beta = [0];
+  if (kind === 'cosine') {
+    const f = (t) => Math.cos((((t / T) + s) / (1 + s)) * Math.PI / 2) ** 2;
+    for (let t = 1; t <= T; t++) { abar.push(f(t) / f(0)); beta.push(Math.min(0.999, 1 - abar[t] / abar[t - 1])); }
+  } else {
+    for (let t = 1; t <= T; t++) { const b = b0 + ((b1 - b0) * (t - 1)) / (T - 1); beta.push(b); abar.push(abar[t - 1] * (1 - b)); }
+  }
+  return { T, beta, abar };
+}
+// Exact DDPM reverse process for 1-D data from a Gaussian mixture, using the exact noise predictor (so no network is needed).
+// Returns the particles at every step: traj[t] is the array of n values at step t (traj[T] = pure noise, traj[0] = the generated samples).
+export function diffSample1d({ means = [-2, 3], weights = [0.5, 0.5], sd0 = 0.4, T = 200, b0 = 1e-3, b1 = 0.06, n = 400, seed = 5, stochastic = true } = {}) {
+  const { beta, abar } = schedule(T, 'linear', b0, b1);
+  const g = gaussStream(seed);
+  let x = Array.from({ length: n }, () => g());
+  const traj = Array(T + 1);
+  traj[T] = x.slice();
+  const epsHat = (xv, t) => {
+    const ab = abar[t];
+    const m = means.map((mu) => Math.sqrt(ab) * mu), v = sd0 * sd0 * ab + (1 - ab);
+    const lw = weights.map((w, i) => Math.log(w) - 0.5 * ((xv - m[i]) ** 2) / v);
+    const mx = Math.max(...lw), e = lw.map((q) => Math.exp(q - mx)), z = e.reduce((a, b) => a + b, 0);
+    let s = 0; e.forEach((q, i) => { s += (q / z) * (xv - m[i]) / v; });
+    return Math.sqrt(1 - ab) * s;
+  };
+  for (let t = T; t >= 1; t--) {
+    const a = 1 - beta[t];
+    x = x.map((xv) => {
+      const mean = (xv - (beta[t] / Math.sqrt(1 - abar[t])) * epsHat(xv, t)) / Math.sqrt(a);
+      return mean + (stochastic && t > 1 ? Math.sqrt(beta[t]) * g() : 0);
+    });
+    traj[t - 1] = x.slice();
+  }
+  return { traj, beta, abar };
+}
+// Shapes and parameter counts of a small UNet: `levels` resolutions, channels base * 2^i, two 3x3 convs per block plus a time-embedding projection.
+export function unetShapes({ size = 16, inCh = 1, base = 16, levels = 3, timeDim = 32 }) {
+  const rows = [];
+  const conv = (i, o) => 9 * i * o + o;
+  const block = (i, o) => conv(i, o) + conv(o, o) + timeDim * o + o;
+  rows.push({ name: 'time embedding (sinusoidal, then MLP)', shape: `${timeDim}`, params: 2 * (timeDim * timeDim + timeDim), skip: null });
+  let cin = inCh, res = size;
+  const enc = [];
+  for (let i = 0; i < levels; i++) {
+    const c = base * 2 ** i;
+    rows.push({ name: i === levels - 1 ? `bottleneck block ${i + 1}` : `down block ${i + 1}`, shape: `${c} × ${res} × ${res}`, params: block(cin, c), skip: i === levels - 1 ? null : `saved for the skip at level ${i + 1}` });
+    enc.push({ c, res });
+    if (i < levels - 1) { rows.push({ name: `downsample ${i + 1} (conv 3×3, stride 2)`, shape: `${c} × ${res / 2} × ${res / 2}`, params: conv(c, c) * 1 + 0, skip: null }); res /= 2; }
+    cin = c;
+  }
+  for (let i = levels - 2; i >= 0; i--) {
+    const c = enc[i].c, up = enc[i + 1].c;
+    rows.push({ name: `upsample ${i + 1} (transpose conv 2×2, stride 2)`, shape: `${c} × ${enc[i].res} × ${enc[i].res}`, params: 4 * up * c + c, skip: null });
+    rows.push({ name: `concatenate skip ${i + 1}`, shape: `${2 * c} × ${enc[i].res} × ${enc[i].res}`, params: 0, skip: 'channels double' });
+    rows.push({ name: `up block ${i + 1}`, shape: `${c} × ${enc[i].res} × ${enc[i].res}`, params: block(2 * c, c), skip: null });
+  }
+  rows.push({ name: 'output conv 1×1', shape: `${inCh} × ${size} × ${size}`, params: base * inCh + inCh, skip: null });
+  return { rows, total: rows.reduce((s, r) => s + r.params, 0) };
+}
