@@ -76,7 +76,7 @@ function check(file) {
       if (!/^[a-z0-9-]{1,34}$/.test(s.id || '')) at('id must match [a-z0-9-] and be at most 34 characters');
       if (!isNum(s.passMark)) at('passMark must be a number');
       const q = s.questions || [];
-      if (q.length < 6 || q.length > 12) at(`needs 6–12 questions, has ${q.length}`);
+      if (q.length < 6 || q.length > 15) at(`needs 6–15 questions, has ${q.length}`);
       const pos = [0, 0, 0, 0];
       q.forEach((x, k) => {
         if (!isStr(x.q, 12)) at(`question ${k + 1} has no text`);
@@ -185,6 +185,13 @@ function check(file) {
       },
       patch: () => { const im = s.image || []; if (im.length < 4 || !im.every((r) => Array.isArray(r) && r.length === im.length && r.every((v) => Number.isInteger(v) && v >= 0 && v <= 9))) at('image must be a square matrix of integers 0–9'); else if (!(s.patchSizes || [2, 4, 8]).some((p) => im.length % p === 0)) at('no patch size divides the image'); },
       diffusion: () => { const im = s.image || []; if (im.length < 6 || im.length > 16 || !im.every((r) => /^[0-9]+$/.test(r) && r.length === im.length)) at('image must be a square array of digit strings, 6–16 per side'); },
+      nested: () => { if ((s.levels || []).length < 3 || s.levels.some((l) => !isStr(l.name) || !isStr(l.blurb, 30))) at('needs ≥3 levels (outermost first) with name and blurb'); },
+      sampling: () => { if (!isStr(s.prompt) || (s.tokens || []).length < 5 || s.tokens.some((t) => !isStr(t.t) || !isNum(t.logit))) at('needs prompt and ≥5 tokens {t, logit}'); else if (new Set(s.tokens.map((t) => t.t)).size !== s.tokens.length) at('token labels must be unique'); },
+      chain: () => {
+        const ss = s.sentences || [];
+        if (ss.length < 2 || ss.some((x) => !isStr(x.label) || (x.tokens || []).length < 3 || x.tokens.some((t) => !isStr(t.t) || !(t.p > 0 && t.p <= 1)))) at('needs ≥2 sentences, each with label and ≥3 tokens {t, p} where 0 < p ≤ 1');
+      },
+      logbars: () => { if ((s.items || []).length < 4 || s.items.some((x) => !isStr(x.label) || !(x.value > 0))) at('needs ≥4 items {label, value > 0}'); },
       retrieval: () => {
         const d = s.docs || [];
         if (d.length < 4 || d.some((x) => !isStr(x.id) || !isStr(x.title) || !isStr(x.text, 30))) at('needs ≥4 docs {id,title,text}');

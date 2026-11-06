@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -785,4 +785,157 @@ function Equation({ spec, fig }) {
   );
 }
 
-export const VIZ = { attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- nested (AI > machine learning > deep learning > generative AI)
+function Nested({ spec, fig }) {
+  const L = spec.levels;
+  const [i, setI] = useState(L.length - 1);
+  const sel = L[i];
+  const N = L.length;
+  const R = 150;
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="vz-two">
+        <svg viewBox="0 0 320 320" className="vz-sq" role="img" aria-label={`Nested circles: ${L.map((l) => l.name).join(' contains ')}`}>
+          {L.map((l, k) => {
+            const r = R - k * (R / (N + 0.8));
+            return (
+              <g key={l.name} onClick={() => setI(k)} style={{ cursor: 'pointer' }}>
+                <circle cx="160" cy={310 - r} r={r} fill={k === i ? 'var(--accent-soft-bg)' : 'var(--surface2)'} stroke={k === i ? 'var(--accent)' : 'var(--surface2-border)'} strokeWidth={k === i ? 3 : 1.5} />
+                <text x="160" y={310 - 2 * r + 24} textAnchor="middle" className="vz-lab" style={{ fontSize: 13 }}>{l.name}</text>
+              </g>
+            );
+          })}
+        </svg>
+        <div>
+          <div className="wg-row" style={{ marginBottom: 10 }}>
+            {L.map((l, k) => <button key={l.name} type="button" className={'wg-chip' + (k === i ? ' on' : '')} aria-pressed={k === i} onClick={() => setI(k)}>{l.name}</button>)}
+          </div>
+          <p className="wg-p" aria-live="polite" style={{ margin: '0 0 8px' }}><strong>{sel.name}.</strong> {sel.blurb}</p>
+          {sel.examples ? <p className="wg-note" style={{ marginTop: 0 }}>Examples: {sel.examples.join(' · ')}</p> : null}
+        </div>
+      </div>
+      {spec.note ? <p className="wg-note">{spec.note}</p> : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- sampling (softmax with temperature, then top-k and top-p)
+function Sampling({ spec, fig }) {
+  const toks = spec.tokens;
+  const [T, setT] = useState(1);
+  const [k, setK] = useState(0);
+  const [p, setP] = useState(1);
+  const [text, setText] = useState([]);
+  const [tally, setTally] = useState(null);
+  const base = useMemo(() => softmaxT(toks.map((x) => x.logit), T), [toks, T]);
+  const f = useMemo(() => filterSampling(base, k, p), [base, k, p]);
+  const top = base.indexOf(Math.max(...base));
+  const z = toks.reduce((a, x) => a + Math.exp((x.logit - Math.max(...toks.map((y) => y.logit))) / T), 0);
+  const draw = () => {
+    let r = Math.random();
+    for (let i = 0; i < f.probs.length; i++) { r -= f.probs[i]; if (r <= 0) return i; }
+    return f.probs.findIndex((x) => x > 0);
+  };
+  const reset = () => { setTally(null); };
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <p className="wg-p" style={{ margin: '0 0 8px' }}>After <strong>“{spec.prompt}”</strong> the model gives every word a score (a logit z). Three dials decide which word is picked.</p>
+      <Slider label="Temperature T" min={0.1} max={2} step={0.05} value={T} onChange={(v) => { setT(v); reset(); }} show={(v) => v.toFixed(2)} />
+      <Slider label="Top-k (0 = off)" min={0} max={toks.length} step={1} value={k} onChange={(v) => { setK(v); reset(); }} show={(v) => (v === 0 ? 'off' : v)} />
+      <Slider label="Top-p (1 = off)" min={0.1} max={1} step={0.05} value={p} onChange={(v) => { setP(v); reset(); }} show={(v) => (v >= 1 ? 'off' : v.toFixed(2))} />
+      <div className="vz-formula" role="math" aria-label="softmax with temperature">
+        <span>p(</span><span className="vz-term static">{toks[top].t}</span><span>) = e</span><sup>z/T</sup><span> / Σ e</span><sup>z/T</sup><span> = 1 / Σ e</span><sup>(z − z</sup><sub>top</sub><sup>)/T</sup><span> = 1 / {f2(z, 2)} = <strong>{f2(base[top], 3)}</strong></span>
+      </div>
+      <ul className="wg-bars vz-samp" aria-live="polite">
+        {toks.map((x, i) => (
+          <li key={x.t} className={f.keep[i] ? '' : 'cut'} style={{ gridTemplateColumns: '84px 62px minmax(0,1fr) 62px 40px' }}>
+            <span className="wg-bar-l">{x.t}</span>
+            <span className="wg-bar-p" title="logit z">z={x.logit}</span>
+            <span className="wg-bar-track"><span className="vz-ghost" style={{ width: `${base[i] * 100}%` }} /><span className="wg-bar-fill" style={{ width: `${f.probs[i] * 100}%` }} /></span>
+            <span className="wg-bar-p">{f.keep[i] ? f2(f.probs[i] * 100, 1) + '%' : 'cut'}</span>
+            {tally ? <span className="wg-bar-c">{tally[i]}×</span> : <span />}
+          </li>
+        ))}
+      </ul>
+      <div className="wg-row">
+        <button type="button" className="wg-btn" onClick={() => setText((t) => [...t, toks[draw()].t])}>Pick the next word</button>
+        <button type="button" className="wg-btn ghost" onClick={() => { const c = toks.map(() => 0); for (let n = 0; n < 100; n++) c[draw()]++; setTally(c); }}>Draw 100 times</button>
+        <button type="button" className="wg-btn ghost" onClick={() => { setText([]); setTally(null); }} disabled={!text.length && !tally}>Clear</button>
+      </div>
+      <p className="wg-sent" aria-live="polite">{spec.prompt}{text.map((w, i) => <span key={i} className="wg-picked"> {w}</span>)}…</p>
+      <p className="wg-note">The faint bar is the probability before top-k/top-p; the solid bar is what remains after cutting and renormalising so the kept words add up to 100%. {spec.note || 'The scores are made up for teaching; they are not from a real model.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- chain (P(sentence) = product of next-word probabilities)
+function Chain({ spec, fig }) {
+  const [s, setS] = useState(0);
+  const S = spec.sentences[s];
+  const ps = S.tokens.map((t) => t.p);
+  const st = chainStats(ps);
+  const SUP = { '-': '⁻', 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
+  const sci = (x) => {
+    if (x >= 0.001) return f2(x, 4);
+    const [m, e] = x.toExponential(2).split('e');
+    return `${m} × 10${[...String(Number(e))].map((c) => SUP[c] || c).join('')}`;
+  };
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-tabs" role="tablist">{spec.sentences.map((x, i) => <button key={x.label} type="button" role="tab" aria-selected={i === s} className={'wg-tab' + (i === s ? ' on' : '')} onClick={() => setS(i)}>{x.label}</button>)}</div>
+      <div className="vz-formula" role="math" aria-label="chain rule"><span>P(w</span><sub>1</sub><span> … w</span><sub>n</sub><span>) = P(w</span><sub>1</sub><span>) × P(w</span><sub>2</sub><span> | w</span><sub>1</sub><span>) × … × P(w</span><sub>n</sub><span> | w</span><sub>1…n−1</sub><span>)</span></div>
+      <ol className="vz-chain-w" aria-label="Words and their probabilities">
+        {S.tokens.map((t, i) => (
+          <li key={i}>
+            <span className="vz-chain-bar" style={{ height: `${Math.max(6, t.p * 90)}px` }} />
+            <span className="vz-chain-t">{t.t}</span>
+            <span className="vz-chain-p">{f2(t.p, 2)}</span>
+            <span className="vz-chain-r" title="running product">× → {sci(st.running[i])}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="vz-cmp">
+        <div><span className="wg-k">Probability of the whole sentence</span><span className="vz-big">{sci(st.P)}</span><span className="wg-note">the product of the {ps.length} numbers above</span></div>
+        <div className="out"><span className="wg-k">Perplexity (lower = less surprised)</span><span className="vz-big">{f2(st.perplexity, 2)}</span><span className="wg-note">exp(−average ln p) = “about {f2(st.perplexity, 1)} equally likely choices per word”</span></div>
+      </div>
+      {S.note ? <p className="wg-p">{S.note}</p> : null}
+      <p className="wg-note">{spec.note || 'Probabilities are illustrative numbers authored for teaching, not measured from a real model.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- logbars (sizes on a log scale)
+function LogBars({ spec, fig }) {
+  const items = [...spec.items].sort((a, b) => a.value - b.value);
+  const [sel, setSel] = useState(items.length - 1);
+  const lo = Math.log10(items[0].value) - 0.4;
+  const hi = Math.log10(items[items.length - 1].value);
+  const it = items[sel];
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <ul className="vz-lb" aria-label="Sizes on a logarithmic scale">
+        {items.map((x, i) => (
+          <li key={x.label}>
+            <button type="button" className={'vz-lb-b' + (i === sel ? ' on' : '')} aria-pressed={i === sel} onClick={() => setSel(i)}>
+              <span className="vz-lb-l">{x.label}{x.year ? <em> {x.year}</em> : null}</span>
+              <span className="wg-bar-track"><span className="wg-bar-fill" style={{ width: `${((Math.log10(x.value) - lo) / (hi - lo)) * 100}%` }} /></span>
+              <span className="vz-lb-v">{human(x.value)}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="wg-p" aria-live="polite" style={{ margin: '10px 0 0' }}><strong>{it.label}</strong>: {human(it.value)} {spec.unit || ''}. {it.note || ''}</p>
+      <p className="wg-note">Each step along the axis is ten times bigger, so a short bar can still be a thousand times larger than a shorter one. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+export const VIZ = { nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

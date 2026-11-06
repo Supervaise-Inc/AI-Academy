@@ -16,8 +16,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const srcDir = path.join(root, 'notebooks', 'src');
-const outDir = path.join(root, 'notebooks');
+const srcDir = process.env.NB_SRC_DIR ? path.resolve(process.env.NB_SRC_DIR) : path.join(root, 'notebooks', 'src');
+const outDir = process.env.NB_OUT_DIR ? path.resolve(process.env.NB_OUT_DIR) : path.join(root, 'notebooks');
 
 export function parse(text, file = 'source') {
   const lines = text.replace(/\r\n/g, '\n').split('\n');

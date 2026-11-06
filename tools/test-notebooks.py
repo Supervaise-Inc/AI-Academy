@@ -23,7 +23,7 @@ import traceback
 import warnings
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-NB_DIR = os.path.join(ROOT, "notebooks")
+NB_DIR = os.environ.get("NB_DIR") or os.path.join(ROOT, "notebooks")
 
 
 def load(name):

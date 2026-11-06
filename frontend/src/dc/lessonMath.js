@@ -162,3 +162,30 @@ export function attend(q, K, V, scale = true) {
   const out = V[0].map((_, j) => V.reduce((s, v, i) => s + alpha[i] * v[j], 0));
   return { raw, scores, alpha, out };
 }
+// ---- sampling (temperature, top-k, top-p) ----
+export function softmaxT(logits, T) {
+  const m = Math.max(...logits);
+  const ex = logits.map((l) => Math.exp((l - m) / T));
+  const s = ex.reduce((a, b) => a + b, 0);
+  return ex.map((x) => x / s);
+}
+// Keep the topK most likely tokens (0 = off), then the smallest set whose probability adds up to at least topP (1 = off).
+// Returns { keep: boolean[], probs: renormalised probabilities (0 for removed tokens) }.
+export function filterSampling(probs, topK = 0, topP = 1) {
+  const order = probs.map((p, i) => i).sort((a, b) => probs[b] - probs[a]);
+  const keep = probs.map(() => false);
+  let cum = 0;
+  for (let r = 0; r < order.length; r++) {
+    if (topK > 0 && r >= topK) break;
+    keep[order[r]] = true;
+    cum += probs[order[r]];
+    if (topP < 1 && cum >= topP - 1e-12) break;
+  }
+  const z = probs.reduce((a, p, i) => a + (keep[i] ? p : 0), 0);
+  return { keep, probs: probs.map((p, i) => (keep[i] ? p / z : 0)) };
+}
+// ---- chain rule: P(w1..wn) = prod P(wi | w<i) ----
+export function chainStats(ps) {
+  const logp = ps.reduce((a, p) => a + Math.log(p), 0);
+  return { P: Math.exp(logp), bits: -logp / Math.LN2, perplexity: Math.exp(-logp / ps.length), running: ps.map((_, i) => ps.slice(0, i + 1).reduce((a, p) => a * p, 1)) };
+}

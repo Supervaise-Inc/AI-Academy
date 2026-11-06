@@ -341,3 +341,26 @@
   .wp-prose .nb-btn.ghost{background:var(--card-bg);color:var(--text);border:1px solid var(--card-border)}
   .wp-prose .nb-btn.ghost:hover{color:var(--text);box-shadow:none}
   .wp-prose .nb-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  /* nested / sampling / chain / logbars figures */
+  .wp-prose .vz-samp li.cut{opacity:.45}
+  .wp-prose .vz-samp .wg-bar-track{position:relative}
+  .wp-prose .vz-ghost{position:absolute;left:0;top:0;height:100%;border-radius:999px;background:var(--text3);opacity:.35}
+  .wp-prose .vz-samp .wg-bar-fill{position:relative}
+  .wp-prose .vz-term.static{cursor:default}
+  .wp-prose .vz-chain-w{list-style:none;margin:12px 0;padding:0;display:flex;flex-wrap:wrap;gap:10px}
+  .wp-prose .vz-chain-w li{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;min-width:84px;padding:8px 10px;border-radius:10px;background:var(--surface2);border:1px solid var(--divider);margin:0}
+  .wp-prose .vz-chain-bar{display:block;width:26px;border-radius:5px 5px 0 0;background:var(--accent)}
+  .wp-prose .vz-chain-t{font-family:'JetBrains Mono',monospace;font-size:14.5px;color:var(--text);font-weight:600}
+  .wp-prose .vz-chain-p{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--accent-soft-text);font-weight:700}
+  .wp-prose .vz-chain-r{font-size:11.5px;color:var(--text3);white-space:nowrap}
+  .wp-prose .vz-lb{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+  .wp-prose .vz-lb li{margin:0}
+  .wp-prose .vz-lb-b{all:unset;box-sizing:border-box;cursor:pointer;width:100%;display:grid;grid-template-columns:170px minmax(0,1fr) 80px;gap:12px;align-items:center;padding:6px 10px;border-radius:10px;border:1px solid transparent}
+  .wp-prose .vz-lb-b:hover{border-color:var(--accent-soft-border)}
+  .wp-prose .vz-lb-b.on{background:var(--accent-soft-bg);border-color:var(--accent-soft-border)}
+  .wp-prose .vz-lb-b:focus-visible{outline:2px solid var(--accent)}
+  .wp-prose .vz-lb-l{font-size:14.5px;color:var(--text);font-weight:600}
+  .wp-prose .vz-lb-l em{font-style:normal;color:var(--text3);font-weight:500;font-size:12.5px}
+  .wp-prose .vz-lb-v{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text2);text-align:right}
+  @media (max-width:640px){.wp-prose .vz-lb-b{grid-template-columns:110px minmax(0,1fr) 64px}}

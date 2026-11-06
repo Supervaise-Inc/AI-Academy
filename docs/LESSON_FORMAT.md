@@ -182,6 +182,14 @@ Draws the diagram: the query is compared (⊙) with every key, the scores go thr
   "steps": [ { "title": "Dot product", "expr": "q·k = 1×1 + 0.5×0 = 1", "note": "…" } ] }
 ```
 Use it whenever a lesson introduces a formula: every symbol is a `{t, id}` term with a plain-language `parts` entry; plain strings are the glue. `steps` is an optional worked example (compute every number yourself, see §8).
+### `nested` (concentric circles: a field and the parts inside it, e.g. AI ⊃ machine learning ⊃ deep learning ⊃ generative AI)
+`{ "type": "nested", "title": "…", "levels": [ { "name": "Artificial intelligence", "blurb": "30+ characters …", "examples": ["…"] }, … ≥ 3, OUTERMOST FIRST ] }`. Click a ring or its chip to read it.
+### `sampling` (softmax with temperature, then top-k and top-p, with the formula's live numbers)
+`{ "type": "sampling", "title": "…", "prompt": "Once upon a time in a land far, far", "tokens": [ { "t": "away", "logit": 4.2 }, … ≥ 5 unique ] }`. Three sliders (temperature, top-k, top-p); words cut by top-k/top-p grey out and the rest are renormalised; a button draws words and tallies 100 draws. The logits are made up: say so in `note`. Use it when a lesson explains how a model picks the next word.
+### `chain` (the chain rule: a sentence's probability is the product of its next-word probabilities)
+`{ "type": "chain", "title": "…", "sentences": [ { "label": "Sensible", "tokens": [ { "t": "The", "p": 0.2 }, … ≥ 3 ], "note": "optional" }, { "label": "Scrambled", "tokens": […] } ] }`. Shows the running product, the whole-sentence probability and the perplexity for each sentence. Probabilities are illustrative (0 < p ≤ 1): say so in `note`.
+### `logbars` (sizes on a log scale, e.g. model parameters)
+`{ "type": "logbars", "title": "…", "unit": "parameters", "items": [ { "label": "GPT-2", "year": "2019", "value": 1.5e9, "note": "…" }, … ≥ 4 ] }`. Only use numbers you are sure of.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`
 ### `patch` (image → patches → tokens)
 `{ "type": "patch", "title": "…", "image": [ [0,0,9,9,…], … ], "channels": 1, "patchSizes": [2,4,8] }` with a square matrix of integers 0–9 (e.g. 8×8 or 16×16).
@@ -205,7 +213,7 @@ Use it whenever a lesson introduces a formula: every symbol is a `{t, id}` term 
   "questions": [ { "q": "…", "options": ["…","…","…","…"], "answer": 2, "why": "…" } ] }
 ```
 - `id` = `week-NN-check` (at most 34 characters; it becomes the key the best score is saved under).
-- 8–10 questions, 3–4 options each, `answer` is the 0-based index of the correct option.
+- 8–12 questions (up to 15 for an introductory week), 3–4 options each, `answer` is the 0-based index of the correct option.
 - **Vary the position of the correct answer** (the validator warns when more than half sit in one slot). Wrong options must be plausible and each wrong for one clear reason; no "all of the above"; no trick wording; options similar in length.
 - `why` always says why the right answer is right and, where useful, why a tempting wrong one is wrong. At least one question asks the student to apply or compute something (a number from the week's figures), not just recall.
 - Cover every "By the end, you can" outcome. Do not copy questions from the Teaching Kit's question bank (GA-N-Qxx); write your own.
