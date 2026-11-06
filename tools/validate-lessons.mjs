@@ -76,7 +76,11 @@ function check(file) {
       if (!/^[a-z0-9-]{1,34}$/.test(s.id || '')) at('id must match [a-z0-9-] and be at most 34 characters');
       if (!isNum(s.passMark)) at('passMark must be a number');
       const q = s.questions || [];
-      if (q.length < 6 || q.length > 15) at(`needs 6–15 questions, has ${q.length}`);
+      if (s.exam) {
+        if (q.length < 20 || q.length > 60) at(`an exam needs 20–60 questions, has ${q.length}`);
+        if (!isNum(s.minutes) || s.minutes < 10 || s.minutes > 180) at('an exam needs "minutes" between 10 and 180');
+        q.forEach((x, k) => { if (!isStr(x.topic, 3)) at(`exam question ${k + 1} needs a "topic" (used for the score breakdown)`); });
+      } else if (q.length < 6 || q.length > 15) at(`needs 6–15 questions, has ${q.length}`);
       const pos = [0, 0, 0, 0];
       q.forEach((x, k) => {
         if (!isStr(x.q, 12)) at(`question ${k + 1} has no text`);

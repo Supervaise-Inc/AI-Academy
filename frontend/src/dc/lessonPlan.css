@@ -384,3 +384,16 @@
   .wp-prose .vz-mlp tr.bad td{color:var(--amber);font-weight:700}
   .wp-prose .vz-sel{display:inline-flex;gap:4px;align-items:center;font-family:inherit;font-size:12.5px;color:var(--text3);white-space:nowrap}
   .wp-prose .vz-sel select{font:inherit;font-size:12.5px;padding:2px 4px;border-radius:6px;border:1px solid var(--surface2-border);background:var(--surface2);color:var(--text)}
+
+  /* exam mode quiz */
+  .wp-prose .wg-rules{margin:0 0 12px;padding-left:20px;font-size:15px;line-height:1.6;color:var(--text2)}
+  .wp-prose .wg-rules li{margin:6px 0}
+  .wp-prose .wg-examhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:4px 0 10px;font-size:13.5px;color:var(--text3)}
+  .wp-prose .wg-clock{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--text);padding:4px 12px;border-radius:8px;background:var(--surface2);border:1px solid var(--surface2-border)}
+  .wp-prose .wg-clock.low{color:var(--red);border-color:var(--red-border);background:var(--red-soft-bg)}
+  .wp-prose .wg-nav{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+  .wp-prose .wg-nb{all:unset;box-sizing:border-box;min-width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid var(--surface2-border);background:var(--surface2);font-size:13px;font-weight:700;color:var(--text3);cursor:pointer;position:relative}
+  .wp-prose .wg-nb.done{background:var(--accent-soft-bg);border-color:var(--accent-soft-border);color:var(--text)}
+  .wp-prose .wg-nb.cur{outline:2px solid var(--accent);outline-offset:1px}
+  .wp-prose .wg-nb.flag::after{content:"";position:absolute;top:-3px;right:-3px;width:10px;height:10px;border-radius:99px;background:var(--amber)}
+  .wp-prose .wg-nb:focus-visible{outline:2px solid var(--accent);outline-offset:2px}

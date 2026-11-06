@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as session from './session.js';
 import { VIZ, gaussNoise, convolve } from './lessonViz.jsx';
 
@@ -17,7 +17,7 @@ export function Widget({ kind, spec, error, fig }) {
       </div>
     );
   }
-  if (kind === 'quiz') return <Quiz spec={spec} />;
+  if (kind === 'quiz') return spec.exam ? <ExamQuiz spec={spec} /> : <Quiz spec={spec} />;
   spec = { ...spec, fig };
   switch (spec.type) {
     case 'sorter':
@@ -388,6 +388,141 @@ function Quiz({ spec }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------- exam mode quiz: timed, no feedback until submit, free navigation, topic breakdown ----------
+function ExamQuiz({ spec }) {
+  const qs = spec.questions;
+  const pass = spec.passMark ?? 70;
+  const key = `quiz-${spec.id}`;
+  const total = (spec.minutes || 60) * 60;
+  const [phase, setPhase] = useState('intro');
+  const [i, setI] = useState(0);
+  const [ans, setAns] = useState(() => qs.map(() => null));
+  const [flag, setFlag] = useState(() => qs.map(() => false));
+  const [left, setLeft] = useState(total);
+  const [best, setBest] = useState(null);
+  const [confirm, setConfirm] = useState(false);
+  const ansRef = useRef(ans);
+  ansRef.current = ans;
+
+  useEffect(() => {
+    let alive = true;
+    session.loadPageState(key).then((d) => alive && d && setBest(d)).catch(() => {});
+    return () => { alive = false; };
+  }, [key]);
+
+  const finish = (a) => {
+    const score = a.filter((x, k) => x === qs[k].answer).length;
+    const prev = best || { best: 0, attempts: 0 };
+    const rec = { best: Math.max(prev.best, score), attempts: prev.attempts + 1, total: qs.length };
+    setBest(rec);
+    session.savePageState(key, rec).catch(() => {});
+    setPhase('done');
+  };
+  useEffect(() => {
+    if (phase !== 'run') return undefined;
+    const id = setInterval(() => setLeft((t) => t - 1), 1000);
+    return () => clearInterval(id);
+  }, [phase]);
+  useEffect(() => { if (phase === 'run' && left <= 0) finish(ansRef.current); }, [left, phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const mm = (t) => `${Math.floor(Math.max(0, t) / 60)}:${String(Math.max(0, t) % 60).padStart(2, '0')}`;
+  const start = () => { setAns(qs.map(() => null)); setFlag(qs.map(() => false)); setI(0); setLeft(total); setConfirm(false); setPhase('run'); };
+
+  if (phase === 'intro') {
+    return (
+      <div className="wg">
+        <Title fig={spec.fig}>{spec.title || 'Written exam'}</Title>
+        <ul className="wg-rules">
+          <li><strong>{qs.length}</strong> multiple-choice questions, <strong>{spec.minutes || 60} minutes</strong>. The clock starts when you press Start and the exam is submitted for you when it reaches zero.</li>
+          <li>You can move back and forth, change answers and flag questions to come back to. Nothing is marked until you submit.</li>
+          <li>Closed book: no notes, no other tabs, no AI assistants. A calculator or paper is fine.</li>
+          {(spec.rules || []).map((r, k) => <li key={k}>{r}</li>)}
+          <li>When you submit you see your score, a breakdown by topic and the explanation for every question you missed.</li>
+        </ul>
+        {best ? <p className="wg-note">Your best so far: {best.best}/{best.total || qs.length} in {best.attempts} attempt{best.attempts === 1 ? '' : 's'}.</p> : null}
+        <div className="wg-foot"><span /><button type="button" className="wg-btn" onClick={start}>Start the exam</button></div>
+      </div>
+    );
+  }
+
+  if (phase === 'done') {
+    const score = ans.filter((a, k) => a === qs[k].answer).length;
+    const pct = Math.round((score / qs.length) * 100);
+    const passed = pct >= pass;
+    const topics = {};
+    qs.forEach((x, k) => { const t = x.topic || 'General'; topics[t] = topics[t] || { n: 0, ok: 0 }; topics[t].n++; if (ans[k] === x.answer) topics[t].ok++; });
+    const unanswered = ans.filter((a) => a === null).length;
+    return (
+      <div className="wg">
+        <Title fig={spec.fig}>{spec.title || 'Written exam'}</Title>
+        <div className={'wg-score' + (passed ? ' ok' : '')} aria-live="polite">
+          <div className="wg-score-n">{score}/{qs.length}</div>
+          <div>
+            <strong>{passed ? 'Passed' : 'Not yet'}</strong> · {pct}% (pass mark {pass}%)
+            <div className="wg-note" style={{ margin: '2px 0 0' }}>{unanswered ? `${unanswered} unanswered. ` : ''}Time used {mm(total - Math.max(0, left))} of {spec.minutes || 60}:00.{best ? ` Your best: ${best.best}/${best.total || qs.length} in ${best.attempts} attempt${best.attempts === 1 ? '' : 's'}.` : ''}</div>
+          </div>
+        </div>
+        <p className="wg-p" style={{ margin: '4px 0 6px' }}><strong>By topic</strong></p>
+        <ul className="wg-bars">
+          {Object.entries(topics).map(([t, v]) => (
+            <li key={t} style={{ gridTemplateColumns: '170px minmax(0,1fr) 56px' }}><span className="wg-bar-l" style={{ fontFamily: 'inherit' }}>{t}</span><span className="wg-bar-track"><span className={'wg-bar-fill' + (v.ok / v.n < 0.6 ? ' warn' : '')} style={{ width: `${(v.ok / v.n) * 100}%` }} /></span><span className="wg-bar-p">{v.ok}/{v.n}</span></li>
+          ))}
+        </ul>
+        <p className="wg-note">Topics under 60% are shown in amber: start your revision there.</p>
+        <ol className="wg-review">
+          {qs.map((x, k) => {
+            const ok = ans[k] === x.answer;
+            return (
+              <li key={k} className={ok ? 'ok' : 'bad'}>
+                <div className="wg-rq">{x.q}</div>
+                <div className="wg-ra">{ok ? 'Correct: ' : ans[k] === null ? 'Not answered. Answer: ' : `You chose “${x.options[ans[k]]}”. Answer: `}<strong>{x.options[x.answer]}</strong></div>
+                {!ok ? <div className="wg-note" style={{ margin: '4px 0 0' }}>{x.why}</div> : null}
+              </li>
+            );
+          })}
+        </ol>
+        <div className="wg-foot"><span /><button type="button" className="wg-btn" onClick={() => setPhase('intro')}>Take it again</button></div>
+      </div>
+    );
+  }
+
+  const q = qs[i];
+  const answered = ans.filter((a) => a !== null).length;
+  return (
+    <div className="wg">
+      <Title fig={spec.fig}>{spec.title || 'Written exam'}</Title>
+      <div className="wg-examhead">
+        <span>Question {i + 1} of {qs.length} · {answered} answered{q.topic ? ` · ${q.topic}` : ''}</span>
+        <span className={'wg-clock' + (left < 300 ? ' low' : '')} role="timer" aria-label="Time left">{mm(left)}</span>
+      </div>
+      <div className="wg-nav" role="group" aria-label="Question navigator">
+        {qs.map((_, k) => <button key={k} type="button" className={'wg-nb' + (k === i ? ' cur' : '') + (ans[k] !== null ? ' done' : '') + (flag[k] ? ' flag' : '')} onClick={() => setI(k)} aria-label={`Question ${k + 1}${ans[k] !== null ? ', answered' : ''}${flag[k] ? ', flagged' : ''}`}>{k + 1}</button>)}
+      </div>
+      <fieldset className="wg-q">
+        <legend>{q.q}</legend>
+        {q.options.map((o, k) => (
+          <label key={k} className={'wg-opt' + (ans[i] === k ? ' sel' : '')}>
+            <input type="radio" name={`${key}-${i}`} checked={ans[i] === k} onChange={() => setAns((a) => a.map((x, j) => (j === i ? k : x)))} />
+            <span>{o}</span>
+          </label>
+        ))}
+      </fieldset>
+      <div className="wg-foot" style={{ flexWrap: 'wrap', gap: 8 }}>
+        <span style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="wg-btn ghost" onClick={() => setI(Math.max(0, i - 1))} disabled={i === 0}>Previous</button>
+          <button type="button" className={'wg-btn ghost'} aria-pressed={flag[i]} onClick={() => setFlag((f) => f.map((x, j) => (j === i ? !x : x)))}>{flag[i] ? 'Unflag' : 'Flag for review'}</button>
+          {ans[i] !== null ? <button type="button" className="wg-btn ghost" onClick={() => setAns((a) => a.map((x, j) => (j === i ? null : x)))}>Clear answer</button> : null}
+        </span>
+        <span style={{ display: 'flex', gap: 8 }}>
+          {i + 1 < qs.length ? <button type="button" className="wg-btn" onClick={() => setI(i + 1)}>Next</button> : null}
+          <button type="button" className={i + 1 < qs.length ? 'wg-btn ghost' : 'wg-btn'} onClick={() => (confirm || answered === qs.length ? finish(ans) : setConfirm(true))}>Submit exam</button>
+        </span>
+      </div>
+      {confirm ? <p className="wg-why bad" role="alert">You have {qs.length - answered} unanswered question{qs.length - answered === 1 ? '' : 's'}{flag.some(Boolean) ? ` and ${flag.filter(Boolean).length} flagged` : ''}. Press Submit exam again to hand in anyway, or keep going.</p> : null}
     </div>
   );
 }
