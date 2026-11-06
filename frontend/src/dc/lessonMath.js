@@ -47,6 +47,9 @@ export const FN = {
   tanh_grad: { f: (x) => 1 - Math.tanh(x) ** 2, label: 'Tanh gradient' },
   relu_grad: { f: (x) => (x > 0 ? 1 : 0), label: 'ReLU gradient' },
   decay: { f: (x, p) => p ** x, label: 'Gradient after n layers' },
+  neg_log: { f: (x) => -Math.log(Math.max(x, 1e-6)), label: 'Cross-entropy loss −ln p' },
+  squared: { f: (x) => x * x, label: 'Squared error' },
+  abs: { f: (x) => Math.abs(x), label: 'Absolute error' },
 };
 
 export const LOSS = {
@@ -188,4 +191,143 @@ export function filterSampling(probs, topK = 0, topP = 1) {
 export function chainStats(ps) {
   const logp = ps.reduce((a, p) => a + Math.log(p), 0);
   return { P: Math.exp(logp), bits: -logp / Math.LN2, perplexity: Math.exp(-logp / ps.length), running: ps.map((_, i) => ps.slice(0, i + 1).reduce((a, p) => a * p, 1)) };
+}
+
+// ---- a small fully connected network, forward pass ----
+export const ACT = { relu: (x) => Math.max(0, x), tanh: Math.tanh, sigmoid: (x) => 1 / (1 + Math.exp(-x)), linear: (x) => x, step: (x) => (x > 0 ? 1 : 0) };
+// layers: [2, 3, 1]; W[l][j][i] = weight from unit i of layer l to unit j of layer l+1; B[l][j] = bias of that unit.
+export function forwardNet(layers, W, B, inputs, act = 'relu', outAct = 'linear') {
+  const a = [inputs.slice()];
+  const z = [null];
+  for (let l = 0; l < layers.length - 1; l++) {
+    const f = ACT[l === layers.length - 2 ? outAct : act];
+    const zl = W[l].map((row, j) => row.reduce((s, w, i) => s + w * a[l][i], 0) + B[l][j]);
+    z.push(zl);
+    a.push(zl.map(f));
+  }
+  return { a, z };
+}
+export const countParams = (layers) => layers.slice(1).reduce((s, n, i) => s + layers[i] * n + n, 0);
+
+// ---- polynomial least squares (x should lie in [-1, 1]) ----
+export function polyFit(xs, ys, deg) {
+  const n = deg + 1;
+  const A = Array.from({ length: n }, () => Array(n).fill(0));
+  const b = Array(n).fill(0);
+  xs.forEach((x, k) => {
+    const pw = [1];
+    for (let i = 1; i < 2 * n; i++) pw.push(pw[i - 1] * x);
+    for (let i = 0; i < n; i++) {
+      b[i] += pw[i] * ys[k];
+      for (let j = 0; j < n; j++) A[i][j] += pw[i + j];
+    }
+  });
+  for (let i = 0; i < n; i++) A[i][i] += 1e-9;
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    [A[c], A[p]] = [A[p], A[c]];
+    [b[c], b[p]] = [b[p], b[c]];
+    for (let r = c + 1; r < n; r++) {
+      const f = A[r][c] / A[c][c];
+      for (let k = c; k < n; k++) A[r][k] -= f * A[c][k];
+      b[r] -= f * b[c];
+    }
+  }
+  const coef = Array(n).fill(0);
+  for (let i = n - 1; i >= 0; i--) {
+    let s = b[i];
+    for (let j = i + 1; j < n; j++) s -= A[i][j] * coef[j];
+    coef[i] = s / A[i][i];
+  }
+  return coef;
+}
+export const polyEval = (c, x) => c.reduceRight((a, ci) => a * x + ci, 0);
+export const polyMse = (c, pts) => pts.reduce((s, p) => s + (polyEval(c, p.x) - p.y) ** 2, 0) / pts.length;
+
+// ---- tiny trainable network: 2 inputs -> H tanh units -> 1 sigmoid output, binary cross-entropy, full-batch gradient descent ----
+export function makeDataset(name, n = 60, seed = 3) {
+  const r = mulberry32(seed);
+  const g = () => { const u = Math.max(r(), 1e-9); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r()); };
+  const X = [];
+  const Y = [];
+  for (let i = 0; i < n; i++) {
+    if (name === 'xor') {
+      const sx = i % 2 ? 1 : -1;
+      const sy = (i >> 1) % 2 ? 1 : -1;
+      X.push([sx + 0.28 * g(), sy + 0.28 * g()]);
+      Y.push(sx * sy > 0 ? 1 : 0);
+    } else if (name === 'circle') {
+      const inner = i % 2 === 0;
+      const rad = inner ? 0.55 * Math.sqrt(r()) : 1.0 + 0.5 * r();
+      const t = 2 * Math.PI * r();
+      X.push([rad * Math.cos(t) + 0.05 * g(), rad * Math.sin(t) + 0.05 * g()]);
+      Y.push(inner ? 1 : 0);
+    } else if (name === 'moons') {
+      const up = i % 2 === 0;
+      const t = Math.PI * r();
+      X.push(up ? [Math.cos(t) - 0.5 + 0.1 * g(), Math.sin(t) - 0.25 + 0.1 * g()] : [0.5 - Math.cos(t) + 0.1 * g(), 0.25 - Math.sin(t) + 0.1 * g()]);
+      Y.push(up ? 1 : 0);
+    } else {
+      const x = 2.4 * r() - 1.2;
+      const y = 2.4 * r() - 1.2;
+      X.push([x, y]);
+      Y.push(x + y + 0.15 * g() > 0 ? 1 : 0);
+    }
+  }
+  return { X, Y };
+}
+export function initNet(H, seed = 1) {
+  const r = mulberry32(seed * 7919 + H);
+  const g = () => { const u = Math.max(r(), 1e-9); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * r()); };
+  return { H, W1: Array.from({ length: H }, () => [0.7 * g(), 0.7 * g()]), b1: Array(H).fill(0), w2: Array.from({ length: H }, () => 0.7 * g()), b2: 0 };
+}
+export function predictNet(net, x) {
+  const h = net.W1.map((w, j) => Math.tanh(w[0] * x[0] + w[1] * x[1] + net.b1[j]));
+  const z = h.reduce((s, v, j) => s + v * net.w2[j], net.b2);
+  return 1 / (1 + Math.exp(-z));
+}
+export function netLossAcc(net, X, Y) {
+  let L = 0;
+  let ok = 0;
+  X.forEach((x, i) => {
+    const p = Math.min(Math.max(predictNet(net, x), 1e-9), 1 - 1e-9);
+    L += -(Y[i] * Math.log(p) + (1 - Y[i]) * Math.log(1 - p));
+    if ((p > 0.5 ? 1 : 0) === Y[i]) ok++;
+  });
+  return { loss: L / X.length, acc: ok / X.length };
+}
+export function trainEpoch(net, X, Y, lr) {
+  const N = X.length;
+  const H = net.H;
+  const gW1 = Array.from({ length: H }, () => [0, 0]);
+  const gb1 = Array(H).fill(0);
+  const gw2 = Array(H).fill(0);
+  let gb2 = 0;
+  X.forEach((x, i) => {
+    const h = net.W1.map((w, j) => Math.tanh(w[0] * x[0] + w[1] * x[1] + net.b1[j]));
+    const z = h.reduce((s, v, j) => s + v * net.w2[j], net.b2);
+    const dz2 = 1 / (1 + Math.exp(-z)) - Y[i];
+    gb2 += dz2;
+    for (let j = 0; j < H; j++) {
+      gw2[j] += dz2 * h[j];
+      const dz1 = dz2 * net.w2[j] * (1 - h[j] * h[j]);
+      gb1[j] += dz1;
+      gW1[j][0] += dz1 * x[0];
+      gW1[j][1] += dz1 * x[1];
+    }
+  });
+  for (let j = 0; j < H; j++) {
+    net.W1[j][0] -= (lr * gW1[j][0]) / N;
+    net.W1[j][1] -= (lr * gW1[j][1]) / N;
+    net.b1[j] -= (lr * gb1[j]) / N;
+    net.w2[j] -= (lr * gw2[j]) / N;
+  }
+  net.b2 -= (lr * gb2) / N;
+}
+export function trainNet({ dataset = 'xor', hidden = 4, lr = 0.5, epochs = 1000, seed = 1, n = 60 }) {
+  const { X, Y } = makeDataset(dataset, n);
+  const net = initNet(hidden, seed);
+  for (let e = 0; e < epochs; e++) trainEpoch(net, X, Y, lr);
+  return netLossAcc(net, X, Y);
 }

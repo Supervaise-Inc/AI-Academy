@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -84,8 +84,9 @@ function Slider({ label, min, max, step, value, onChange, show }) {
 }
 
 function Calc({ spec, fig }) {
-  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : 24);
-  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : 0);
+  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : 24);
+  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : 0);
+  const [c3, setC3] = useState(15);
   let body = null;
   if (spec.kind === 'fc_vs_conv') {
     const cin = spec.channels || 1;
@@ -138,6 +139,28 @@ function Calc({ spec, fig }) {
           </li>
         </ul>
         <p className="wg-note">Weights only: parameters × bytes per parameter (GB = 10⁹ bytes). “Training, Adam” uses the common mixed-precision estimate of 16 bytes per parameter (weights, gradients, FP32 master copy and two Adam moments). Activations, the KV cache and framework overhead come on top.</p>
+      </>
+    );
+  } else if (spec.kind === 'split') {
+    const tr = Math.round((a * b) / 100);
+    const va = Math.round((a * c3) / 100);
+    const te = a - tr - va;
+    body = (
+      <>
+        <Slider label="Examples in the whole dataset" min={50} max={100000} step={50} value={a} onChange={setA} show={(v) => v.toLocaleString()} />
+        <Slider label="Training share" min={50} max={90} step={5} value={b} onChange={(v) => { setB(v); if (v + c3 > 95) setC3(95 - v); }} show={(v) => `${v}%`} />
+        <Slider label="Validation share" min={0} max={Math.min(30, 95 - b)} step={5} value={Math.min(c3, 95 - b)} onChange={setC3} show={(v) => `${v}%`} />
+        <div className="vz-split" role="img" aria-label={`Training ${tr}, validation ${va}, test ${te}`}>
+          <span style={{ width: `${(tr / a) * 100}%` }} className="tr">train</span>
+          {va > 0 ? <span style={{ width: `${(va / a) * 100}%` }} className="va">val</span> : null}
+          <span style={{ width: `${(te / a) * 100}%` }} className="te">test</span>
+        </div>
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Training set</span><span className="vz-big">{tr.toLocaleString()}</span><span className="wg-note">the model learns from these</span></div>
+          <div><span className="wg-k">Validation set</span><span className="vz-big">{va.toLocaleString()}</span><span className="wg-note">you tune choices on these</span></div>
+          <div className="out"><span className="wg-k">Test set</span><span className="vz-big">{te.toLocaleString()}</span><span className="wg-note">touched once, at the very end</span></div>
+        </div>
+        <p className="wg-note">The test set must stay untouched until the end; if you keep adjusting the model to do well on it, it stops being an honest exam.</p>
       </>
     );
   } else if (spec.kind === 'scaling') {
@@ -938,4 +961,204 @@ function LogBars({ spec, fig }) {
   );
 }
 
-export const VIZ = { nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- network (a small neural network with a live forward pass)
+function Network({ spec, fig }) {
+  const L = spec.layers;
+  const [W, setW] = useState(() => spec.weights.map((m) => m.map((r) => r.slice())));
+  const [B, setB] = useState(() => spec.biases.map((r) => r.slice()));
+  const [x, setX] = useState(spec.inputs.slice());
+  const [act, setAct] = useState(spec.activation || 'relu');
+  const [sel, setSel] = useState([L.length - 1, 0]);
+  const out = spec.outputActivation || 'linear';
+  const { a, z } = useMemo(() => forwardNet(L, W, B, x, act, out), [L, W, B, x, act, out]);
+  const colW = 640 / L.length;
+  const pos = (l, j) => [colW * l + colW / 2 - 40 + 40, 30 + ((j + 0.5) * 230) / L[l]];
+  const [sl, sj] = sel;
+  const incoming = sl > 0 ? W[sl - 1][sj] : null;
+  const setWeight = (i, v) => setW((w) => w.map((m, l) => (l === sl - 1 ? m.map((r, j) => (j === sj ? r.map((q, ii) => (ii === i ? v : q)) : r)) : m)));
+  const setBias = (v) => setB((bb) => bb.map((r, l) => (l === sl - 1 ? r.map((q, j) => (j === sj ? v : q)) : r)));
+  const fmt = (n) => (Math.abs(n) < 1e-9 ? '0' : Number(n.toFixed(2)).toString());
+  const reset = () => { setW(spec.weights.map((m) => m.map((r) => r.slice()))); setB(spec.biases.map((r) => r.slice())); };
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-row" style={{ marginBottom: 10 }}>
+        {(spec.presets || []).map((p) => <button key={p.name} type="button" className={'wg-chip' + (p.inputs.join() === x.join() ? ' on' : '')} onClick={() => setX(p.inputs.slice())}>{p.name}</button>)}
+        {['relu', 'tanh', 'sigmoid', 'linear'].map((k) => <button key={k} type="button" className={'wg-chip' + (act === k ? ' on' : '')} aria-pressed={act === k} onClick={() => setAct(k)}>hidden: {k}</button>)}
+      </div>
+      <svg viewBox="0 0 640 290" className="vz-netsvg" role="img" aria-label={`Neural network with layers ${L.join(', ')}. Output ${a[a.length - 1].map((v) => v.toFixed(2)).join(', ')}.`}>
+        {W.map((m, l) => m.map((row, j) => row.map((w, i) => {
+          const [x1, y1] = pos(l, i);
+          const [x2, y2] = pos(l + 1, j);
+          const hot = sl === l + 1 && sj === j;
+          return (
+            <g key={`${l}-${j}-${i}`}>
+              <line x1={x1} y1={y1} x2={x2} y2={y2} stroke={w >= 0 ? 'var(--accent)' : 'var(--cyan)'} strokeWidth={Math.min(7, 0.8 + Math.abs(w) * 2)} opacity={hot ? 1 : 0.55} />
+              {spec.showWeights !== false && L[l] * L[l + 1] <= 9 ? <text x={(x1 + x2) / 2 + (i - (row.length - 1) / 2) * 4} y={(y1 + y2) / 2 - 3 + (i - (row.length - 1) / 2) * 7} className="vz-tick" textAnchor="middle" style={{ fontSize: 10 }}>{fmt(w)}</text> : null}
+            </g>
+          );
+        })))}
+        {L.map((n, l) => Array.from({ length: n }, (_, j) => {
+          const [cx, cy] = pos(l, j);
+          const v = a[l][j];
+          const on = sl === l && sj === j;
+          return (
+            <g key={`${l}-${j}`} onClick={() => setSel([l, j])} style={{ cursor: 'pointer' }} role="button" tabIndex={0} aria-label={`Unit ${j + 1} of layer ${l + 1}, value ${fmt(v)}`} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSel([l, j]); }}>
+              <circle cx={cx} cy={cy} r="24" fill={`color-mix(in srgb, var(--accent) ${Math.round(Math.min(1, Math.abs(v)) * 60)}%, var(--card-bg))`} stroke={on ? 'var(--text)' : 'var(--surface2-border)'} strokeWidth={on ? 3 : 1.5} />
+              <text x={cx} y={cy + 4} textAnchor="middle" className="vz-lab" style={{ fontSize: 12.5 }}>{fmt(v)}</text>
+              {l === 0 && spec.inputLabels ? <text x={cx - 38} y={cy + 4} textAnchor="end" className="vz-tick">{spec.inputLabels[j]}</text> : null}
+              {l === L.length - 1 && spec.outputLabels ? <text x={cx + 38} y={cy + 4} className="vz-tick">{spec.outputLabels[j]}</text> : null}
+            </g>
+          );
+        }))}
+        {L.map((n, l) => <text key={l} x={colW * l + colW / 2} y="284" textAnchor="middle" className="vz-tick">{l === 0 ? 'input' : l === L.length - 1 ? 'output' : `hidden ${l}`}</text>)}
+      </svg>
+      <div className="vz-two">
+        <div>
+          <p className="wg-p" style={{ margin: '0 0 6px' }}><strong>Inputs</strong> (drag to change)</p>
+          {x.map((v, i) => <Slider key={i} label={spec.inputLabels ? spec.inputLabels[i] : `x${i + 1}`} min={-2} max={2} step={0.1} value={v} onChange={(q) => setX((xx) => xx.map((o, k) => (k === i ? q : o)))} show={(q) => q.toFixed(1)} />)}
+          <p className="wg-note">Parameters in this network: <strong>{countParams(L)}</strong> = {L.slice(1).map((n, i) => `${L[i]}×${n}+${n}`).join(' + ')}.</p>
+        </div>
+        <div aria-live="polite">
+          {sl === 0 ? <p className="wg-p"><strong>Input unit {sj + 1}</strong>: its value is the number you set with the slider: {fmt(x[sj])}.</p> : (
+            <>
+              <p className="wg-p" style={{ margin: '0 0 6px' }}><strong>Unit {sj + 1} of {sl === L.length - 1 ? 'the output layer' : `hidden layer ${sl}`}</strong></p>
+              <p className="vz-calc">z = {incoming.map((w, i) => `${fmt(w)}×${fmt(a[sl - 1][i])}`).join(' + ')} + {fmt(B[sl - 1][sj])} = {fmt(z[sl][sj])}</p>
+              <p className="vz-calc">a = {sl === L.length - 1 ? out : act}({fmt(z[sl][sj])}) = <strong>{fmt(a[sl][sj])}</strong></p>
+              {spec.editable !== false ? (
+                <>
+                  {incoming.map((w, i) => <Slider key={i} label={`weight from unit ${i + 1}`} min={-3} max={3} step={0.1} value={w} onChange={(q) => setWeight(i, q)} show={(q) => q.toFixed(1)} />)}
+                  <Slider label="bias" min={-3} max={3} step={0.1} value={B[sl - 1][sj]} onChange={setBias} show={(q) => q.toFixed(1)} />
+                  <button type="button" className="wg-btn ghost" onClick={reset}>Reset weights</button>
+                </>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+      <p className="wg-note">Select any circle to see its arithmetic. Green lines are positive weights, blue are negative; thicker means larger. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- fit (underfitting and overfitting with a polynomial)
+function Fit({ spec, fig }) {
+  const [deg, setDeg] = useState(spec.degree ?? 1);
+  const maxD = spec.maxDegree || 9;
+  const fits = useMemo(() => Array.from({ length: maxD + 1 }, (_, d) => { const c = polyFit(spec.train.map((p) => p.x), spec.train.map((p) => p.y), d); return { c, tr: polyMse(c, spec.train), te: polyMse(c, spec.test) }; }), [spec, maxD]);
+  const best = fits.reduce((bi, f, i) => (f.te < fits[bi].te ? i : bi), 0);
+  const cur = fits[deg];
+  const xs = [...spec.train, ...spec.test].map((p) => p.x), ys = [...spec.train, ...spec.test].map((p) => p.y);
+  const x0 = Math.min(...xs, -1), x1 = Math.max(...xs, 1);
+  const y0 = Math.min(...ys) - 0.5, y1 = Math.max(...ys) + 0.5;
+  const W = 560, H = 250, pad = 28;
+  const sx = (x) => pad + ((x - x0) / (x1 - x0)) * (W - 2 * pad);
+  const sy = (y) => H - pad - ((Math.max(y0 - 1, Math.min(y1 + 1, y)) - y0) / (y1 - y0)) * (H - 2 * pad);
+  const curve = Array.from({ length: 121 }, (_, i) => { const x = x0 + ((x1 - x0) * i) / 120; return `${i ? 'L' : 'M'}${sx(x).toFixed(1)} ${sy(polyEval(cur.c, x)).toFixed(1)}`; }).join(' ');
+  const mx = Math.max(cur.te, cur.tr, 1e-6);
+  const verdict = deg < best ? 'Underfitting: the curve is too simple to follow the pattern.' : deg === best ? 'A good fit: it follows the pattern and also does well on new points.' : 'Overfitting: it chases the noise in the training points, so it does worse on new points.';
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Model complexity: polynomial degree" min={0} max={maxD} step={1} value={deg} onChange={setDeg} />
+      <svg viewBox={`0 0 ${W} ${H}`} className="vz-plot" role="img" aria-label={`A degree ${deg} curve fitted to the training points. Training error ${cur.tr.toFixed(3)}, test error ${cur.te.toFixed(3)}.`}>
+        <line x1={pad} x2={W - pad} y1={sy(0)} y2={sy(0)} className="vz-grid" />
+        <path d={curve} fill="none" stroke="var(--accent)" strokeWidth="2.6" />
+        {spec.train.map((p, i) => <circle key={'t' + i} cx={sx(p.x)} cy={sy(p.y)} r="5" fill="var(--text)" />)}
+        {spec.test.map((p, i) => <circle key={'e' + i} cx={sx(p.x)} cy={sy(p.y)} r="5" fill="none" stroke="var(--amber)" strokeWidth="2.2" />)}
+      </svg>
+      <div className="wg-row vz-legend"><span className="vz-key"><i style={{ background: 'var(--text)', height: 10, width: 10, borderRadius: 99 }} />training points (the model sees these)</span><span className="vz-key"><i style={{ border: '2px solid var(--amber)', height: 10, width: 10, borderRadius: 99, background: 'none' }} />test points (hidden from the model)</span></div>
+      <ul className="wg-bars" style={{ marginTop: 10 }}>
+        <li style={{ gridTemplateColumns: '120px minmax(0,1fr) 70px' }}><span className="wg-bar-l" style={{ fontFamily: 'inherit' }}>Training error</span><span className="wg-bar-track"><span className="wg-bar-fill" style={{ width: `${(cur.tr / mx) * 100}%` }} /></span><span className="wg-bar-p">{cur.tr.toFixed(3)}</span></li>
+        <li style={{ gridTemplateColumns: '120px minmax(0,1fr) 70px' }}><span className="wg-bar-l" style={{ fontFamily: 'inherit' }}>Test error</span><span className="wg-bar-track"><span className="wg-bar-fill warn" style={{ width: `${(cur.te / mx) * 100}%` }} /></span><span className="wg-bar-p">{cur.te.toFixed(3)}</span></li>
+      </ul>
+      <p className="wg-p" aria-live="polite" style={{ margin: '8px 0 0' }}><strong>Degree {deg}.</strong> {verdict}</p>
+      <p className="wg-note">Error is the mean squared error. The lowest test error here is at degree {best}. {spec.note || 'The points are authored for teaching.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- trainer (a tiny network learning in your browser)
+const SETS = ['xor', 'circle', 'moons', 'line'];
+function Trainer({ spec, fig }) {
+  const [ds, setDs] = useState(spec.dataset || 'xor');
+  const [H, setH] = useState(spec.hidden ?? 4);
+  const [lr, setLr] = useState(spec.lr ?? 0.5);
+  const [run, setRun] = useState(false);
+  const [, force] = useState(0);
+  const data = useMemo(() => makeDataset(ds), [ds]);
+  const st = useRef({ net: initNet(H, 1), epoch: 0, losses: [] });
+  const reset = (h = H) => { st.current = { net: initNet(h, 1), epoch: 0, losses: [] }; force((n) => n + 1); };
+  useEffect(() => { reset(H); }, [ds, H]); // eslint-disable-line react-hooks/exhaustive-deps
+  const lrRef = useRef(lr); lrRef.current = lr;
+  const step = (k) => {
+    const s = st.current;
+    for (let i = 0; i < k; i++) { trainEpoch(s.net, data.X, data.Y, lrRef.current); s.epoch++; }
+    s.losses.push(netLossAcc(s.net, data.X, data.Y).loss);
+    if (s.losses.length > 300) s.losses = s.losses.filter((_, i) => i % 2 === 0);
+    force((n) => n + 1);
+  };
+  useEffect(() => { if (!run) return undefined; const id = setInterval(() => step(10), 40); return () => clearInterval(id); }, [run, ds]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { net, epoch, losses } = st.current;
+  const { loss, acc } = netLossAcc(net, data.X, data.Y);
+  const S = 300, G = 30;
+  const toPx = (v) => ((v + 2) / 4) * S;
+  const cells = [];
+  for (let i = 0; i < G; i++) for (let j = 0; j < G; j++) { const gx = -2 + ((i + 0.5) * 4) / G, gy = 2 - ((j + 0.5) * 4) / G; cells.push([i, j, predictNet(net, [gx, gy])]); }
+  const lmax = Math.max(...losses, 0.7);
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-tabs" role="tablist">{SETS.map((k) => <button key={k} type="button" role="tab" aria-selected={ds === k} className={'wg-tab' + (ds === k ? ' on' : '')} onClick={() => { setRun(false); setDs(k); }}>{k}</button>)}</div>
+      <div className="vz-two">
+        <svg viewBox={`0 0 ${S} ${S}`} className="vz-sq" role="img" aria-label={`Decision regions of the network on the ${ds} data. Accuracy ${Math.round(acc * 100)} percent.`}>
+          {cells.map(([i, j, p]) => <rect key={i + '-' + j} x={(i * S) / G} y={(j * S) / G} width={S / G + 0.5} height={S / G + 0.5} fill={`color-mix(in srgb, var(--accent) ${Math.round(p * 70)}%, var(--cyan-soft-bg))`} />)}
+          {data.X.map((p, i) => (data.Y[i] ? <circle key={i} cx={toPx(p[0])} cy={S - toPx(p[1])} r="5" fill="var(--accent)" stroke="var(--text)" strokeWidth="1.5" /> : <rect key={i} x={toPx(p[0]) - 4.5} y={S - toPx(p[1]) - 4.5} width="9" height="9" fill="var(--cyan)" stroke="var(--text)" strokeWidth="1.5" />))}
+        </svg>
+        <div>
+          <Slider label="Hidden units" min={1} max={8} step={1} value={H} onChange={(v) => { setRun(false); setH(v); }} />
+          <Slider label="Learning rate" min={0.05} max={3} step={0.05} value={lr} onChange={setLr} show={(v) => v.toFixed(2)} />
+          <p className="wg-p" aria-live="polite" style={{ margin: '6px 0' }}>Epoch <strong>{epoch}</strong> · loss <strong>{loss.toFixed(3)}</strong> · accuracy <strong>{Math.round(acc * 100)}%</strong></p>
+          <svg viewBox="0 0 300 80" className="vz-plot" role="img" aria-label="Training loss over time" style={{ maxWidth: 320 }}>
+            <line x1="4" x2="296" y1="76" y2="76" className="vz-grid" />
+            <path d={losses.map((l, i) => `${i ? 'L' : 'M'}${4 + (i / Math.max(1, losses.length - 1)) * 292} ${76 - (l / lmax) * 70}`).join(' ')} fill="none" stroke="var(--accent)" strokeWidth="2.2" />
+          </svg>
+          <div className="wg-row">
+            <button type="button" className="wg-btn" onClick={() => setRun((r) => !r)}>{run ? 'Pause' : 'Train'}</button>
+            <button type="button" className="wg-btn ghost" onClick={() => step(1)}>1 epoch</button>
+            <button type="button" className="wg-btn ghost" onClick={() => { setRun(false); reset(); }}>Reset</button>
+          </div>
+        </div>
+      </div>
+      <p className="wg-note">Circles are class 1, squares are class 0. The background shows what the network predicts everywhere: green means “class 1”. The network is 2 inputs → hidden tanh units → 1 sigmoid output, trained by full-batch gradient descent on the cross-entropy loss, all running in your browser. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- mlp (count the parameters of a stack of layers)
+function Mlp({ spec, fig }) {
+  const [hid, setHid] = useState(spec.layers.slice(1, -1));
+  const layers = [spec.layers[0], ...hid, spec.layers[spec.layers.length - 1]];
+  const rows = layers.slice(1).map((n, i) => ({ from: layers[i], to: n, w: layers[i] * n, b: n }));
+  const total = countParams(layers);
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      {hid.map((n, i) => <Slider key={i} label={`Hidden layer ${i + 1} width`} min={2} max={1024} step={2} value={n} onChange={(v) => setHid((h) => h.map((o, k) => (k === i ? v : o)))} />)}
+      <table className="vz-mlp" aria-label="Parameters per layer">
+        <thead><tr><th>Layer</th><th>Shape</th><th>Weights in × out</th><th>Biases</th><th>Parameters</th></tr></thead>
+        <tbody>
+          {rows.map((r, i) => <tr key={i}><td>{i + 1}</td><td>{r.from} → {r.to}</td><td>{r.from} × {r.to} = {r.w.toLocaleString()}</td><td>{r.b}</td><td><strong>{(r.w + r.b).toLocaleString()}</strong></td></tr>)}
+        </tbody>
+      </table>
+      <div className="vz-cmp" style={{ marginTop: 12 }}><div className="out"><span className="wg-k">Total trainable parameters</span><span className="vz-big">{total.toLocaleString()}</span><span className="wg-note">{(total * 4 / 1e6).toFixed(2)} MB as 32-bit numbers</span></div><div><span className="wg-k">Rule</span><span className="wg-v">each layer has (inputs × outputs) weights plus one bias per output</span></div></div>
+      {spec.note ? <p className="wg-note">{spec.note}</p> : null}
+    </div>
+  );
+}
+
+export const VIZ = { network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

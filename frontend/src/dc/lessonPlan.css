@@ -364,3 +364,15 @@
   .wp-prose .vz-lb-l em{font-style:normal;color:var(--text3);font-weight:500;font-size:12.5px}
   .wp-prose .vz-lb-v{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text2);text-align:right}
   @media (max-width:640px){.wp-prose .vz-lb-b{grid-template-columns:110px minmax(0,1fr) 64px}}
+
+  /* network / fit / trainer / mlp / split */
+  .wp-prose .vz-netsvg{display:block;width:100%;max-width:680px;height:auto;margin:8px 0;overflow:visible}
+  .wp-prose .vz-split{display:flex;height:34px;border-radius:10px;overflow:hidden;margin:12px 0;border:1px solid var(--divider)}
+  .wp-prose .vz-split span{display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:var(--text);min-width:0;overflow:hidden}
+  .wp-prose .vz-split .tr{background:var(--accent-soft-bg)}
+  .wp-prose .vz-split .va{background:var(--amber-soft-bg)}
+  .wp-prose .vz-split .te{background:var(--cyan-soft-bg)}
+  .wp-prose .vz-mlp{width:100%;border-collapse:collapse;font-size:var(--fs-detail);margin:10px 0}
+  .wp-prose .vz-mlp th{text-align:left;font-size:12.5px;font-weight:600;color:var(--text3);padding:6px 10px;border-bottom:1px solid var(--divider)}
+  .wp-prose .vz-mlp td{padding:6px 10px;border-bottom:1px solid var(--divider);color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:13.5px}
+  .wp-prose .vz-mlp td:first-child{font-family:inherit}

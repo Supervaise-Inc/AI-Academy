@@ -190,6 +190,21 @@ Use it whenever a lesson introduces a formula: every symbol is a `{t, id}` term 
 `{ "type": "chain", "title": "…", "sentences": [ { "label": "Sensible", "tokens": [ { "t": "The", "p": 0.2 }, … ≥ 3 ], "note": "optional" }, { "label": "Scrambled", "tokens": […] } ] }`. Shows the running product, the whole-sentence probability and the perplexity for each sentence. Probabilities are illustrative (0 < p ≤ 1): say so in `note`.
 ### `logbars` (sizes on a log scale, e.g. model parameters)
 `{ "type": "logbars", "title": "…", "unit": "parameters", "items": [ { "label": "GPT-2", "year": "2019", "value": 1.5e9, "note": "…" }, … ≥ 4 ] }`. Only use numbers you are sure of.
+
+### `network` (a small neural network with a live forward pass)
+`{ "type": "network", "title": "…", "intro": "…", "layers": [2,3,1], "weights": [ [[w for each input] per unit of layer 1], [[…] per unit of layer 2] ], "biases": [[b per unit of layer 1],[b of layer 2]], "inputs": [1,0], "activation": "relu|tanh|sigmoid|linear", "outputActivation": "linear|sigmoid|tanh|relu", "inputLabels": ["x1","x2"], "outputLabels": ["score"], "presets": [ { "name": "1, 0", "inputs": [1,0] } ], "editable": true, "note": "…", "checks": [ { "inputs": [1,1], "output": [0.0] } ] }`. 3–5 layers, 1–5 units per layer. `weights[l][j][i]` is the weight from unit `i` of layer `l` to unit `j` of layer `l+1`. The student picks any circle and sees `z = w·a + b` and `a = φ(z)` with the actual numbers, can change inputs and weights, and switch the hidden activation. The validator recomputes every entry of `checks` (output to ±0.01) — put in at least two so your stated numbers are verified.
+
+### `fit` (underfitting and overfitting)
+`{ "type": "fit", "title": "…", "intro": "…", "degree": 1, "maxDegree": 9, "train": [ {"x":-1,"y":-0.8}, … 6–14 points ], "test": [ … 4–10 points ], "note": "…" }`. A slider sets the polynomial degree 0–9; the curve is fitted by least squares to the training points and the figure shows training and test mean squared error. Authored data should follow a smooth curve plus noise so that test error is lowest at a middle degree and rises at high degree. Never state numbers from this figure in the text unless you computed them with `polyFit`/`polyMse` from `frontend/src/dc/lessonMath.js`.
+
+### `trainer` (a tiny network learning in the browser)
+`{ "type": "trainer", "title": "…", "intro": "…", "dataset": "xor|circle|moons|line", "hidden": 4, "lr": 0.5, "note": "…", "checks": [ { "dataset": "xor", "hidden": 1, "lr": 0.5, "epochs": 1000, "maxAcc": 0.8 }, { "dataset": "xor", "hidden": 4, "lr": 3, "epochs": 1000, "minAcc": 0.95 } ] }`. 2 inputs → N tanh units → 1 sigmoid output, full-batch gradient descent. The student picks the data set, hidden units 1–8 and learning rate, and presses Train. `checks` are verified by the validator with the same maths. Measured values: XOR with 1 hidden unit tops out at 0.75 accuracy, with 2 or more reaches 1.0 (lr 0.5, 1000 epochs); circle and moons reach 1.0 with 4 hidden units.
+
+### `mlp` (count the parameters of a stack of layers)
+`{ "type": "mlp", "title": "…", "intro": "…", "layers": [784,128,10], "note": "…" }`. Sliders change the hidden widths; a table shows weights (in × out), biases and parameters per layer and the total. Measured: [784,128,10] has 101,770 parameters.
+
+### `calc` kind `split`
+`{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`
 ### `patch` (image → patches → tokens)
 `{ "type": "patch", "title": "…", "image": [ [0,0,9,9,…], … ], "channels": 1, "patchSizes": [2,4,8] }` with a square matrix of integers 0–9 (e.g. 8×8 or 16×16).

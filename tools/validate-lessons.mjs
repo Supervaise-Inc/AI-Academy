@@ -127,7 +127,33 @@ function check(file) {
         if ((s.steps || []).length < 3) at('needs ≥3 steps');
         (s.steps || []).forEach((st, k) => { if (!isStr(st.title) || !isStr(st.body, 30)) at(`step ${k + 1} needs title and body`); (st.active || []).forEach((a) => !ids.includes(a) && at(`step ${k + 1} activates unknown node "${a}"`)); if (!(st.active || []).length) at(`step ${k + 1} needs an active list`); });
       },
-      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory or scaling'); },
+      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling or split'); },
+      network: () => {
+        const L = s.layers;
+        if (!Array.isArray(L) || L.length < 3 || L.some((n) => !(n >= 1 && n <= 5))) return at('layers must be ≥3 numbers, each 1..5');
+        if (!Array.isArray(s.weights) || s.weights.length !== L.length - 1 || s.weights.some((m, l) => m.length !== L[l + 1] || m.some((r) => r.length !== L[l]))) return at('weights must be [layer][to][from] matching layers');
+        if (!Array.isArray(s.biases) || s.biases.length !== L.length - 1 || s.biases.some((r, l) => r.length !== L[l + 1])) return at('biases must be [layer][unit] matching layers');
+        if (!Array.isArray(s.inputs) || s.inputs.length !== L[0]) return at('inputs length must equal layers[0]');
+        (s.checks || []).forEach((c, k) => {
+          const { a } = M.forwardNet(L, s.weights, s.biases, c.inputs, s.activation || 'relu', s.outputActivation || 'linear');
+          const o = a[a.length - 1];
+          if (o.some((v, i) => Math.abs(v - c.output[i]) > 0.01)) at(`check ${k + 1}: expected ${c.output}, computed ${o.map((v) => v.toFixed(3))}`);
+        });
+      },
+      fit: () => {
+        const ok = (a) => Array.isArray(a) && a.length >= 4 && a.every((p) => typeof p.x === 'number' && typeof p.y === 'number');
+        if (!ok(s.train) || !ok(s.test)) at('train and test need ≥4 points {x, y}');
+        else if (s.train.length > 30) at('train has too many points');
+      },
+      trainer: () => {
+        if (s.dataset && !['xor', 'circle', 'moons', 'line'].includes(s.dataset)) at('dataset must be xor, circle, moons or line');
+        (s.checks || []).forEach((c, k) => {
+          const r = M.trainNet({ dataset: c.dataset, hidden: c.hidden, lr: c.lr, epochs: c.epochs });
+          if (c.minAcc != null && r.acc < c.minAcc) at(`check ${k + 1}: accuracy ${r.acc.toFixed(3)} < ${c.minAcc}`);
+          if (c.maxAcc != null && r.acc > c.maxAcc) at(`check ${k + 1}: accuracy ${r.acc.toFixed(3)} > ${c.maxAcc}`);
+        });
+      },
+      mlp: () => { if (!Array.isArray(s.layers) || s.layers.length < 3 || s.layers.some((n) => !(n >= 1))) at('layers must be ≥3 positive numbers'); },
       curve: () => {
         if (!(s.series || []).length || s.series.some((x) => !M.FN[x.fn])) at(`series fn must be one of ${Object.keys(M.FN).join(', ')}`);
         if (!Array.isArray(s.xRange) || s.xRange.length !== 2 || s.xRange[0] >= s.xRange[1]) at('xRange must be [min, max]');
