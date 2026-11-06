@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT, schedule, diffSample1d, unetShapes } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT, schedule, diffSample1d, unetShapes, prefProb, prefLoss, klObjective, klOptimum, softmaxArr, svdSmall, lowRankApprox, ftMemory } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -85,9 +85,9 @@ function Slider({ label, min, max, step, value, onChange, show }) {
 }
 
 function Calc({ spec, fig }) {
-  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : spec.kind === 'gan_loss' ? -3 : 24);
-  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : spec.kind === 'gan_loss' ? 3 : 0);
-  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : 15);
+  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : spec.kind === 'gan_loss' ? -3 : spec.kind === 'ft_memory' ? 7 : 24);
+  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : spec.kind === 'gan_loss' ? 3 : spec.kind === 'ft_memory' ? 1 : 0);
+  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : spec.kind === 'ft_memory' ? 1 : 15);
   let body = null;
   if (spec.kind === 'fc_vs_conv') {
     const cin = spec.channels || 1;
@@ -140,6 +140,27 @@ function Calc({ spec, fig }) {
           </li>
         </ul>
         <p className="wg-note">Weights only: parameters × bytes per parameter (GB = 10⁹ bytes). “Training, Adam” uses the common mixed-precision estimate of 16 bytes per parameter (weights, gradients, FP32 master copy and two Adam moments). Activations, the KV cache and framework overhead come on top.</p>
+      </>
+    );
+  } else if (spec.kind === 'ft_memory') {
+    const methods = [['full', 'Full fine-tuning'], ['lora', 'LoRA (16-bit base)'], ['qlora', 'QLoRA (4-bit base)']];
+    const mi = Math.max(0, Math.min(2, b - 1));
+    const m = methods[mi][0];
+    const frac = c3 / 100;
+    const R = ftMemory({ N: a, method: m, trainable: frac });
+    const gb = (x) => (x / 1e9 >= 100 ? (x / 1e9).toFixed(0) : (x / 1e9).toFixed(1)) + ' GB';
+    body = (
+      <>
+        <Slider label="Model size N (billions of parameters)" min={0.1} max={70} step={0.1} value={a} onChange={setA} show={(q) => `${q.toFixed(1)} B`} />
+        <div className="wg-row" style={{ gap: 8, margin: '6px 0 10px' }}>{methods.map(([k, t], i) => <button key={k} type="button" className={'wg-chip' + (mi === i ? ' on' : '')} aria-pressed={mi === i} onClick={() => setB(i + 1)}>{t}</button>)}</div>
+        {m !== 'full' ? <Slider label="Trainable share of the parameters (LoRA adapters)" min={0.1} max={5} step={0.1} value={Math.min(c3, 5)} onChange={setC3} show={(q) => `${q.toFixed(1)} %`} /> : null}
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Weights</span><span className="vz-big">{gb(R.weights)}</span><span className="wg-note">{m === 'qlora' ? '0.5 byte each' : '2 bytes each (16-bit)'}</span></div>
+          <div><span className="wg-k">Gradients</span><span className="vz-big">{gb(R.grads)}</span><span className="wg-note">only for trained numbers</span></div>
+          <div><span className="wg-k">Adam state + master copy</span><span className="vz-big">{gb(R.optimizer)}</span><span className="wg-note">12 bytes per trained number</span></div>
+          <div className="out"><span className="wg-k">Total (without activations)</span><span className="vz-big">{gb(R.total)}</span><span className="wg-note">{m === 'full' ? '16 bytes per parameter' : `${(R.total / (a * 1e9)).toFixed(2)} bytes per parameter`}</span></div>
+        </div>
+        <p className="wg-note">Activations (the memory used by a forward pass: grows with batch size and sequence length) come on top. The 16 bytes of full fine-tuning are 2 (16-bit weights) + 2 (gradients) + 4 (32-bit master copy) + 8 (Adam's two moments). {spec.note || ''}</p>
       </>
     );
   } else if (spec.kind === 'gan_loss') {
@@ -2345,4 +2366,116 @@ function Unet({ spec, fig }) {
   );
 }
 
-export const VIZ = { schedule: Schedule, sampler1d: Sampler1d, unet: Unet, ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- prefpair (reward model: which answer do people prefer?)
+function PrefPair({ spec, fig }) {
+  const [scores, setScores] = useState(spec.pairs.map((p) => [p.chosenScore ?? 0, p.rejectedScore ?? 0]));
+  const f = (q) => Number(q.toFixed(3)).toString();
+  const rows = scores.map(([rw, rl]) => ({ p: prefProb(rw, rl), l: prefLoss(rw, rl), ok: rw > rl }));
+  const mean = rows.reduce((s, r) => s + r.l, 0) / rows.length;
+  const acc = rows.filter((r) => r.ok).length / rows.length;
+  const set = (i, j, q) => setScores((s) => s.map((r, k) => (k === i ? r.map((x, jj) => (jj === j ? q : x)) : r)));
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      {spec.pairs.map((p, i) => (
+        <div key={i} className="vz-pref">
+          <p className="wg-p" style={{ margin: '0 0 4px' }}><strong>Prompt:</strong> {p.prompt}</p>
+          <div className="vz-two">
+            <div><span className="wg-k" style={{ textTransform: 'none' }}>✓ Chosen by the human</span><p className="wg-p" style={{ margin: '2px 0 4px' }}>{p.chosen}</p><Slider label="reward r(chosen)" min={-4} max={4} step={0.1} value={scores[i][0]} onChange={(q) => set(i, 0, q)} show={(q) => q.toFixed(1)} /></div>
+            <div><span className="wg-k" style={{ textTransform: 'none' }}>✗ Rejected</span><p className="wg-p" style={{ margin: '2px 0 4px' }}>{p.rejected}</p><Slider label="reward r(rejected)" min={-4} max={4} step={0.1} value={scores[i][1]} onChange={(q) => set(i, 1, q)} show={(q) => q.toFixed(1)} /></div>
+          </div>
+          <p className="vz-calc" aria-live="polite">P(chosen preferred) = σ({f(scores[i][0])} − {f(scores[i][1])}) = <strong>{f(rows[i].p)}</strong> · loss = −ln {f(rows[i].p)} = <strong>{f(rows[i].l)}</strong> · {rows[i].ok ? 'ranked correctly' : 'ranked wrongly'}</p>
+        </div>
+      ))}
+      <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: 'repeat(2,minmax(0,1fr))' }}>
+        <div className="out"><span className="wg-k">Mean preference loss</span><span className="vz-big">{f(mean)}</span><span className="wg-note">training pushes this down; 0.693 = ln 2 means "no idea"</span></div>
+        <div><span className="wg-k">Pairs ranked correctly</span><span className="vz-big">{Math.round(acc * 100)}%</span><span className="wg-note">{rows.filter((r) => r.ok).length} of {rows.length}</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'Prompts, answers and scores are made up for the demonstration. A real reward model is a language model with a scoring head, trained on many thousands of comparisons.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- klreward (reward versus staying close to the original model)
+function KlReward({ spec, fig }) {
+  const ref = spec.answers.map((a) => a.ref);
+  const r = spec.answers.map((a) => a.reward);
+  const [beta, setBeta] = useState(spec.beta ?? 1);
+  const [z, setZ] = useState(() => ref.map((q) => Math.log(q)));
+  const pi = softmaxArr(z);
+  const cur = klObjective({ pi, ref, r, beta });
+  const opt = klOptimum({ ref, r, beta });
+  const optV = klObjective({ pi: opt, ref, r, beta });
+  const f = (q) => Number(q.toFixed(3)).toString();
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="KL penalty β (how strongly to stay close to the original model)" min={0.1} max={10} step={0.1} value={beta} onChange={setBeta} show={(q) => q.toFixed(1)} />
+      <div className="vz-scroll">
+        <table className="vz-mlp" aria-label="Answers with reward, reference probability and policy probability">
+          <thead><tr><th>Answer</th><th>Reward r</th><th>Original model π_ref</th><th>Your policy π</th><th>Best policy π* for this β</th></tr></thead>
+          <tbody>
+            {spec.answers.map((a, i) => (
+              <tr key={i}>
+                <td>{a.text}</td><td>{a.reward}</td><td>{f(a.ref)}</td>
+                <td><input type="range" min={-6} max={6} step={0.1} value={z[i]} aria-label={`Logit of answer ${i + 1}`} onChange={(e) => setZ((zz) => zz.map((q, k) => (k === i ? +e.target.value : q)))} style={{ width: 90, verticalAlign: 'middle' }} /> <strong>{f(pi[i])}</strong></td>
+                <td>{f(opt[i])}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Expected reward E[r]</span><span className="vz-big">{f(cur.expR)}</span></div>
+        <div><span className="wg-k">KL(π ‖ π_ref)</span><span className="vz-big">{f(cur.kl)}</span></div>
+        <div className="out"><span className="wg-k">Objective J = E[r] − β·KL</span><span className="vz-big">{f(cur.J)}</span></div>
+        <div><span className="wg-k">Best possible J (at π*)</span><span className="vz-big">{f(optV.J)}</span></div>
+      </div>
+      <div className="wg-row" style={{ marginTop: 8 }}>
+        <button type="button" className="wg-btn" onClick={() => setZ(opt.map((q) => Math.log(Math.max(q, 1e-9))))}>Jump to the best policy π*</button>
+        <button type="button" className="wg-btn ghost" onClick={() => setZ(ref.map((q) => Math.log(q)))}>Back to the original model</button>
+      </div>
+      <p className="wg-note">Small β: the best policy puts almost everything on the highest-reward answer, even if that reward is an imperfect score (“reward hacking”). Large β: it barely moves from the original model. π* ∝ π_ref · exp(r/β). {spec.note || 'The answers and rewards are made up for the demonstration.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- lowrank (why a low-rank update can be enough)
+function LowRank({ spec, fig }) {
+  const A = spec.matrix;
+  const n = A.length, m = A[0].length;
+  const svd = useMemo(() => svdSmall(A), [A]);
+  const [r, setR] = useState(spec.rank ?? 2);
+  const approx = useMemo(() => lowRankApprox(A, r), [A, r]);
+  const err = Math.sqrt(A.reduce((s, row, i) => s + row.reduce((t, x, j) => t + (x - approx[i][j]) ** 2, 0), 0));
+  const tot = Math.sqrt(A.reduce((s, row) => s + row.reduce((t, x) => t + x * x, 0), 0));
+  const maxS = svd.S[0] || 1;
+  const tone = (v) => (v >= 0 ? `color-mix(in srgb, var(--accent) ${Math.round(Math.min(1, Math.abs(v) / (spec.max || 3)) * 75)}%, var(--surface2))` : `color-mix(in srgb, var(--cyan) ${Math.round(Math.min(1, Math.abs(v) / (spec.max || 3)) * 75)}%, var(--surface2))`);
+  const round = (M) => M.map((row) => row.map((x) => Math.round(x * 10) / 10));
+  const f = (q) => Number(q.toFixed(3)).toString();
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Rank r of the approximation" min={0} max={Math.min(n, m)} step={1} value={r} onChange={setR} />
+      <div className="vz-conv" style={{ alignItems: 'flex-start', marginTop: 6 }}>
+        <div><span className="wg-k" style={{ textTransform: 'none' }}>The full update ΔW ({n}×{m} = {n * m} numbers)</span><Grid data={round(A)} tone={tone} /></div>
+        <span className="vz-op">≈</span>
+        <div><span className="wg-k" style={{ textTransform: 'none' }}>Rank-{r} approximation B·A (uses {r * (n + m)} numbers)</span><Grid data={round(approx)} tone={tone} cls="out" /></div>
+      </div>
+      <ul className="wg-bars" style={{ marginTop: 10 }}>
+        {svd.S.map((s, i) => <li key={i} style={{ gridTemplateColumns: '120px minmax(0,1fr) 60px' }}><span className="wg-bar-l" style={{ fontFamily: 'inherit' }}>singular value {i + 1}</span><span className="wg-bar-track"><span className={'wg-bar-fill' + (i >= r ? ' warn' : '')} style={{ width: `${(s / maxS) * 100}%` }} /></span><span className="wg-bar-p">{f(s)}</span></li>)}
+      </ul>
+      <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Numbers to store: full vs rank {r}</span><span className="vz-big">{n * m} vs {r * (n + m)}</span></div>
+        <div className="out"><span className="wg-k">Error ‖ΔW − BA‖ ÷ ‖ΔW‖</span><span className="vz-big">{tot ? f(err / tot) : '0'}</span><span className="wg-note">0 = exact</span></div>
+        <div><span className="wg-k">Energy kept (Σσ² of the first {r})</span><span className="vz-big">{f(svd.S.slice(0, r).reduce((s, q) => s + q * q, 0) / svd.S.reduce((s, q) => s + q * q, 0))}</span></div>
+      </div>
+      <p className="wg-note">Green bars are the singular values kept by the approximation, amber ones are dropped. When a few singular values dominate, a thin product B·A (an n×r matrix times an r×m matrix) is almost as good as the whole matrix: that is the bet LoRA makes about fine-tuning updates. {spec.note || 'The matrix is written for teaching.'}</p>
+    </div>
+  );
+}
+
+export const VIZ = { prefpair: PrefPair, klreward: KlReward, lowrank: LowRank, schedule: Schedule, sampler1d: Sampler1d, unet: Unet, ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

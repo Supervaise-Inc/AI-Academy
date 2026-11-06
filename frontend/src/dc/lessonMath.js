@@ -730,3 +730,59 @@ export function unetShapes({ size = 16, inCh = 1, base = 16, levels = 3, timeDim
   rows.push({ name: 'output conv 1×1', shape: `${inCh} × ${size} × ${size}`, params: base * inCh + inCh, skip: null });
   return { rows, total: rows.reduce((s, r) => s + r.params, 0) };
 }
+
+// ---- Week 14: fine-tuning, RLHF and PEFT
+// Preference learning (Bradley-Terry): the reward model scores a chosen and a rejected answer; P(chosen preferred) = sigmoid(r_w - r_l); loss = -ln of it.
+export const prefProb = (rw, rl) => 1 / (1 + Math.exp(-(rw - rl)));
+export const prefLoss = (rw, rl) => -Math.log(prefProb(rw, rl));
+// KL-regularised objective for a policy over a few answers: J = sum pi*r - beta * KL(pi || ref); the optimum is pi* proportional to ref * exp(r / beta).
+export function klObjective({ pi, ref, r, beta }) {
+  const expR = pi.reduce((s, p, i) => s + p * r[i], 0);
+  const kl = pi.reduce((s, p, i) => s + (p > 0 ? p * Math.log(p / ref[i]) : 0), 0);
+  return { expR, kl, J: expR - beta * kl };
+}
+export function klOptimum({ ref, r, beta }) {
+  const w = ref.map((q, i) => q * Math.exp(r[i] / beta));
+  const s = w.reduce((a, b) => a + b, 0);
+  return w.map((q) => q / s);
+}
+export const softmaxArr = (z) => { const m = Math.max(...z); const e = z.map((q) => Math.exp(q - m)); const s = e.reduce((a, b) => a + b, 0); return e.map((q) => q / s); };
+// DPO loss for one preference pair: -ln sigmoid(beta * [ln pi(w)/ref(w) - ln pi(l)/ref(l)])
+export const dpoLoss = (piW, refW, piL, refL, beta) => -Math.log(1 / (1 + Math.exp(-beta * (Math.log(piW / refW) - Math.log(piL / refL)))));
+// Small SVD of an n x m matrix by Jacobi eigen-decomposition of A^T A. Returns singular values (descending), V (m x m columns) and U (n x m columns, scaled).
+export function svdSmall(A) {
+  const n = A.length, m = A[0].length;
+  const C = Array.from({ length: m }, (_, i) => Array.from({ length: m }, (_, j) => A.reduce((s, row) => s + row[i] * row[j], 0)));
+  const V = Array.from({ length: m }, (_, i) => Array.from({ length: m }, (_, j) => (i === j ? 1 : 0)));
+  for (let sweep = 0; sweep < 60; sweep++) {
+    let off = 0;
+    for (let p = 0; p < m - 1; p++) for (let q = p + 1; q < m; q++) off += C[p][q] ** 2;
+    if (off < 1e-20) break;
+    for (let p = 0; p < m - 1; p++) for (let q = p + 1; q < m; q++) {
+      if (Math.abs(C[p][q]) < 1e-14) continue;
+      const th = (C[q][q] - C[p][p]) / (2 * C[p][q]);
+      const t = Math.sign(th || 1) / (Math.abs(th) + Math.sqrt(th * th + 1));
+      const c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (let k = 0; k < m; k++) { const a = C[k][p], b = C[k][q]; C[k][p] = c * a - s * b; C[k][q] = s * a + c * b; }
+      for (let k = 0; k < m; k++) { const a = C[p][k], b = C[q][k]; C[p][k] = c * a - s * b; C[q][k] = s * a + c * b; }
+      for (let k = 0; k < m; k++) { const a = V[k][p], b = V[k][q]; V[k][p] = c * a - s * b; V[k][q] = s * a + c * b; }
+    }
+  }
+  const idx = Array.from({ length: m }, (_, i) => i).sort((a, b) => C[b][b] - C[a][a]);
+  const S = idx.map((i) => Math.sqrt(Math.max(0, C[i][i])));
+  const Vs = Array.from({ length: m }, (_, r) => idx.map((i) => V[r][i]));
+  const U = Array.from({ length: n }, (_, r) => idx.map((i, j) => (S[j] > 1e-12 ? A[r].reduce((s, a, k) => s + a * V[k][i], 0) / S[j] : 0)));
+  return { S, V: Vs, U };
+}
+export function lowRankApprox(A, r) {
+  const { S, V, U } = svdSmall(A);
+  return A.map((_, i) => A[0].map((__, j) => { let s = 0; for (let k = 0; k < r; k++) s += S[k] * U[i][k] * V[j][k]; return s; }));
+}
+// Memory to fine-tune a model of N billion parameters, in GB (1 GB = 1e9 bytes). Full fine-tuning with Adam in mixed precision: 2 (fp16 weights) + 2 (gradients) + 4 (fp32 master copy) + 8 (Adam m and v) = 16 bytes per parameter.
+export function ftMemory({ N = 7, method = 'full', trainable = 0.01 }) {
+  const P = N * 1e9;
+  if (method === 'full') return { weights: 2 * P, grads: 2 * P, optimizer: 12 * P, total: 16 * P };
+  const wb = method === 'qlora' ? 0.5 : 2;
+  const T = trainable * P;
+  return { weights: wb * P, grads: 2 * T, optimizer: 12 * T, total: wb * P + 14 * T };
+}

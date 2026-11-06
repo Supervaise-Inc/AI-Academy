@@ -1,470 +1,761 @@
 # %% [markdown]
-# # Week 15 — Pre-final Exam review + Capstone proposal: practice notebook
+# # Week 15 — Pre-final Exam, Part B: practical exam
 #
-# Built for **Google Colab**. Before you start, choose **File → Save a copy in Drive** so your work is saved in your own copy.
+# Built for **Google Colab**. Before you start, choose **File → Save a copy in Drive**, so that you work in your own copy and your answers are kept. (On the school's DGX Spark you can instead upload this file to JupyterLab.)
 #
-# **Runtime:** CPU is enough, nothing is downloaded. **Time:** about 2 to 3 hours.
+# This is Part B of the Pre-final exam: **60 of the 100 points, 120 minutes**. Part A (the written exam, 40 points) is taken in the course app. The notebook has five tasks:
 #
-# This week has no lab. Instead, this is a **practice notebook**: for each of Weeks 11 to 14 you get a short reminder, a few small calculations to do in code, a Check against the true value, and a worked answer. At the end, a **capstone proposal helper** turns the proposal checklist into a small data structure and prints an outline for the Structural Inspection Assistant.
+# | Task | Topic | Points | Minutes |
+# |---|---|---|---|
+# | 1 | Multimodal AI: patches, ViT and CLIP (Week 11) | 12 | 20 |
+# | 2 | Image generation: GANs and transpose convolution (Week 12) | 14 | 25 |
+# | 3 | Diffusion models (Week 13) | 16 | 30 |
+# | 4 | Training LLMs: SFT, preference learning and LoRA (Week 14) | 12 | 30 |
+# | 5 | Synthesis with the capstone (Weeks 11 to 14) | 6 | 15 |
 #
-# ### What you will do
-# - Week 11: count ViT patch tokens and patch dimensions, and rank labels by CLIP-style cosine similarity.
-# - Week 12: compute the output size of a transpose convolution.
-# - Week 13: compute ᾱ_t and the signal and noise weights.
-# - Week 14: compute LoRA parameter counts and model memory.
-# - Capstone: fill in a proposal checklist and print an outline using the marking criteria.
+# Your instructor announces the date, the room and how the exam counts towards the course.
 #
-# **How this notebook works:** run the cells from top to bottom with ▶. **Your turn** cells are for you to fill in. A **Check** cell tells you if you are right. Open the **Show a possible answer** block only after you have tried. This notebook never states exam dates, formats or weights: your instructor announces those.
+# ### Rules
+#
+# - Open book for the course only: you may use the lessons and your own lab notes.
+# - No AI assistants, no sharing of code or answers, no internet searches for answers.
+# - Run the cells from top to bottom. Replace every `# YOUR CODE HERE` and every `None` with your own work. The starter cells run without errors while they are unfinished.
+# - Everything runs on a CPU, nothing is downloaded, and every cell should finish in under 90 seconds. Random seeds are fixed at 42.
+# - Keep an eye on the clock. If a task is taking too long, write what you have, and move on.
+#
+# ### How the self-checks work
+#
+# A **Self-check** cell prints ✓ or ✗ for each numerical answer. It never prints the right value or a hint, and a ✓ is not a promise of full marks: your instructor marks your code, your numbers and your written explanations. Written answers go in the `ANSWERS` dictionary (one string per question) or in a markdown cell that begins "Your answer:".
+#
+# ### What to submit
+#
+# Submit this notebook **with all outputs visible** (run everything from the top just before you submit), together with the output of the last cell, which prints your `ANSWERS`. Submit it the way your instructor asks.
+#
+# <details><summary>How you are marked (the marking rules)</summary>
+#
+# - Each sub-question B*n*.*m* shows its points. A numerical answer earns its points when the value is right (small rounding differences are fine). If the value is wrong but your code or working shows the correct method, you can still earn part of the points.
+# - Code questions are marked on what the code does, not on how it looks. A hard-coded number with no working earns at most half of the points.
+# - Written answers are marked on whether they are correct, use the right terms from the lessons and refer to your own numbers. Short answers are fine: say what is true and why.
+# - A ✓ in a self-check does not replace the marking, and a ✗ does not remove method points.
+# - No points are removed for a wrong answer; leaving a question empty earns 0 for it.
+# </details>
 
 # %% [markdown]
 # ## Setup
+#
+# Run this cell once. It loads the libraries, fixes the random seed and defines a few small helpers: `cosine`, `softmax_np` and `param_count`. In this exam `check(name, ok)` only tells you whether a result is right (✓ or ✗); it gives **no hints**. Everything runs on a CPU and **nothing is downloaded**. Each task makes its own data in its first cell.
 
 # %%
-import os, math
+import os, gc, math, random, re, time, json, warnings
+from collections import Counter, defaultdict
+warnings.filterwarnings("ignore")
 import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
-SEED = 0
-np.random.seed(SEED)
-QUICK = bool(os.environ.get("NB_TEST"))   # unused here, kept for consistency with the other notebooks
-device = "cpu"                            # this notebook only does arithmetic
-print("Device:", device)
+SEED = 42
+random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
+device = "cuda" if torch.cuda.is_available() else "cpu"
+QUICK = bool(os.environ.get("NB_TEST"))   # lets the author shorten long loops when testing; leave it alone
+print("Running on:", device)
+
+ANSWERS = {}   # keep your final answers here; the last cell prints them so you can copy them into your submission
 
 def check(name, ok, hint=""):
-    print(("✓ " if ok else "✗ ") + name + ("" if ok else "  → " + hint))
+    """Exam version: prints a tick or a cross and never a hint."""
+    print(("✓ " if ok else "✗ ") + name)
 
-# A fixed helper cases test so a broken environment is noticed
-assert (224 // 16) ** 2 == 196 and 16 * 16 * 3 == 768, "environment sanity check failed"
-
-# %% [markdown]
-# ## Week 11: images become tokens
-#
-# **Reminder.** A Vision Transformer cuts an image into patches. With side `S` and patch size `P` there are (S ÷ P)² patches. Each patch of a colour image holds P × P × 3 numbers, which a linear layer projects to the model dimension. A learned CLS token is added in front.
-
-# %%
-def n_patches(side, patch):
-    return (side // patch) ** 2
-
-def patch_dim(patch, channels=3):
-    return patch * patch * channels
-
-print("224x224, patch 16:", n_patches(224, 16), "patches, each", patch_dim(16), "numbers; with CLS:", n_patches(224, 16) + 1)
-print("8x8, patch 2:", n_patches(8, 2), "| patch 4:", n_patches(8, 4), "| patch 8:", n_patches(8, 8))
-
-# %% [markdown]
-# ### ✏️ Your turn: tokens and dimensions
-#
-# A ViT reads a **384×384** colour image with **32×32** patches. Store `answer = (patches, numbers_per_patch, tokens_including_CLS)`.
-
-# %%
-answer = None  # YOUR CODE HERE: a tuple of three integers
-
-# %% [markdown]
-# ### Check
-
-# %%
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
-else:
-    want = (n_patches(384, 32), patch_dim(32), n_patches(384, 32) + 1)
-    check("patch count, patch size and token count", tuple(answer) == want, "patches = (side // patch)**2; numbers = patch*patch*3; tokens = patches + 1")
-
-# %% [markdown]
-# <details><summary>Show a possible answer</summary>
-#
-# ```python
-# answer = (n_patches(384, 32), patch_dim(32), n_patches(384, 32) + 1)   # (144, 3072, 145)
-# ```
-# 384 ÷ 32 = 12 patches per side, 12 × 12 = 144; each patch has 32 × 32 × 3 = 3072 numbers; the CLS token makes 145 tokens.
-# </details>
-
-# %% [markdown]
-# **CLIP-style zero-shot ranking.** CLIP puts an image and its captions in one space. For zero-shot classification you embed one prompt per label and pick the label with the highest **cosine similarity** to the image embedding: cos(a, b) = (a · b) / (‖a‖ ‖b‖). The vectors below are made-up 2-D numbers for practice (real embeddings have hundreds of dimensions).
-
-# %%
 def cosine(a, b):
-    a, b = np.asarray(a, float), np.asarray(b, float)
-    return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b)))
+    """Cosine similarity of two vectors."""
+    a = np.asarray(a, dtype=float); b = np.asarray(b, dtype=float)
+    return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
 
-image_vec = np.array([2.0, 3.2])                     # illustrative
-label_vecs = {"a photo of a cat": np.array([4.0, 1.6]),
-              "a photo of a dog": np.array([2.4, 4.0]),
-              "a photo of a car": np.array([-1.4, 4.0])}
-for name, v in label_vecs.items():
-    print(f"{name:<20} cosine = {cosine(image_vec, v):.3f}")
-assert abs(cosine([1, 0], [0, 1])) < 1e-12 and abs(cosine([1, 1], [2, 2]) - 1) < 1e-12
+def softmax_np(z, axis=-1):
+    """Softmax of a NumPy array along an axis (numerically stable)."""
+    z = np.asarray(z, dtype=float); e = np.exp(z - z.max(axis=axis, keepdims=True))
+    return e / e.sum(axis=axis, keepdims=True)
+
+def param_count(model):
+    """Number of trainable parameters of a PyTorch model."""
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 # %% [markdown]
-# ### ✏️ Your turn: rank the crack labels
+# ### Exam helpers
 #
-# Here are made-up 2-D embeddings for an inspection photo and four labels. Find the label with the highest cosine similarity and store its name (a string from `labels`) in `answer`.
+# One more small cell: it defines `same(...)` and `same_array(...)`, which the self-checks use to compare your number with the expected one without ever showing it (the notebook stores only fingerprints), `same_word(...)` for a word, and `n_words(...)`, which counts the words of a written answer.
 
 # %%
-photo = np.array([3.0, 1.0])                         # illustrative
-labels = {"crack": np.array([5.0, 1.0]), "spalling": np.array([1.0, 4.0]),
-          "corrosion": np.array([-2.0, 3.0]), "none": np.array([-3.0, -1.0])}
-answer = None  # YOUR CODE HERE: the best label as a string
+import hashlib
+H1 = "w15-b1"   # a label that is mixed into every fingerprint
+def _fp(v, nd):
+    return hashlib.sha256(f"{H1}|{nd}|{round(float(v), nd) + 0.0:.{nd}f}".encode()).hexdigest()[:12]
+def same(x, fingerprint, nd=3):
+    """True if x, rounded to nd decimals, is the number the exam expects. The notebook stores only a fingerprint, so it cannot tell you the number."""
+    try:
+        x = float(x)
+    except Exception:
+        return False
+    if not math.isfinite(x):
+        return False
+    step = 10.0 ** -nd
+    return any(_fp(x + d * 0.4 * step, nd) == fingerprint for d in (-1, 0, 1))
+def same_array(a, fingerprint, nd=3, shape=None):
+    """Like same(), for a whole list or array: it compares one number that mixes all the entries (and, if given, the shape)."""
+    try:
+        a = np.asarray(a, dtype=float)
+        if shape is not None and a.shape != tuple(shape):
+            return False
+        return same(float(np.sum(a * np.cos(np.arange(a.size)).reshape(a.shape))), fingerprint, nd)
+    except Exception:
+        return False
+def same_word(s, fingerprint):
+    return isinstance(s, str) and hashlib.sha256((H1 + "|" + s.strip().lower()).encode()).hexdigest()[:12] == fingerprint
+def n_words(x):
+    """How many words are in x (0 if x is not text)."""
+    return len(x.split()) if isinstance(x, str) else 0
+assert same(0.5004, _fp(0.5, 3)) and not same(0.52, _fp(0.5, 3))   # the helper itself works
+print("Exam helpers ready.")
 
 # %% [markdown]
-# ### Check
+# ## Task 1. Multimodal AI: patches, ViT and CLIP (12 points, 20 minutes)
+#
+# *Exercise B1.1:* **Counting patch tokens (3 points).** A Vision Transformer cuts an image into non-overlapping square patches of side `p`; if the image side is not a multiple of `p`, the leftover pixels at the right and bottom edges are dropped. Write `n_patches(h, w, p)`, which returns the number of patches (1 point). Store in `N_list` the patch counts for the four cases in `CASES` (an image of height `h` and width `w`, patch side `p`) (1 point), and in `kept_share` the share of the pixels of the 200 × 200 image that the patches still cover (1 point).
 
 # %%
-scores = {k: cosine(photo, v) for k, v in labels.items()}
-best = max(scores, key=scores.get)
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
-else:
-    check("best label", answer == best, "compute cosine(photo, v) for every label and take the largest")
-    print({k: round(s, 3) for k, s in scores.items()})
+CASES = [(224, 224, 16), (224, 160, 16), (200, 200, 16), (384, 384, 32)]   # (h, w, p)
 
-# %% [markdown]
-# <details><summary>Show a possible answer</summary>
-#
-# ```python
-# answer = max(labels, key=lambda k: cosine(photo, labels[k]))   # "crack"
-# ```
-# Cosine similarity only compares the *direction* of the vectors, not their length. The photo points almost the same way as the "crack" label. These numbers are made up for practice; in the capstone a real CLIP model would give the embeddings.
-# </details>
+def n_patches(h, w, p):
+    """Number of non-overlapping p × p patches that fit in an h × w image (leftover edge pixels are dropped)."""
+    # YOUR CODE HERE
+    return None
 
-# %% [markdown]
-# ## Week 12: transpose convolution
-#
-# **Reminder.** A transpose convolution is learnable upsampling. Without padding, the output side is **(n − 1) × stride + k**, where n is the input side and k the kernel side. A 2×2 input with a 3×3 kernel and stride 2 gives 5×5.
+N_list = None      # YOUR CODE HERE (a list of four whole numbers)
+kept_share = None  # YOUR CODE HERE (a number between 0 and 1)
 
 # %%
-def tconv_side(n, k, stride=1, padding=0):
-    return (n - 1) * stride + k - 2 * padding
-
-print("2x2, k=3, stride 2:", tconv_side(2, 3, 2))
-assert tconv_side(2, 3, 2) == 5
-
-# We can also build the output by hand: stamp a scaled copy of the kernel for each input value
-def tconv2d(x, kernel, stride=1):
-    n, k = x.shape[0], kernel.shape[0]
-    out = np.zeros((tconv_side(n, k, stride),) * 2)
-    for i in range(n):
-        for j in range(n):
-            out[i * stride:i * stride + k, j * stride:j * stride + k] += x[i, j] * kernel
-    return out
-
-x = np.array([[1, 2], [3, 4]]); kern = np.array([[1, 0, 1], [0, 1, 0], [1, 0, 1]])
-print(tconv2d(x, kern, 2))
+# Self-check B1.1
+check("B1.1 N_list (2 points together with n_patches)", same_array(N_list, "bcb6cef932b4", 0, shape=(4,)))
+check("B1.1 kept_share (1 point)", same(kept_share, "48f6dcbdeb36", 4))
 
 # %% [markdown]
-# ### ✏️ Your turn: size of an upsampling layer
-#
-# A generator layer has a **4×4** input, a **3×3** kernel, stride **2** and no padding. What is the output side? Then a second layer takes that output with a **4×4** kernel and stride 2. What is the final side? Store `answer = (first_side, second_side)`.
+# *Exercise B1.2:* **Cutting an image into patches (2 points).** The array `img` is a tiny 16 × 16 image with 3 colour channels; the number in each cell is its own index, so you can follow where every number goes. Write `patchify(img, p)`, which returns an array of shape `(N, p·p·3)`: one flattened patch per row, in reading order (left to right, then top to bottom), using only `reshape` and `transpose`. Cut the image with `p = 4`. Store in `patch_shape` the shape of the result as a tuple (0.5 points), in `patch5_sum` the sum of the numbers of patch number 5 (counting from 0) (1 point), and in `lost_nothing` `True` or `False` for "patchifying changed no number, it only rearranged them" (0.5 points).
 
 # %%
-answer = None  # YOUR CODE HERE: a tuple of two integers
+img = np.arange(16 * 16 * 3).reshape(16, 16, 3)   # height 16, width 16, 3 channels; the value is 48·row + 3·col + channel
 
-# %% [markdown]
-# ### Check
+def patchify(img, p):
+    """Cut an (H, W, C) image into non-overlapping p × p patches, row by row; return an array of shape (N, p*p*C)."""
+    # YOUR CODE HERE
+    return None
 
-# %%
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
-else:
-    s1 = tconv_side(4, 3, 2)
-    want = (s1, tconv_side(s1, 4, 2))
-    check("output sides", tuple(answer) == want, "side = (n - 1) * stride + k")
-
-# %% [markdown]
-# <details><summary>Show a possible answer</summary>
-#
-# ```python
-# s1 = (4 - 1) * 2 + 3      # 9
-# s2 = (s1 - 1) * 2 + 4     # 20
-# answer = (s1, s2)
-# ```
-# The first layer gives 9×9, and the second (9 − 1) × 2 + 4 = 20, so 20×20.
-# </details>
-
-# %% [markdown]
-# ## Week 13: diffusion
-#
-# **Reminder.** With a linear β schedule from 0.0001 to 0.02 over T = 1000 steps, ᾱ_t is the running product of (1 − β). The forward step is x_t = √ᾱ_t · x₀ + √(1 − ᾱ_t) · ε.
+patches = patchify(img, 4)
+patch_shape = None   # YOUR CODE HERE (a tuple)
+patch5_sum = None    # YOUR CODE HERE
+lost_nothing = None  # YOUR CODE HERE (True or False)
 
 # %%
-T = 1000
-betas = np.linspace(1e-4, 0.02, T)
-alpha_bar = np.cumprod(1.0 - betas)       # alpha_bar[t-1] is step t
-print("alpha_bar(300) =", round(alpha_bar[299], 4), "| alpha_bar(1000) =", alpha_bar[999])
-assert abs(alpha_bar[299] - 0.3964) < 5e-4 and 3e-5 < alpha_bar[999] < 5e-5
+# Self-check B1.2
+check("B1.2 patch_shape (0.5 points)", same_array(patch_shape, "63bfbfd98506", 0, shape=(2,)))
+check("B1.2 patch5_sum (1 point)", same(patch5_sum, "39618957fded", 0))
+check("B1.2 lost_nothing (0.5 points)", same(lost_nothing, "d90fe6c4b8d9", 0))
 
 # %% [markdown]
-# ### ✏️ Your turn: signal and noise at t = 100
-#
-# From the schedule, compute ᾱ at **t = 100**, then the weight on x₀ (√ᾱ) and the weight on the noise (√(1 − ᾱ)). Store `answer = (alpha_bar_100, signal_weight, noise_weight)`.
+# *Exercise B1.3:* **Sequence length, embedding and cost (2 points).** A ViT with hidden size `d = 192` reads a 224 × 224 colour image with patches of side 16. Store in `embed_params` the number of parameters of the patch embedding (one linear layer from a flattened patch to `d` numbers, with a bias) (0.5 points), in `seq_len` the length of the token sequence including one class token (0.5 points), in `scores_per_head` the number of attention scores one head computes in one layer for this image (0.5 points), and in `ratio_scores` how many times more attention scores one head needs if the patch side is halved to 8 (0.5 points).
 
 # %%
-answer = None  # YOUR CODE HERE: a tuple of three numbers
-
-# %% [markdown]
-# ### Check
-
-# %%
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
-else:
-    ab = alpha_bar[99]
-    ok = all(abs(a - b) < 0.002 for a, b in zip(answer, (ab, np.sqrt(ab), np.sqrt(1 - ab))))
-    check("alpha_bar, signal and noise at t = 100", ok, "remember alpha_bar[99] is step 100; signal = sqrt(ab); noise = sqrt(1 - ab)")
-
-# %% [markdown]
-# <details><summary>Show a possible answer</summary>
-#
-# ```python
-# ab = alpha_bar[99]
-# answer = (ab, np.sqrt(ab), np.sqrt(1 - ab))   # about (0.8970, 0.9471, 0.3209)
-# ```
-# At t = 100 most of the picture is still there. At t = 300 the weights are 0.63 and 0.78, so noise already outweighs the signal.
-# </details>
-
-# %% [markdown]
-# ### ✏️ Your turn: which ᾱ?
-#
-# In the forward step suppose ᾱ_t = 0.25. How much of the clean image is kept (the multiplier on x₀), and what is the multiplier on the noise? Store `answer = (keep, noise)` and compare it with the quiz question in the lesson.
+H_IMG, P_SIDE, D_HID = 224, 16, 192
+embed_params = None      # YOUR CODE HERE
+seq_len = None           # YOUR CODE HERE
+scores_per_head = None   # YOUR CODE HERE
+ratio_scores = None      # YOUR CODE HERE
 
 # %%
-answer = None  # YOUR CODE HERE: a tuple (keep, noise)
+# Self-check B1.3
+check("B1.3 embed_params (0.5 points)", same(embed_params, "3b31f79578e6", 0))
+check("B1.3 seq_len (0.5 points)", same(seq_len, "1e285dfcb888", 0))
+check("B1.3 scores_per_head (0.5 points)", same(scores_per_head, "220aeafe6f35", 0))
+check("B1.3 ratio_scores (0.5 points)", same(ratio_scores, "b9a822650809", 2))
 
 # %% [markdown]
-# ### Check
+# *Exercise B1.4:* **CLIP-style zero-shot choice (2.5 points).** A bridge inspector photographs a part of a pier. A CLIP-like model has turned the photo into the vector `img_vec` and four sentences into the vectors in `TEXT_VECS` (the numbers are invented for the exam). Store in `cos_sims` the four cosine similarities between the image and the sentences, in the order of the dictionary (0.75 points); in `probs` the zero-shot probabilities, which are the softmax of `LOGIT_SCALE × cosine` (0.75 points); in `best` the sentence with the highest probability (0.5 points); and in `p_best` its probability (0.5 points). You may use `cosine` and `softmax_np`.
 
 # %%
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
-else:
-    check("multipliers for alpha_bar = 0.25", abs(answer[0] - 0.5) < 1e-6 and abs(answer[1] - math.sqrt(0.75)) < 1e-3,
-          "keep = sqrt(0.25), noise = sqrt(1 - 0.25)")
+img_vec = np.array([0.7, 0.5, 0.2, 0.4])
+TEXT_VECS = {"a photo of a cracked pier": [0.8, 0.4, 0.1, 0.3],
+             "a photo of a rusted beam": [0.2, 0.9, 0.3, 0.1],
+             "a photo of a clean concrete wall": [0.1, 0.1, 0.9, 0.5],
+             "a photo of a loose bolt": [0.6, 0.2, 0.2, 0.8]}
+LOGIT_SCALE = 10
 
-# %% [markdown]
-# <details><summary>Show a possible answer</summary>
-#
-# ```python
-# answer = (math.sqrt(0.25), math.sqrt(1 - 0.25))   # (0.5, 0.866...)
-# ```
-# The multiplier is √ᾱ, not ᾱ itself: √0.25 = 0.5, and the noise multiplier is √0.75 ≈ 0.87.
-# </details>
-
-# %% [markdown]
-# ## Week 14: LoRA and memory
-#
-# **Reminder.** LoRA freezes W (d × d) and trains B (d × r) and A (r × d): **2 × d × r** numbers. Weights take parameters × bytes per parameter (FP32 4, FP16 2, INT8 1, INT4 0.5).
+cos_sims = None   # YOUR CODE HERE (four numbers)
+probs = None      # YOUR CODE HERE (four numbers that add up to 1)
+best = None       # YOUR CODE HERE (a sentence)
+p_best = None     # YOUR CODE HERE
 
 # %%
-def lora_params(d_in, d_out, r):
-    return r * (d_in + d_out)
-
-print("4096x4096, r=8:", lora_params(4096, 4096, 8), "of", 4096 * 4096, f"= {lora_params(4096, 4096, 8) / 4096 ** 2:.4%}")
-print("GPT-2 small, 12 layers of c_attn (768 -> 2304), r=8:", 12 * lora_params(768, 2304, 8))
-assert lora_params(4096, 4096, 8) == 65_536 and 12 * lora_params(768, 2304, 8) == 294_912
+# Self-check B1.4
+check("B1.4 cos_sims (0.75 points)", same_array(cos_sims, "2701e4c66bc0", 3, shape=(4,)))
+check("B1.4 probs (0.75 points)", same_array(probs, "4917647a0dcd", 3, shape=(4,)))
+check("B1.4 best (0.5 points)", same_word(best, "06ed4726570d"))
+check("B1.4 p_best (0.5 points)", same(p_best, "984da652b8f7", 3))
 
 # %% [markdown]
-# ### ✏️ Your turn: LoRA on a bigger matrix
-#
-# A layer has a **2048 × 2048** weight matrix and you use rank **r = 16**. How many LoRA numbers does it add, and what percentage of the full matrix is that? Store `answer = (count, percent)` (percent as a number such as 1.5 for 1.5%).
+# *Exercise B1.5:* **The contrastive loss (1.5 points).** A batch has 3 image–text pairs. The matrix `S` holds the cosine similarity of image `i` (row) and text `j` (column); the true pairs are on the diagonal. With a logit scale of 10, store in `loss_i2t` the average cross-entropy when each **image** (row) must pick its own text (0.5 points), in `loss_t2i` the same when each **text** (column) must pick its own image (0.5 points), and in `loss_clip` the symmetric loss, which is the mean of the two (0.5 points).
 
 # %%
-answer = None  # YOUR CODE HERE: a tuple (count, percent)
+S = np.array([[0.62, 0.31, 0.10],
+              [0.28, 0.55, 0.34],
+              [0.05, 0.40, 0.58]])
+SCALE = 10
 
-# %% [markdown]
-# ### Check
-
-# %%
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
-else:
-    cnt = lora_params(2048, 2048, 16)
-    pct = 100 * cnt / (2048 * 2048)
-    check("LoRA count and percentage", answer[0] == cnt and abs(answer[1] - pct) < 0.01, "count = 2 * d * r; percent = 100 * count / d**2")
-
-# %% [markdown]
-# <details><summary>Show a possible answer</summary>
-#
-# ```python
-# cnt = 2 * 2048 * 16                 # 65,536
-# answer = (cnt, 100 * cnt / 2048**2) # 1.5625 %
-# ```
-# The share is 2r ÷ d = 32 ÷ 2048 = 1.5625%. It improves as the matrix gets larger.
-# </details>
-
-# %% [markdown]
-# ### ✏️ Your turn: will it fit?
-#
-# A 7-billion-parameter model: how many GB do the weights need in **INT4**, and how many GB does full fine-tuning need with the 16-bytes-per-parameter Adam estimate? Store `answer = (int4_gb, adam_gb)`.
+loss_i2t = None   # YOUR CODE HERE
+loss_t2i = None   # YOUR CODE HERE
+loss_clip = None  # YOUR CODE HERE
 
 # %%
-answer = None  # YOUR CODE HERE: a tuple (int4_gb, adam_gb)
+# Self-check B1.5
+check("B1.5 loss_i2t (0.5 points)", same(loss_i2t, "f7afca2a5268", 3))
+check("B1.5 loss_t2i (0.5 points)", same(loss_t2i, "d5d33aac72f9", 3))
+check("B1.5 loss_clip (0.5 points)", same(loss_clip, "c1fa5580a84e", 3))
 
 # %% [markdown]
-# ### Check
+# *Exercise B1.6:* **Choosing how to fuse (1 point).** A team wants a language model to answer an inspector's questions about a photo ("Is this crack wider than the card?"). One option is a projector that turns the photo into prefix tokens: the 224 × 224 photo is cut into patches of side 14 and each patch becomes one token in front of the text. The model's context window is 2,048 tokens. The other option is cross-attention layers, and a third is to use only a CLIP-style shared space. In `ANSWERS["B1.6"]` write 3 to 4 sentences: how many image tokens the projector option adds and what share of the context they use, which of the three options you would choose for this question, and one risk that a person must still check.
 
 # %%
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
-else:
-    check("7B memory", abs(answer[0] - 7e9 * 0.5 / 1e9) < 0.01 and abs(answer[1] - 7e9 * 16 / 1e9) < 0.1,
-          "INT4 is half a byte per parameter; the Adam estimate is 16 bytes per parameter")
-
-# %% [markdown]
-# <details><summary>Show a possible answer</summary>
-#
-# ```python
-# answer = (7e9 * 0.5 / 1e9, 7e9 * 16 / 1e9)   # (3.5, 112.0)
-# ```
-# 3.5 GB for 4-bit weights, and about 112 GB for full training before counting activations. This is why LoRA, which needs gradients only for the small adapter, makes fine-tuning possible on a single GPU.
-# </details>
-
-# %% [markdown]
-# ### ✏️ Your turn: place each technique on the pipeline
-#
-# For each activity, choose `"pretrain"` (pre-training, including continued), `"sft"` (fine-tuning or instruction tuning) or `"rlhf"` (preference training). Fill in the dictionary.
+ANSWERS["B1.6"] = ""   # YOUR ANSWER: 3 to 4 sentences
 
 # %%
-activities = {
-    "Predict the next token over a huge web-scale text collection": None,
-    "Train on 10,000 prompt-answer pairs written by people": None,
-    "Train a reward model from human rankings of two answers": None,
-    "Keep training on a company's legal documents with the next-token goal": None,
-    "Train only small adapter matrices A and B on 15 examples": None,   # LoRA is a method; which stage is it doing?
-}  # YOUR CODE HERE: replace each None with "pretrain", "sft" or "rlhf"
+check("B1.6 answer written", n_words(ANSWERS.get("B1.6")) >= 25)
 
 # %% [markdown]
-# ### Check
+# ## Task 2. Image generation: GANs and transpose convolution (14 points, 25 minutes)
+#
+# *Exercise B2.1:* **Transpose convolution sizes (2 points).** The output side of a transpose convolution is `(n − 1)·stride − 2·pad + k + out_pad`. Write `convT_out(n, k, stride, pad, out_pad)` and store in `sizes` the output sides for the five cases in `CONFIGS` (each is `(n, k, stride, pad, out_pad)`) (1 point). Then build a real `nn.ConvTranspose2d(1, 1, k, stride, pad, output_padding=out_pad)` for each case, feed it a tensor with an `n × n` input and store in `torch_sizes` the sides it really produces (0.5 points), and in `all_match` `True` or `False` for "my formula and PyTorch agree in all five cases" (0.5 points).
 
 # %%
-truth = {
-    "Predict the next token over a huge web-scale text collection": "pretrain",
-    "Train on 10,000 prompt-answer pairs written by people": "sft",
-    "Train a reward model from human rankings of two answers": "rlhf",
-    "Keep training on a company's legal documents with the next-token goal": "pretrain",
-    "Train only small adapter matrices A and B on 15 examples": "sft",
-}
-if any(v is None for v in activities.values()):
-    print("Fill in every answer above, then run this cell again.")
-else:
-    for k, v in truth.items():
-        check(k[:60], activities[k] == v, "think about the data and the goal of the stage")
+CONFIGS = [(4, 4, 2, 1, 0), (7, 3, 2, 1, 0), (7, 3, 2, 1, 1), (5, 5, 3, 2, 1), (10, 2, 2, 0, 0)]
 
-# %% [markdown]
-# <details><summary>Show a possible answer</summary>
-#
-# ```python
-# activities = dict(truth)   # pretrain, sft, rlhf, pretrain, sft
-# ```
-# Continued pre-training keeps the same next-token goal, so it sits with pre-training. The reward model is step 2 of RLHF. LoRA is a cheap way of doing the training, not a stage: with 15 prompt-answer examples the stage is fine-tuning.
-# </details>
+def convT_out(n, k, stride, pad, out_pad=0):
+    """Output side of a transpose convolution."""
+    # YOUR CODE HERE
+    return None
 
-# %% [markdown]
-# ## Capstone proposal helper: the Structural Inspection Assistant
-#
-# The capstone is a team project: a Structural Inspection Assistant that triages inspection photos and drafts a summary for an engineer to review. The pipeline is: **photo in → classify (crack, spalling, corrosion or none) → find checklist items with RAG → draft a summary → the engineer decides**. One rule is fixed: **a licensed engineer makes every pass/fail decision, and the assistant never signs off on safety.**
-#
-# The code below stores the proposal checklist and the marking criteria as data, so you can see at a glance which parts of your proposal are still open and where the marks are. Your instructor announces the proposal format, length and deadline: use this only as a planning aid.
+sizes = None        # YOUR CODE HERE (a list of five whole numbers)
+torch_sizes = None  # YOUR CODE HERE (a list of five whole numbers)
+all_match = None    # YOUR CODE HERE (True or False)
 
 # %%
-CRITERIA = {                        # marking criteria and weights from the course outline (they add up to 100%)
-    "Problem and proposal": 15,
-    "Technical implementation": 40,
-    "Responsible AI": 15,
-    "Presentation": 20,
-    "Documentation": 10,
-}
-assert sum(CRITERIA.values()) == 100, "the criteria weights should add up to 100"
-
-CHECKLIST = [                       # (question, which criterion it mainly serves)
-    ("Problem: who has the problem, and what slows them down today?", "Problem and proposal"),
-    ("Users and the human in the loop: who is the engineer, and what exactly do they review?", "Responsible AI"),
-    ("Pipeline: which model does each step, and what goes in and out of it?", "Technical implementation"),
-    ("Data plan: where do your test photos and checklist text come from, and are you allowed to use them? Mark sample text as fictional.", "Technical implementation"),
-    ("Evaluation: how will you know the classifier and the retrieval work?", "Technical implementation"),
-    ("Responsible AI: what can go wrong, and which guardrail or human check prevents each problem?", "Responsible AI"),
-    ("Roles and plan: who is Team lead, Technical lead and Responsible-AI lead, and what is done by Week 19?", "Documentation"),
-]
-for crit in {c for _, c in CHECKLIST}:
-    assert crit in CRITERIA
-
-print("Marking criteria:")
-for k, w in CRITERIA.items():
-    print(f"  {w:>3}%  {k}")
+# Self-check B2.1
+check("B2.1 sizes (1 point)", same_array(sizes, "b1128a68d3f5", 0, shape=(5,)))
+check("B2.1 torch_sizes (0.5 points)", same_array(torch_sizes, "b1128a68d3f5", 0, shape=(5,)))
+check("B2.1 all_match (0.5 points)", same(all_match, "d90fe6c4b8d9", 0))
 
 # %% [markdown]
-# ### ✏️ Your turn: draft your answers
-#
-# Fill in a short answer (one or two sentences) for each checklist item in `my_answers`, using the same order as `CHECKLIST`. Leave `None` for items you have not decided yet. Short and concrete is better than long and vague. Mark any example text as **fictional**. Do not paste real inspection photos, names or other real data into this notebook.
+# *Exercise B2.2:* **A small DCGAN generator (3 points).** A generator takes a noise vector of 64 numbers, applies one fully connected layer (with bias) that gives 4 × 4 × 256 numbers, reshapes them to a 4 × 4 grid with 256 channels, and applies the three transpose convolutions in `GEN_LAYERS` (each is `(in_channels, out_channels, k, stride, pad)`, with bias). Store in `sides` the side of the grid after the fully connected layer and after each transpose convolution (four numbers) (1 point), in `layer_params` the number of parameters of the four layers in order (1 point), and in `total_params` their sum (0.5 points). Then build the same layers in PyTorch (a `nn.Linear` and three `nn.ConvTranspose2d`) and store in `torch_total` the count that `param_count` gives (0.5 points).
 
 # %%
-my_answers = [None] * len(CHECKLIST)
-# YOUR CODE HERE, for example:
-# my_answers[0] = "Site engineers spend a lot of time sorting photos before they can review them."
-# my_answers[2] = "CLIP zero-shot classifies the photo; RAG finds checklist items; an LLM drafts the summary."
+Z_DIM, FC_SIDE, FC_CH = 64, 4, 256
+GEN_LAYERS = [(256, 128, 4, 2, 1), (128, 64, 4, 2, 1), (64, 1, 4, 2, 1)]
 
-# %% [markdown]
-# ### Check
-
-# %%
-def proposal_status(answers):
-    done = [a is not None and str(a).strip() != "" for a in answers]
-    return done, sum(done)
-
-done, n_done = proposal_status(my_answers)
-assert len(my_answers) == len(CHECKLIST)
-print(f"{n_done} of {len(CHECKLIST)} checklist items answered.")
-for ok, (q, c) in zip(done, CHECKLIST):
-    print(("✓ " if ok else "✗ ") + q.split(":")[0] + "  (" + c + ")")
-if n_done == 0:
-    print("Fill in at least one answer above, then run this cell again.")
-
-# %% [markdown]
-# <details><summary>Show a possible answer</summary>
-#
-# ```python
-# my_answers[0] = "Engineers lose time sorting inspection photos before the real review starts."
-# my_answers[1] = "A licensed engineer reads every draft and makes each pass/fail decision."
-# my_answers[2] = "CLIP zero-shot classifies the photo, RAG finds checklist items, an LLM drafts the summary."
-# ```
-# These are example sentences to show the style, not a complete proposal. Your own answers should name your real data, your real evaluation and your team members.
-# </details>
-
-# %% [markdown]
-# Now print the proposal outline. It lists the pipeline, then every checklist item with your answer (or `TODO`), grouped by the criterion it mainly serves, with the weight next to each heading.
+sides = None         # YOUR CODE HERE (four numbers)
+layer_params = None  # YOUR CODE HERE (four numbers)
+total_params = None  # YOUR CODE HERE
+torch_total = None   # YOUR CODE HERE
 
 # %%
-def proposal_outline(answers):
-    lines = ["PROPOSAL OUTLINE: Structural Inspection Assistant", "",
-             "Pipeline: photo -> classify (crack / spalling / corrosion / none) -> find checklist items (RAG) -> draft summary -> engineer decides",
-             "AI-use rule: a licensed engineer makes every pass/fail decision; the assistant never signs off on safety.", ""]
-    for crit, weight in CRITERIA.items():
-        items = [(q, a) for (q, c), a in zip(CHECKLIST, answers) if c == crit]
-        lines.append(f"[{weight}%] {crit}")
-        if not items:
-            lines.append("   (covered by your demo and the whole project, not by one checklist question)")
-        for q, a in items:
-            text = a if a is not None and str(a).strip() else "TODO"
-            lines.append(f"   - {q.split(':')[0]}: {text}")
-        lines.append("")
-    return "\n".join(lines)
-
-outline = proposal_outline(my_answers)
-print(outline)
-assert "licensed engineer" in outline and sum(CRITERIA.values()) == 100
+# Self-check B2.2
+check("B2.2 sides (1 point)", same_array(sides, "12f6e3ee0b09", 0, shape=(4,)))
+check("B2.2 layer_params (1 point)", same_array(layer_params, "b24e36605ba5", 0, shape=(4,)))
+check("B2.2 total_params (0.5 points)", same(total_params, "d5d11df63b36", 0))
+check("B2.2 torch_total (0.5 points)", same(torch_total, "d5d11df63b36", 0))
 
 # %% [markdown]
-# **Where are the marks?** Technical implementation is the biggest share, so check that your plan says how you will test the classifier and the retrieval.
+# *Exercise B2.3:* **The optimal discriminator (2.5 points).** At one picture `x` the real data have density `p_data(x) = 0.6` and the generator has density `p_g(x) = 0.2`. Store in `d_star` the value of the best possible discriminator there (0.5 points). Store in `d_star_eq` its value at a picture where `p_g(x) = p_data(x)` (0.5 points) and in `v_eq` the value of the game `V(D*, G) = E[ln D(x)] + E[ln(1 − D(G(z)))]` when the generator is perfect and `D*` is used everywhere (0.5 points). Finally, for a batch with `D(x) = [0.9, 0.8, 0.7]` on three real pictures and `D(G(z)) = [0.2, 0.3, 0.1]` on three fakes, store in `d_loss` the discriminator loss `−mean(ln D(x)) − mean(ln(1 − D(G(z))))` (1 point).
 
 # %%
-biggest = max(CRITERIA, key=CRITERIA.get)
-print(f"Largest criterion: {biggest} ({CRITERIA[biggest]}%)")
-print(f"Problem + Responsible AI together: {CRITERIA['Problem and proposal'] + CRITERIA['Responsible AI']}%")
+D_real = np.array([0.9, 0.8, 0.7])
+D_fake = np.array([0.2, 0.3, 0.1])
+
+d_star = None     # YOUR CODE HERE
+d_star_eq = None  # YOUR CODE HERE
+v_eq = None       # YOUR CODE HERE
+d_loss = None     # YOUR CODE HERE
+
+# %%
+# Self-check B2.3
+check("B2.3 d_star (0.5 points)", same(d_star, "976f20f128c7", 3))
+check("B2.3 d_star_eq (0.5 points)", same(d_star_eq, "6aa058accdb8", 3))
+check("B2.3 v_eq (0.5 points)", same(v_eq, "1f3f37b576b1", 4))
+check("B2.3 d_loss (1 point)", same(d_loss, "fbafd5f0a8d5", 4))
 
 # %% [markdown]
-# ## Wrap-up
+# *Exercise B2.4:* **Saturating and non-saturating generator loss (2 points).** The discriminator's last layer gives a logit `a`, and `D = sigmoid(a)`. A generator that is losing badly has `D(G(z)) = 0.01`, so set `a = ln(0.01 / 0.99)`. Use autograd (`requires_grad=True` and `.backward()`) to compute the gradient of the original generator loss `ln(1 − D)` with respect to `a` and store it in `grad_sat` (0.5 points), then the gradient of the non-saturating loss `−ln D` with respect to `a` and store it in `grad_ns` (0.5 points). Store in `ratio_grad` how many times larger the non-saturating gradient is in size (0.5 points). In `ANSWERS["B2.4"]` write one or two sentences on what this means for a generator at the start of training (0.5 points).
+
+# %%
+a0 = math.log(0.01 / 0.99)
+grad_sat = None   # YOUR CODE HERE
+grad_ns = None    # YOUR CODE HERE
+ratio_grad = None # YOUR CODE HERE
+ANSWERS["B2.4"] = ""   # YOUR ANSWER: one or two sentences
+
+# %%
+# Self-check B2.4
+check("B2.4 grad_sat (0.5 points)", same(grad_sat, "ec7c892276b9", 4))
+check("B2.4 grad_ns (0.5 points)", same(grad_ns, "a887629169a2", 4))
+check("B2.4 ratio_grad (0.5 points)", same(ratio_grad, "ad1a4b3f1a79", 1))
+check("B2.4 written answer present", n_words(ANSWERS.get("B2.4")) >= 15)
+
+# %% [markdown]
+# *Exercise B2.5:* **A tiny GAN on a line (2 points).** The real data are numbers from a bell curve with mean 4 and standard deviation 1. The loop below trains a generator and a discriminator for 800 steps; the discriminator step is done for you. Write the **generator step** with the **non-saturating loss**: score the fakes with the discriminator, compute the loss `−mean(ln D(G(z)))` (use `F.logsigmoid` on the logit, or `F.binary_cross_entropy_with_logits` with the label 1), and update only the generator (1 point). Then store in `gen_mean` and `gen_std` the mean and the standard deviation of 2,000 numbers made by the trained generator (0.5 points each).
+
+# %%
+def train_gan_1d(steps=800, seed=42):
+    torch.manual_seed(seed)
+    G = nn.Sequential(nn.Linear(1, 16), nn.ReLU(), nn.Linear(16, 1))
+    D = nn.Sequential(nn.Linear(1, 16), nn.LeakyReLU(0.2), nn.Linear(16, 1))
+    optG = torch.optim.Adam(G.parameters(), lr=2e-3)
+    optD = torch.optim.Adam(D.parameters(), lr=2e-3)
+    for step in range(steps):
+        real = 4 + torch.randn(64, 1)
+        z = torch.randn(64, 1)
+        fake = G(z)
+        # discriminator step (done for you): real -> label 1, fake -> label 0
+        d_loss = F.binary_cross_entropy_with_logits(D(real), torch.ones(64, 1)) + F.binary_cross_entropy_with_logits(D(fake.detach()), torch.zeros(64, 1))
+        optD.zero_grad(); d_loss.backward(); optD.step()
+        # generator step: YOUR CODE HERE (non-saturating loss, update only G)
+        z = torch.randn(64, 1)
+    return G
+
+G_trained = train_gan_1d()
+with torch.no_grad():
+    samples = G_trained(torch.randn(2000, 1)).squeeze(1)
+gen_mean = float(samples.mean())
+gen_std = float(samples.std())
+print(f"generated mean {gen_mean:.2f}, std {gen_std:.2f}")
+
+# %%
+# Self-check B2.5 (ranges, because a trained network never gives exactly the same number twice)
+check("B2.5 gen_mean near 4 (0.5 points)", 3.0 < gen_mean < 5.0)
+check("B2.5 gen_std not collapsed and not wild (0.5 points)", 0.25 < gen_std < 2.0 and 3.0 < gen_mean < 5.0)
+
+# %% [markdown]
+# *Exercise B2.6:* **Reading a failing log (1.5 points).** A student trains a GAN on pictures of 8 kinds of leaf. After 4,000 steps the log says: discriminator loss 0.02, generator loss 4.7, the 500 generated pictures show only one kind of leaf, and their pixel spread is 0.03 while the real pictures have 0.9. Store in `d_loss_guess` the discriminator loss (in the form of B2.3) that a discriminator would have if it could only guess, `D = 0.5` everywhere (0.5 points). In `ANSWERS["B2.6"]` write 2 to 3 sentences: name the failure, use two of the numbers as evidence, and give one remedy (1 point).
+
+# %%
+d_loss_guess = None   # YOUR CODE HERE
+ANSWERS["B2.6"] = ""  # YOUR ANSWER: 2 to 3 sentences
+
+# %%
+# Self-check B2.6
+check("B2.6 d_loss_guess (0.5 points)", same(d_loss_guess, "a9b60a6e5800", 3))
+check("B2.6 written answer present", n_words(ANSWERS.get("B2.6")) >= 25)
+
+# %% [markdown]
+# *Exercise B2.7:* **Transpose convolution or resize-and-convolve? (1 point).** A generator layer must turn a 7 × 7 grid with 64 channels into a 14 × 14 grid with 32 channels. Store in `params_convT` the parameters of a `ConvTranspose2d` with kernel 3, stride 2, padding 1 and output padding 1, with a bias (0.5 points). In `ANSWERS["B2.7"]` write 2 sentences: why this kernel (3, with stride 2) can produce a checkerboard pattern, and what the resize-and-convolve alternative does (0.5 points).
+
+# %%
+params_convT = None   # YOUR CODE HERE
+ANSWERS["B2.7"] = ""  # YOUR ANSWER: 2 sentences
+
+# %%
+# Self-check B2.7
+check("B2.7 params_convT (0.5 points)", same(params_convT, "375b905d51bb", 0))
+check("B2.7 written answer present", n_words(ANSWERS.get("B2.7")) >= 25)
+
+# %% [markdown]
+# ## Task 3 — Diffusion models (16 points, 30 minutes)
 #
-# - You can count ViT patch tokens ((side ÷ patch)²), rank CLIP labels by cosine similarity, and compute a transpose-convolution output size ((n − 1) × stride + k).
-# - You can compute ᾱ_t and the signal and noise weights √ᾱ_t and √(1 − ᾱ_t), LoRA parameter counts (2 × d × r per square matrix) and model memory (parameters × bytes).
-# - You have a capstone proposal outline with the marking criteria next to your answers, and a clear list of what is still TODO.
+# Week 13 turned a picture into noise with a schedule, taught a network to predict that noise, and ran the process backwards with DDPM and DDIM. It also gave the network a time embedding, a UNet body, guidance and a smaller latent space. In B3.1 to B3.4 you compute with the schedule, the closed form, the reverse steps and the time embedding on small numbers, in B3.5 you train two tiny denoisers and compare them, and in B3.6 to B3.8 you count a UNet block, do the guidance and latent arithmetic and explain the design in words. All numbers in this task are invented for the exam, and each part uses its own schedule, so an early mistake does not spoil a later part.
+
+# %% [markdown]
+# *Exercise B3.1 (3 points): the schedule, ᾱ and the signal-to-noise ratio.* A linear noise schedule has `T1 = 250` steps with β rising in a straight line from `B0 = 0.0004` (step 1) to `B1 = 0.04` (step 250). (a) Complete `make_abar(T, b0, b1)`, which returns the NumPy array of ᾱ_1, …, ᾱ_T (so index t − 1 holds ᾱ_t) (1 point). (b) For this schedule store in `abar_60` and `abar_150` the values ᾱ_60 and ᾱ_150 (0.5 points), and in `snr_60` and `snr_150` the signal-to-noise ratios ᾱ / (1 − ᾱ) at those steps (0.5 points). (c) Store in `t_cross` the first step t at which the signal-to-noise ratio is below 1 (1 point).
+
+# %%
+T1, B0, B1 = 250, 0.0004, 0.04
+
+def make_abar(T, b0, b1):
+    """The array of abar_1 ... abar_T for a linear schedule from b0 to b1 (index t - 1 is step t)."""
+    return np.ones(T)   # YOUR CODE HERE
+
+abar = make_abar(T1, B0, B1)
+abar_60 = abar_150 = None   # YOUR CODE HERE
+snr_60 = snr_150 = None     # YOUR CODE HERE
+t_cross = None              # YOUR CODE HERE
+
+# %%
+def _b31_fn():
+    try:
+        return same_array(make_abar(6, 0.01, 0.1), 'c3b917a7d07c', 5, (6,)) and same_array(make_abar(40, 0.001, 0.05), 'a41cd3c4e31b', 5, (40,))
+    except Exception:
+        return False
+check("B3.1 (a) the function make_abar", _b31_fn())
+check("B3.1 (b) abar_60 and abar_150", same(abar_60, '6a5be918e25c', 4) and same(abar_150, 'efa7193eef2e', 4))
+check("B3.1 (b) snr_60 and snr_150", same(snr_60, '96310c708855', 3) and same(snr_150, 'cab376fdedad', 3))
+check("B3.1 (c) t_cross", same(t_cross, '9e95f12a051f', 0))
+
+# %% [markdown]
+# *Exercise B3.2 (2 points): the closed form and the loss.* Use the given schedule below (`BETA2[t - 1]` is β_t and `ABAR2[t - 1]` is ᾱ_t). (a) Complete `noise_to(x0, eps, t)`, which returns x_t = √ᾱ_t · x0 + √(1 − ᾱ_t) · ε as a NumPy array (1 point). (b) For t = 150, x0 = `[0.6, -0.2, 0.9, -0.7]` and ε = `[1.1, -0.4, 0.3, -1.5]` store the picture weight in `w_sig`, the noise weight in `w_noise` and the noisy vector in `x_t` (0.5 points). The network guessed `eps_hat`; store the mean squared error of the guess in `mse_eps` (0.5 points).
+
+# %%
+T2 = 400
+BETA2 = np.linspace(2e-4, 0.03, T2)    # beta_t is BETA2[t - 1]
+ABAR2 = np.empty(T2); _run = 1.0       # abar_t is ABAR2[t - 1]
+for _i in range(T2):
+    _run *= 1 - BETA2[_i]; ABAR2[_i] = _run
+
+def noise_to(x0, eps, t):
+    """x_t = sqrt(abar_t) * x0 + sqrt(1 - abar_t) * eps, for the schedule above (NumPy arrays)."""
+    return np.asarray(x0, dtype=float)   # YOUR CODE HERE
+
+x0_b = np.array([0.6, -0.2, 0.9, -0.7]); eps_b = np.array([1.1, -0.4, 0.3, -1.5]); eps_hat_b = np.array([0.8, -0.1, 0.5, -1.2])
+w_sig = w_noise = None   # YOUR CODE HERE
+x_t = None               # YOUR CODE HERE
+mse_eps = None           # YOUR CODE HERE
+
+# %%
+def _b32_fn():
+    try:
+        return same_array(noise_to([1.0, -1.0, 0.5], [0.0, 1.0, -1.0], 50), 'ca8d6a87dee1', 4, (3,)) and same_array(noise_to([0.2, 0.8], [-1.0, 0.5], 399), '8bad384c3a00', 4, (2,))
+    except Exception:
+        return False
+check("B3.2 (a) the function noise_to", _b32_fn())
+check("B3.2 (b) w_sig and w_noise", same(w_sig, 'fbd16f4c7aab', 4) and same(w_noise, 'ba324ccc4219', 4))
+check("B3.2 (b) x_t", same_array(x_t, 'ecd31e4ffba9', 3, (4,)))
+check("B3.2 (b) mse_eps", same(mse_eps, 'd2b28af467ff', 4))
+
+# %% [markdown]
+# *Exercise B3.3 (3 points): one reverse step, two ways.* The network sees the noisy vector `xt3` at step `t3 = 200` and guesses the noise `eps_hat3`; use the schedule of B3.2. (a) **DDPM (1.5 points).** Store in `beta_t` the value β_200 and in `coef` the number β_t / √(1 − ᾱ_t) (0.5 points). Then store in `x_prev` the picture x_(t−1) = (1/√α_t) · (x_t − coef · ε̂) + σ_t · z, with α_t = 1 − β_t, σ_t = √β_t and the fresh noise `z3` (1 point). (b) **DDIM (1.5 points).** With η = 0, store in `x0_hat` the estimated clean picture (x_t − √(1 − ᾱ_t) · ε̂) / √ᾱ_t (0.5 points) and in `x_s` the picture at the earlier step `s3 = 150`, built from x̂₀ and the same ε̂ with the weights of step s3 (1 point).
+
+# %%
+t3, s3 = 200, 150
+xt3 = np.array([0.9, -0.3, 1.4]); eps_hat3 = np.array([0.5, -0.2, 0.9]); z3 = np.array([0.3, -0.8, 0.1])
+beta_t = coef = None   # YOUR CODE HERE
+x_prev = None          # YOUR CODE HERE
+x0_hat = None          # YOUR CODE HERE
+x_s = None             # YOUR CODE HERE
+
+# %%
+check("B3.3 (a) beta_t and coef", same(beta_t, '44b28a680997', 6) and same(coef, 'afa70ede3d3d', 5))
+check("B3.3 (a) x_prev", same_array(x_prev, '0a0ec9d006f6', 4, (3,)))
+check("B3.3 (b) x0_hat", same_array(x0_hat, '22a8d7f9793c', 4, (3,)))
+check("B3.3 (b) x_s", same_array(x_s, 'a1899c2dd7c4', 4, (3,)))
+
+# %% [markdown]
+# *Exercise B3.4 (2 points): the sinusoidal time embedding.* (a) Complete `time_emb(t, d)`, which returns the time embedding of step `t` as a NumPy vector of `d` numbers (`d` is even): for the pair number k = 0, 1, …, d/2 − 1 the entry 2k is sin(t / 10000^(2k/d)) and the entry 2k + 1 is cos(t / 10000^(2k/d)), with the angles in radians (1 point). (b) For d = 16 store in `cos_near` the cosine similarity of the embeddings of steps 100 and 101, and in `cos_far` the cosine similarity of the embeddings of steps 100 and 250 (cosine similarity = dot product divided by the product of the lengths) (1 point).
+
+# %%
+def time_emb(t, d):
+    """Sinusoidal embedding of the step t: a NumPy vector of d numbers."""
+    return np.zeros(d)   # YOUR CODE HERE
+
+cos_near = None   # YOUR CODE HERE
+cos_far = None    # YOUR CODE HERE
+
+# %%
+def _b34_fn():
+    try:
+        return same_array(time_emb(7, 6), '62f745da638f', 4, (6,)) and same_array(time_emb(130, 4), '79c510b61bd9', 4, (4,))
+    except Exception:
+        return False
+check("B3.4 (a) the function time_emb", _b34_fn())
+check("B3.4 (b) cos_near and cos_far", same(cos_near, '82faeca68ecf', 3) and same(cos_far, 'f2cc23a7e406', 3))
+
+# %% [markdown]
+# *Exercise B3.5 (3 points): does the denoiser need to know the step?* The cell below builds a small data set (three tight clusters of 2-D points), a short schedule `ABAR5` of 100 steps, a small network `MLPDenoiser(use_time)` that takes the noisy point and, if `use_time` is true, also the step, and `eval_mse(model, t_level)`, which measures the noise-prediction error of a model at one fixed step on a fixed evaluation batch. Read it, then run it.
+
+# %%
+T5 = 100
+_b5 = np.linspace(0.002, 0.12, T5); _a5 = np.empty(T5); _run = 1.0
+for _i in range(T5):
+    _run *= 1 - _b5[_i]; _a5[_i] = _run
+ABAR5 = torch.tensor(_a5, dtype=torch.float32)   # abar_t is ABAR5[t - 1]
+CENTRES = torch.tensor([[-2.0, 0.0], [2.0, 0.0], [0.0, 2.5]])
+
+def sample_x0(n, gen):
+    """n clean points: three tight clusters of 2-D points (shape (n, 2))."""
+    k = torch.randint(0, 3, (n,), generator=gen)
+    return CENTRES[k] + 0.25 * torch.randn(n, 2, generator=gen)
+
+class MLPDenoiser(nn.Module):
+    """Predicts the noise from the noisy point x_t (shape (n, 2)) and, if use_time, the step t (an integer tensor of shape (n,))."""
+    def __init__(self, use_time):
+        super().__init__()
+        self.use_time = use_time
+        self.net = nn.Sequential(nn.Linear(3 if use_time else 2, 64), nn.SiLU(), nn.Linear(64, 64), nn.SiLU(), nn.Linear(64, 2))
+    def forward(self, x, t):
+        if self.use_time:
+            x = torch.cat([x, (t.float() / T5)[:, None]], dim=1)
+        return self.net(x)
+
+@torch.no_grad()
+def eval_mse(model, t_level, n=2000):
+    """Mean squared error of the noise guess when every point is noised to the same step t_level (fixed evaluation data)."""
+    gen = torch.Generator().manual_seed(123)
+    x0 = sample_x0(n, gen); eps = torch.randn(n, 2, generator=gen)
+    a = ABAR5[t_level - 1]
+    xt = a.sqrt() * x0 + (1 - a).sqrt() * eps
+    return float(F.mse_loss(model(xt, torch.full((n,), t_level)), eps))
+
+STEPS = 250 if QUICK else 500   # QUICK lets the author shorten long loops when testing; leave it alone
+
+# %% [markdown]
+# (a) Complete `train_denoiser(model, steps)`: in every step draw a batch of 256 clean points with `sample_x0(256, gen)`, a step `t` for every point with `torch.randint(1, T5 + 1, (256,), generator=gen)` and noise `eps` with `torch.randn(256, 2, generator=gen)`, build x_t with the closed form and `ABAR5`, and minimise the mean squared error between `model(x_t, t)` and `eps` with Adam (learning rate 3e-3) (1 point). Run it for a model with the time input and for one without, store the errors at the low-noise step `T_LOW = 15` and at the high-noise step `T_HIGH = 95` in `mse_t_low`, `mse_t_high` (with time) and `mse_n_low`, `mse_n_high` (without time) (1 point). (b) In `ANSWERS["B3.5"]` write three or four sentences that compare the two models using your four numbers and explain why knowing the step helps (1 point).
+
+# %%
+def train_denoiser(model, steps=STEPS, seed=0):
+    """Train `model` to predict the noise (see the exercise text). Returns the model."""
+    gen = torch.Generator().manual_seed(seed)
+    opt = torch.optim.Adam(model.parameters(), lr=3e-3)
+    for step in range(steps):
+        pass   # YOUR CODE HERE
+    return model
+
+torch.manual_seed(42); model_t = train_denoiser(MLPDenoiser(True))
+torch.manual_seed(42); model_n = train_denoiser(MLPDenoiser(False))
+T_LOW, T_HIGH = 15, 95
+mse_t_low = mse_t_high = None   # YOUR CODE HERE
+mse_n_low = mse_n_high = None   # YOUR CODE HERE
+ANSWERS["B3.5"] = ""            # YOUR ANSWER
+
+# %%
+def _b35_ok():
+    try:
+        return (abs(eval_mse(model_t, T_LOW) - mse_t_low) < 1e-6 and abs(eval_mse(model_t, T_HIGH) - mse_t_high) < 1e-6
+                and abs(eval_mse(model_n, T_LOW) - mse_n_low) < 1e-6 and abs(eval_mse(model_n, T_HIGH) - mse_n_high) < 1e-6
+                and model_t.use_time and not model_n.use_time and mse_t_high < 0.5)
+    except Exception:
+        return False
+check("B3.5 (a) both models are trained and the four numbers are their errors", _b35_ok())
+check("B3.5 (a) with the time input the error is lower, at both noise levels", _b35_ok() and mse_t_low < mse_n_low and mse_t_high < 0.5 * mse_n_high)
+check("B3.5 (b) interpretation written", n_words(ANSWERS.get("B3.5")) >= 35)
+
+# %% [markdown]
+# *Exercise B3.6 (1 point): parameters of two UNet blocks.* A UNet block has two 3 × 3 convolutions (the first from `C_in` to `C_out` channels, the second from `C_out` to `C_out`, both with biases) and a linear layer that maps the time embedding of size `D` to `C_out` numbers (with bias). (a) Store in `p_down` the parameters of a down block with C_in = 32, C_out = 64 and D = 64, and in `p_up` the parameters of an up block with C_out = 32 and D = 64 whose input has 96 channels (64 from the layer below and 32 copied over by the skip connection) (0.5 points). (b) Store in `skip_extra` how many more parameters this up block has than the same block would have if its input had only the 64 channels from below (0.5 points).
+
+# %%
+D_T = 64
+p_down = p_up = skip_extra = None   # YOUR CODE HERE
+
+# %%
+check("B3.6 (a) p_down and p_up", same(p_down, '6f237358ff6c', 0) and same(p_up, '4e8fc587020b', 0))
+check("B3.6 (b) skip_extra", same(skip_extra, '6a34876060f8', 0))
+
+# %% [markdown]
+# *Exercise B3.7 (1 point): guidance and the latent space.* (a) At one step the network gives the noise guess `eps_u` without the prompt and `eps_c` with it. With guidance scale `w = 4`, store the classifier-free guided guess in `eps_guided` (0.5 points). (b) A picture of 640 × 384 pixels with 3 colour channels is compressed by an autoencoder into a latent with each side 8 times smaller and 16 channels. Store in `ratio` how many times fewer numbers the latent has than the picture (0.5 points).
+
+# %%
+eps_u = np.array([0.30, -0.10, 0.50]); eps_c = np.array([0.45, -0.40, 0.20]); w = 4
+eps_guided = None   # YOUR CODE HERE
+ratio = None        # YOUR CODE HERE
+
+# %%
+check("B3.7 (a) eps_guided", same_array(eps_guided, 'fa08ac890eea', 3, (3,)))
+check("B3.7 (b) ratio", same(ratio, '5949b8a316fd', 2))
+
+# %% [markdown]
+# *Exercise B3.8 (1 point): explain the design.* In `ANSWERS["B3.8"]` write four or five sentences that answer three questions in your own words: why does the network predict the **noise** ε instead of the clean picture, why does a DDIM sampler need far fewer steps than DDPM, and what do you pay for guidance with w > 1?
+
+# %%
+ANSWERS["B3.8"] = ""   # YOUR ANSWER
+
+# %%
+check("B3.8 explanation written", n_words(ANSWERS.get("B3.8")) >= 45)
+
+# %% [markdown]
+# ## Task 4 — Training LLMs: SFT, preference learning and LoRA (12 points, 30 minutes)
 #
-# **Reflection.** Double-click here to write two sentences: which of the four calculations (patches, transpose convolution, ᾱ, LoRA) do you still find hardest and why; and one way the Structural Inspection Assistant could go wrong, with one check that would catch it.
+# Week 14 followed a language model from pre-training to a helpful assistant: supervised fine-tuning with the prompt masked, a reward model from human comparisons (Bradley–Terry), the KL-regularised objective and its best policy, DPO, and then LoRA and QLoRA, which train a small add-on instead of the whole model. In B4.1 to B4.4 you do the loss arithmetic of SFT, the reward model, the KL leash and DPO. In B4.5 you build a `LoRALinear` layer and train it. In B4.6 you count parameters and memory, and in B4.7 you choose a method in words. All numbers in this task are invented for the exam.
+
+# %% [markdown]
+# *Exercise B4.1 (2 points): the SFT loss with a masked prompt.* A training example has 11 tokens: the first 6 are the prompt and the last 5 are the response. The model gave the correct token these probabilities (in order). (a) Complete `sft_loss(p, is_resp)`, which returns the average of −ln p over the positions where `is_resp` is 1 (1 point). (b) Store in `loss_masked` the SFT loss of this example (prompt masked) and in `loss_all` the loss if all 11 positions counted (0.5 points each).
+
+# %%
+p_tok = np.array([0.15, 0.30, 0.08, 0.20, 0.40, 0.12, 0.45, 0.70, 0.25, 0.85, 0.60])
+is_resp = np.array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1])
+
+def sft_loss(p, is_resp):
+    """Average negative log-probability (nats) over the response positions."""
+    return 0.0   # YOUR CODE HERE
+
+loss_masked = None   # YOUR CODE HERE
+loss_all = None      # YOUR CODE HERE
+
+# %%
+def _b41_fn():
+    try:
+        return same(sft_loss([0.5, 0.2, 0.9, 0.1], [0, 1, 0, 1]), 'c312157929b6', 4) and same(sft_loss([0.3, 0.6, 0.8], [1, 1, 1]), 'a407cfcd4e75', 4)
+    except Exception:
+        return False
+check("B4.1 (a) the function sft_loss", _b41_fn())
+check("B4.1 (b) loss_masked", same(loss_masked, '20163b2081e5', 3))
+check("B4.1 (b) loss_all", same(loss_all, '42cc983dce4f', 3))
+
+# %% [markdown]
+# *Exercise B4.2 (1 point): the reward model and Bradley–Terry.* A reward model gave these scores to the chosen answer (`r_w`) and the rejected answer (`r_l`) of three comparisons. Store in `p_chosen` the probability σ(r_w − r_l) that the model agrees with the human in each comparison (0.5 points). Store in `rm_loss` the average loss −ln σ(r_w − r_l) over the three comparisons and in `worst_pair` the position (0, 1 or 2) of the comparison with the largest loss (0.5 points).
+
+# %%
+r_w = np.array([2.6, 0.2, -0.9]); r_l = np.array([0.4, 0.8, -2.5])
+p_chosen = None    # YOUR CODE HERE
+rm_loss = None     # YOUR CODE HERE
+worst_pair = None  # YOUR CODE HERE
+
+# %%
+check("B4.2 p_chosen", same_array(p_chosen, '938abe825978', 4, (3,)))
+check("B4.2 rm_loss and worst_pair", same(rm_loss, 'ffb2ec535a7f', 4) and same(worst_pair, 'd90fe6c4b8d9', 0))
+
+# %% [markdown]
+# *Exercise B4.3 (2 points): the KL-regularised optimum.* A policy chooses among three answers. The reference model writes them with probabilities `ref` and the reward model scores them `rew`. (a) Complete `kl_opt(ref, r, beta)`, which returns the pair (best policy π*, KL(π* ‖ π_ref)) for the objective E[r] − β · KL (1 point). (b) For the three leash strengths in `betas`, store in `kl_list` the KL of the best policy and in `top_share` the probability that the best policy gives to the third answer (0.5 points). (c) Store in `beta_closest` the β from `betas` for which the best policy stays closest to the reference (0.5 points).
+
+# %%
+ref = np.array([0.55, 0.30, 0.15]); rew = np.array([0.5, 1.5, 4.0]); betas = [0.25, 1.0, 4.0]
+
+def kl_opt(ref, r, beta):
+    """The best policy pi* and its KL(pi* || ref) for the objective E[r] - beta * KL, as the pair (pi_star, kl)."""
+    return np.asarray(ref, dtype=float), 0.0   # YOUR CODE HERE
+
+kl_list = None      # YOUR CODE HERE
+top_share = None    # YOUR CODE HERE
+beta_closest = None # YOUR CODE HERE
+
+# %%
+def _b43_fn():
+    try:
+        pi, kl = kl_opt([0.4, 0.4, 0.2], [0.0, 1.0, 2.0], 0.5)
+        return same_array(pi, '97694759e0b3', 4, (3,)) and same(kl, 'c388998bd306', 4)
+    except Exception:
+        return False
+check("B4.3 (a) the function kl_opt", _b43_fn())
+check("B4.3 (b) kl_list and top_share", same_array(kl_list, '34d563e431c6', 3, (3,)) and same_array(top_share, '9aad45324f1d', 3, (3,)))
+check("B4.3 (c) beta_closest", same(beta_closest, '4c6262952398', 2))
+
+# %% [markdown]
+# *Exercise B4.4 (1 point): the DPO loss.* For one comparison the policy being trained and the frozen reference model gave these log-probabilities to the chosen and the rejected answer. With β = 0.2, store in `margin` the number β · [ (ln π(y_w) − ln π_ref(y_w)) − (ln π(y_l) − ln π_ref(y_l)) ] and in `dpo` the DPO loss −ln σ(margin) (0.75 points). Store in `dpo_start` the loss at the very start of training, when the policy is still equal to the reference (0.25 points).
+
+# %%
+lp_w, lp_l = -1.20, -2.90        # policy: ln pi(y_w), ln pi(y_l)
+ref_w, ref_l = -1.60, -2.30      # reference: ln pi_ref(y_w), ln pi_ref(y_l)
+beta_dpo = 0.2
+margin = None      # YOUR CODE HERE
+dpo = None         # YOUR CODE HERE
+dpo_start = None   # YOUR CODE HERE
+
+# %%
+check("B4.4 margin and dpo", same(margin, '1da04b67e874', 4) and same(dpo, 'e2a113ec8814', 4))
+check("B4.4 dpo_start", same(dpo_start, 'e22255045ba2', 4))
+
+# %% [markdown]
+# *Exercise B4.5 (3 points): a LoRA layer.* (a) Complete the class `LoRALinear(base, r, alpha)` (1 point). It wraps a given `nn.Linear` called `base`: the base weight and bias must be frozen (`requires_grad = False`), the layer adds two trainable matrices `A` of shape (r, in_features), filled with small random numbers, and `B` of shape (out_features, r), filled with zeros, and its output is `base(x) + (alpha / r) * (x @ A.T @ B.T)`. (b) For `nn.Linear(96, 64)` wrapped with r = 4 and alpha = 8, store in `n_trainable` the number of trainable parameters, in `n_frozen` the number of parameters of the base layer, and in `share_pct` the trainable number as a percentage of `n_frozen` (2 decimals) (0.5 points). (c) Train a LoRA layer on the small regression task below, where the target comes from the base layer plus a rank-2 change: take a copy of every parameter of `lora` before training, train the trainable parameters only with Adam (learning rate 0.02) for 150 steps on the mean squared error, then store in `loss_before` and `loss_after` the loss before and after training and in `changed` the sorted list of the names (from `lora.named_parameters()`) of the parameters whose values changed (1.5 points).
+
+# %%
+class LoRALinear(nn.Module):
+    """A frozen nn.Linear plus a trainable low-rank update (alpha / r) * B A."""
+    def __init__(self, base, r, alpha):
+        super().__init__()
+        self.base = base
+        # YOUR CODE HERE: freeze the base, create A and B
+    def forward(self, x):
+        return self.base(x)   # YOUR CODE HERE: add the low-rank path
+
+lora96 = LoRALinear(nn.Linear(96, 64), 4, 8)
+n_trainable = n_frozen = share_pct = None   # YOUR CODE HERE
+
+# %%
+torch.manual_seed(0)
+base_lin = nn.Linear(24, 16)
+X_reg = torch.randn(256, 24)
+Y_reg = base_lin(X_reg).detach() + 0.3 * X_reg @ torch.randn(2, 24).T @ torch.randn(16, 2).T   # the base layer plus a rank-2 change
+W_orig = base_lin.weight.detach().clone()
+lora = LoRALinear(base_lin, 4, 8)
+
+loss_before = loss_after = None   # YOUR CODE HERE
+changed = None                    # YOUR CODE HERE
+print(loss_before, loss_after, changed)
+
+# %%
+def _b45_layer():
+    try:
+        torch.manual_seed(5)
+        base = nn.Linear(6, 5)
+        m = LoRALinear(base, 2, 4)
+        x = torch.linspace(-1, 1, 12).reshape(2, 6)
+        tr = [p for p in m.parameters() if p.requires_grad]
+        frozen = (not base.weight.requires_grad) and (not base.bias.requires_grad) and sum(p.numel() for p in tr) == 22
+        start = bool(torch.allclose(m(x), base(x), atol=1e-6))
+        for p in tr:
+            p.data.fill_(0.5 if tuple(p.shape) == (2, 6) else 0.25)
+        return frozen, start, m(x).detach().numpy()
+    except Exception:
+        return False, False, None
+_fr, _st, _out = _b45_layer()
+check("B4.5 (a) the base is frozen and A and B are the only trainable parameters", _fr)
+check("B4.5 (a) at the start the layer gives the same output as the base layer", _fr and _st)
+check("B4.5 (a) the forward pass with the factor alpha / r", _fr and _out is not None and same_array(_out, 'a0bfe68cbb37', 4, (2, 5)))
+check("B4.5 (b) n_trainable and n_frozen", same(n_trainable, '4c3eac0f0e3f', 0) and same(n_frozen, '6d92f3b15160', 0))
+check("B4.5 (b) share_pct", same(share_pct, '0f477eff51d4', 2))
+check("B4.5 (c) the loss falls a lot and the base weights are unchanged", loss_after is not None and loss_before is not None and loss_after < 0.2 * loss_before and torch.equal(base_lin.weight.detach(), W_orig))
+check("B4.5 (c) only A and B changed", isinstance(changed, list) and len(changed) == 2 and not any(n.startswith("base") for n in changed))
+
+# %% [markdown]
+# *Exercise B4.6 (2 points): parameters and memory of a bigger model.* A model with `N_model = 13e9` parameters has 40 layers. LoRA with rank `r_lora = 16` is placed on four square matrices of size 5120 × 5120 in every layer (the query, key, value and output projections). (a) Store in `lora_params` the number of trainable parameters of all the adapters (1 point). (b) Use these rules, with 1 GB = 10⁹ bytes. Full fine-tuning needs 16 bytes per parameter. With LoRA the frozen base weights need 2 bytes each (16-bit), with QLoRA 0.5 byte each (4-bit), and each trained number needs a further 14 bytes (2 for its gradient and 12 for the optimiser state and master copy). Store in `gb_full`, `gb_lora` and `gb_qlora` the memory in GB, without activations (1 point).
+
+# %%
+layers, mats, d_model, r_lora, N_model = 40, 4, 5120, 16, 13e9
+lora_params = None   # YOUR CODE HERE
+gb_full = gb_lora = gb_qlora = None   # YOUR CODE HERE
+
+# %%
+check("B4.6 (a) lora_params", same(lora_params, 'dc3faa7a0c0a', 0))
+check("B4.6 (b) gb_full", same(gb_full, '342d9d384466', 1))
+check("B4.6 (b) gb_lora and gb_qlora", same(gb_lora, '74860294975f', 2) and same(gb_qlora, '349629836270', 2))
+
+# %% [markdown]
+# *Exercise B4.7 (1 point): choose a method.* A school has a base language model that answers correctly but in a cold, curt style. It has 3,000 pairs of answers (a polite answer that teachers chose and a curt one that they rejected) and one 24 GB GPU. In `ANSWERS["B4.7"]` write four or five sentences: which method you would use (SFT, RLHF or DPO) and why, how LoRA or QLoRA helps with the 24 GB, and which risk you would watch for and with what.
+
+# %%
+ANSWERS["B4.7"] = ""   # YOUR ANSWER
+
+# %%
+check("B4.7 interpretation written", n_words(ANSWERS.get("B4.7")) >= 45)
+
+# %% [markdown]
+# ## Task 5 — Synthesis with the capstone (6 points, 15 minutes)
 #
-# **Before you leave:** files in `/content` vanish when the Colab session ends. Download anything you want to keep (File → Download .ipynb, or copy your outline into your team's document), and submit the notebook the way your instructor asks. Your instructor announces the Pre-final exam details and the proposal requirements.
+# Three short scenarios that join Weeks 11 to 14 and the Structural Inspection Assistant, the capstone project of the course. Answer each in `ANSWERS`, in the number of sentences the question gives (2 points each). Use numbers where the question asks for them; you may use code cells for the arithmetic. A licensed engineer makes every pass or fail decision; the assistant never signs off on safety.
+
+# %% [markdown]
+# *Exercise B5.1 (2 points; Weeks 11 and 14).* A team adapts a pre-trained ViT-Base (hidden size 768, 12 layers, patches of 16 × 16 pixels, about 86 million parameters, a position table with 197 rows learned at 224 × 224) to the four classes crack, spalling, corrosion and none. They want to feed photos of 384 × 256 pixels. (a) How many patch tokens does one photo give, how many tokens with the class token, and how many attention scores does one head compute per layer for one photo? (b) The team puts LoRA adapters of rank 16 on the query and the value projection (each 768 × 768) of all 12 layers and trains a new head (768 × 4 + 4). How many parameters are trained, and what share of 86 million is that? (c) In two or three sentences: what goes wrong with the position table at this photo size, and name two ways out. Answer in three to six sentences, with your numbers.
+
+# %% [markdown]
+# *Exercise B5.2 (2 points; Weeks 12 and 13).* The team has few photos of early corrosion and wants 500 synthetic ones to balance the training set. Their candidate is a latent diffusion model: a 256 × 256 × 3 picture becomes a latent of 32 × 32 × 4. It can be sampled with DDPM (1,000 network calls) or with DDIM (25 steps) with classifier-free guidance (two network calls per step). (a) How many times fewer numbers does the latent have, and how many times fewer positions for attention? (b) How many network calls do 500 pictures need with DDPM and with guided DDIM, how many times fewer is that, and how long does guided DDIM take if one call takes 0.04 seconds? (c) Name one danger of training on the synthetic pictures, and one thing from Week 12 that the team should check if they considered a GAN instead. Answer in three to six sentences, with your numbers.
+
+# %% [markdown]
+# *Exercise B5.3 (2 points; Weeks 11 to 14): the design card.* Write a design card for the Structural Inspection Assistant in `ANSWERS["B5.3"]`. A photo comes in, the assistant classifies it (crack, spalling, corrosion or none), finds the matching checklist items and drafts a short summary for the engineer. The card has a line for each of four steps, and each line says **which model does the step, which week it comes from, and one number**: (1) the photo as tokens: a ViT or CLIP model, and the number of tokens for a 448 × 336 photo with 16 × 16 patches (with the class token); (2) the classifier: how it is adapted and the number of trainable parameters for your own choice of rank and matrices; (3) optional extra data: the model for synthetic images and the number of network calls for one picture with a sampler you choose; (4) the summary writer: how it is trained (SFT, DPO or both) and the loss or setting you would watch. Then add three more lines: **one evaluation** (a number you would measure, and on which photos), **one guardrail** (what could go wrong, for example reward hacking, and what stops it), and **who decides** (the engineer). Write 80 to 150 words in total.
+
+# %% [markdown]
+# Write your three answers here (the check only tells you that something is there; your instructor reads and marks the text):
+
+# %%
+ANSWERS["B5.1"] = ""   # YOUR ANSWER
+ANSWERS["B5.2"] = ""   # YOUR ANSWER
+ANSWERS["B5.3"] = ""   # YOUR ANSWER
+
+# %%
+for _k in ("B5.1", "B5.2", "B5.3"):
+    check(_k + " answer written", n_words(ANSWERS.get(_k)) >= (70 if _k == "B5.3" else 50))
+
+# %%
+print("Your ANSWERS (copy them into your submission if your instructor asks):")
+for k in sorted(ANSWERS):
+    print(f"\n{k}: {ANSWERS[k]}")
+
+# %% [markdown]
+# ## Finishing the exam
+#
+# 1. Check that every sub-question has an answer: the ✓ and ✗ lines above only tell you whether a number or a shape is right; your instructor marks the notebook with the marking scheme (correct result, method and interpretation), so make your method visible and write your reasoning in the `ANSWERS` entries.
+# 2. Run **Runtime → Restart session and run all** (Colab) or **Kernel → Restart Kernel and Run All Cells** (JupyterLab) once, to make sure the notebook runs from top to bottom without errors.
+# 3. In Colab, use **File → Save a copy in Drive** now if you have not done so, and download the notebook (**File → Download → .ipynb**); files in the session disappear when it ends. In JupyterLab, save the notebook (Ctrl+S).
+# 4. Submit the notebook the way your instructor asks.
+#
+# Good luck, and well done for getting this far in the course. This exam only asks you to show what you have already built in Weeks 11 to 14.

@@ -132,7 +132,7 @@ function check(file) {
         if ((s.steps || []).length < 3) at('needs ≥3 steps');
         (s.steps || []).forEach((st, k) => { if (!isStr(st.title) || !isStr(st.body, 30)) at(`step ${k + 1} needs title and body`); (st.active || []).forEach((a) => !ids.includes(a) && at(`step ${k + 1} activates unknown node "${a}"`)); if (!(st.active || []).length) at(`step ${k + 1} needs an active list`); });
       },
-      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens', 'gan_loss'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost, vit_tokens or gan_loss'); },
+      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens', 'gan_loss', 'ft_memory'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost, vit_tokens, gan_loss or ft_memory'); },
       network: () => {
         const L = s.layers;
         if (!Array.isArray(L) || L.length < 3 || L.some((n) => !(n >= 1 && n <= 5))) return at('layers must be ≥3 numbers, each 1..5');
@@ -374,6 +374,34 @@ function check(file) {
           const U = M.unetShapes({ size, inCh: s.inCh ?? 1, base: c.base ?? s.base ?? 16, levels: c.levels ?? L, timeDim: c.timeDim ?? s.timeDim ?? 32 });
           if (c.total != null && U.total !== c.total) at(`check ${k + 1}: total expected ${c.total}, computed ${U.total}`);
           if (c.layer && c.params != null) { const r = U.rows.find((q) => q.name.startsWith(c.layer)); if (!r) at(`check ${k + 1}: no layer starting "${c.layer}"`); else if (r.params !== c.params) at(`check ${k + 1}: ${c.layer} params expected ${c.params}, computed ${r.params}`); }
+        });
+      },
+      prefpair: () => {
+        if (!Array.isArray(s.pairs) || s.pairs.length < 2 || s.pairs.some((p) => !isStr(p.prompt) || !isStr(p.chosen) || !isStr(p.rejected))) return at('pairs needs ≥2 {prompt, chosen, rejected} entries (optional chosenScore, rejectedScore)');
+        (s.checks || []).forEach((c, k) => {
+          const rw = c.rw ?? s.pairs[c.pair]?.chosenScore, rl = c.rl ?? s.pairs[c.pair]?.rejectedScore;
+          if (c.prob != null && Math.abs(M.prefProb(rw, rl) - c.prob) > 0.002) at(`check ${k + 1}: probability expected ${c.prob}, computed ${M.prefProb(rw, rl).toFixed(4)}`);
+          if (c.loss != null && Math.abs(M.prefLoss(rw, rl) - c.loss) > 0.002) at(`check ${k + 1}: loss expected ${c.loss}, computed ${M.prefLoss(rw, rl).toFixed(4)}`);
+        });
+      },
+      klreward: () => {
+        const a = s.answers;
+        if (!Array.isArray(a) || a.length < 3 || a.some((x) => !isStr(x.text) || typeof x.reward !== 'number' || !(x.ref > 0))) return at('answers needs ≥3 {text, reward, ref > 0}');
+        if (Math.abs(a.reduce((q, x) => q + x.ref, 0) - 1) > 1e-6) return at('the ref probabilities must sum to 1');
+        const ref = a.map((x) => x.ref), r = a.map((x) => x.reward);
+        (s.checks || []).forEach((c, k) => {
+          const o = M.klOptimum({ ref, r, beta: c.beta });
+          if (c.opt) c.opt.forEach((q, i) => { if (Math.abs(o[i] - q) > 0.002) at(`check ${k + 1}: optimal probability ${i + 1} expected ${q}, computed ${o[i].toFixed(4)}`); });
+          if (c.J != null) { const J = M.klObjective({ pi: o, ref, r, beta: c.beta }).J; if (Math.abs(J - c.J) > 0.005) at(`check ${k + 1}: best J expected ${c.J}, computed ${J.toFixed(4)}`); }
+        });
+      },
+      lowrank: () => {
+        const A = s.matrix;
+        if (!Array.isArray(A) || A.length < 3 || A.length > 10 || A.some((r) => !Array.isArray(r) || r.length !== A[0].length)) return at('matrix must be a 3–10 row rectangular matrix of numbers');
+        const sv = M.svdSmall(A).S;
+        (s.checks || []).forEach((c, k) => {
+          if (c.sv && c.sv.some((q, i) => Math.abs(sv[i] - q) > 0.01)) at(`check ${k + 1}: singular values expected ${c.sv}, computed ${sv.slice(0, c.sv.length).map((q) => q.toFixed(3))}`);
+          if (c.rank != null && c.err != null) { const B = M.lowRankApprox(A, c.rank); const e = Math.sqrt(A.reduce((q, row, i) => q + row.reduce((t, x, j) => t + (x - B[i][j]) ** 2, 0), 0)) / Math.sqrt(A.reduce((q, row) => q + row.reduce((t, x) => t + x * x, 0), 0)); if (Math.abs(e - c.err) > 0.005) at(`check ${k + 1}: relative error at rank ${c.rank} expected ${c.err}, computed ${e.toFixed(4)}`); }
         });
       },
       mlp: () => { if (!Array.isArray(s.layers) || s.layers.length < 3 || s.layers.some((n) => !(n >= 1))) at('layers must be ≥3 positive numbers'); },

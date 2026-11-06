@@ -430,3 +430,6 @@
   .wp-prose .vz-fchip.in{background:var(--cyan-soft-bg);border-color:var(--cyan)}
   .wp-prose .vz-fchip.out{background:var(--accent-soft-bg);border-color:var(--accent)}
   .wp-prose .vz-farrow{color:var(--text3);font-size:18px}
+
+  /* Week 14 figures */
+  .wp-prose .vz-pref{padding:10px 12px;margin:10px 0;border:1px solid var(--divider);border-radius:10px;background:var(--surface2)}
