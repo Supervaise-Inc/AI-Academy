@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -85,8 +85,8 @@ function Slider({ label, min, max, step, value, onChange, show }) {
 }
 
 function Calc({ spec, fig }) {
-  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : 24);
-  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : 0);
+  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : spec.kind === 'gan_loss' ? -3 : 24);
+  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : spec.kind === 'gan_loss' ? 3 : 0);
   const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : 15);
   let body = null;
   if (spec.kind === 'fc_vs_conv') {
@@ -140,6 +140,25 @@ function Calc({ spec, fig }) {
           </li>
         </ul>
         <p className="wg-note">Weights only: parameters × bytes per parameter (GB = 10⁹ bytes). “Training, Adam” uses the common mixed-precision estimate of 16 bytes per parameter (weights, gradients, FP32 master copy and two Adam moments). Activations, the KV cache and framework overhead come on top.</p>
+      </>
+    );
+  } else if (spec.kind === 'gan_loss') {
+    const dF = sigmoid(a), dR = sigmoid(b);
+    const f = (q) => Number(q.toFixed(3)).toString();
+    body = (
+      <>
+        <Slider label="Discriminator's score (logit) for a FAKE picture" min={-8} max={8} step={0.5} value={a} onChange={setA} show={(q) => `${q.toFixed(1)}  →  D = ${f(sigmoid(q))}`} />
+        <Slider label="Discriminator's score (logit) for a REAL picture" min={-8} max={8} step={0.5} value={b} onChange={setB} show={(q) => `${q.toFixed(1)}  →  D = ${f(sigmoid(q))}`} />
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Discriminator loss, real: −ln D(x)</span><span className="vz-big">{f(-Math.log(dR))}</span><span className="wg-note">small when D is sure it is real</span></div>
+          <div><span className="wg-k">Discriminator loss, fake: −ln(1 − D(G(z)))</span><span className="vz-big">{f(-Math.log(1 - dF))}</span><span className="wg-note">small when D is sure it is fake</span></div>
+          <div className="out"><span className="wg-k">Value V = ln D(x) + ln(1 − D(G(z)))</span><span className="vz-big">{f(Math.log(dR) + Math.log(1 - dF))}</span><span className="wg-note">D wants V high, G wants it low; at equilibrium V = −ln 4 = −1.386</span></div>
+        </div>
+        <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: 'repeat(2,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Generator, original loss ln(1 − D(G(z)))</span><span className="vz-big">{f(Math.log(1 - dF))}</span><span className="wg-note">gradient w.r.t. the logit = −D = {f(-dF)}: tiny when D is winning (D ≈ 0)</span></div>
+          <div className="out"><span className="wg-k">Generator, non-saturating loss −ln D(G(z))</span><span className="vz-big">{f(-Math.log(dF))}</span><span className="wg-note">gradient w.r.t. the logit = D − 1 = {f(dF - 1)}: large when D is winning</span></div>
+        </div>
+        <p className="wg-note">Drag the fake score to −6: the original generator loss barely moves (gradient about 0), so the generator learns nothing exactly when it needs to learn most. {spec.note || ''}</p>
       </>
     );
   } else if (spec.kind === 'vit_tokens') {
@@ -547,12 +566,16 @@ function Scatter({ spec, fig }) {
         <svg viewBox={`0 0 ${S} ${S}`} className="vz-sq" role="img" aria-label="A 2-D map of words or items; closer points are more similar.">
           <rect width={S} height={S} rx="10" fill="var(--surface2)" />
           {an >= 0 ? (() => { const a = spec.analogies[an]; return <><line x1={sx(by[a.b].x)} y1={sy(by[a.b].y)} x2={sx(by[a.a].x)} y2={sy(by[a.a].y)} stroke="var(--accent)" strokeWidth="2" strokeDasharray="5 4" /><line x1={sx(by[a.c].x)} y1={sy(by[a.c].y)} x2={sx(by[a.c].x + by[a.a].x - by[a.b].x)} y2={sy(by[a.c].y + by[a.a].y - by[a.b].y)} stroke="var(--accent)" strokeWidth="2" strokeDasharray="5 4" /></>; })() : null}
-          {pts.map((p) => (
-            <g key={p.label} onClick={() => { setAn(-1); setSel(p.label); }} style={{ cursor: 'pointer' }}>
-              <circle cx={sx(p.x)} cy={sy(p.y)} r={p.label === sel && an < 0 ? 9 : 6} fill={GROUP_COLORS[groups.indexOf(p.group || '') % 5]} stroke={p.label === sel && an < 0 ? 'var(--text)' : 'none'} strokeWidth="2" />
-              <text x={sx(p.x) + (sx(p.x) > S * 0.72 ? -10 : 10)} y={sy(p.y) + 4} textAnchor={sx(p.x) > S * 0.72 ? 'end' : 'start'} className="vz-lab">{p.label}</text>
-            </g>
-          ))}
+          {[...pts].sort((u, v) => (u.hideLabel ? 1 : 0) - (v.hideLabel ? 1 : 0)).map((p) => {
+            const on = p.label === sel && an < 0;
+            const small = p.hideLabel && !on;
+            return (
+              <g key={p.label} onClick={() => { setAn(-1); setSel(p.label); }} style={{ cursor: 'pointer' }}>
+                <circle cx={sx(p.x)} cy={sy(p.y)} r={on ? 9 : small ? 5 : 6} fill={GROUP_COLORS[groups.indexOf(p.group || '') % 5]} stroke={on ? 'var(--text)' : small ? '#fff' : 'none'} strokeWidth={small ? 1.5 : 2} />
+                {small ? null : <text x={sx(p.x) + (sx(p.x) > S * 0.72 ? -10 : 10)} y={sy(p.y) + 4} textAnchor={sx(p.x) > S * 0.72 ? 'end' : 'start'} className="vz-lab" style={{ paintOrder: 'stroke', stroke: 'var(--surface2)', strokeWidth: 3 }}>{p.label}</text>}
+              </g>
+            );
+          })}
         </svg>
         <div>
           <div className="wg-row" style={{ marginBottom: 10 }}>
@@ -1489,9 +1512,9 @@ function CnnStack({ spec, fig }) {
             <tr><td>input</td><td></td><td>{spec.input[0]} × {spec.input[1]} × {spec.input[2]}</td><td>0</td><td>1 × 1</td></tr>
             {layers.map((L, i) => (
               <tr key={i} className={rows[i].valid ? '' : 'bad'}>
-                <td>{L.type === 'conv' ? 'conv' : L.type === 'pool' ? 'max pool' : L.type}</td>
+                <td>{L.type === 'conv' ? 'conv' : L.type === 'convT' ? 'transpose conv' : L.type === 'pool' ? 'max pool' : L.type}</td>
                 <td>
-                  {L.type === 'conv' ? (<>
+                  {L.type === 'conv' || L.type === 'convT' ? (<>
                     <label className="vz-sel">k <select value={L.k} onChange={(e) => set(i, { k: +e.target.value })}>{[1, 3, 5, 7].map((q) => <option key={q}>{q}</option>)}</select></label>{' '}
                     <label className="vz-sel">stride <select value={L.stride || 1} onChange={(e) => set(i, { stride: +e.target.value })}>{[1, 2].map((q) => <option key={q}>{q}</option>)}</select></label>{' '}
                     <label className="vz-sel">pad <select value={L.pad || 0} onChange={(e) => set(i, { pad: +e.target.value })}>{[0, 1, 2, 3].map((q) => <option key={q}>{q}</option>)}</select></label>{' '}
@@ -2091,4 +2114,94 @@ function Fusion({ spec, fig }) {
   );
 }
 
-export const VIZ = { clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- ganlab (a one-dimensional GAN trained live)
+function GanLab({ spec, fig }) {
+  const mu = spec.mu ?? 4, sigma = spec.sigma ?? 1;
+  const [opts, setOpts] = useState({ lr: spec.lr ?? 0.1, lrG: spec.lrG ?? 0.02, dSteps: spec.dSteps ?? 5, nonSat: spec.nonSat ?? true });
+  const [run, setRun] = useState(false);
+  const st = useRef({ s: ganInit(), lossD: null, lossG: null });
+  const [, force] = useState(0);
+  const optsRef = useRef(opts); optsRef.current = opts;
+  const step = (k) => { for (let i = 0; i < k; i++) { const r = ganStep(st.current.s, { mu, sigma, batch: 64, seed: spec.seed ?? 11, ...optsRef.current }); st.current = { s: r.state, lossD: r.lossD, lossG: r.lossG }; } force((n) => n + 1); };
+  useEffect(() => { if (!run) return undefined; const id = setInterval(() => step(8), 40); return () => clearInterval(id); }, [run]); // eslint-disable-line react-hooks/exhaustive-deps
+  const reset = () => { setRun(false); st.current = { s: ganInit(), lossD: null, lossG: null }; force((n) => n + 1); };
+  const { s, lossD, lossG } = st.current;
+  const pdf = (x, m, sd) => Math.exp(-((x - m) ** 2) / (2 * sd * sd)) / (sd * Math.sqrt(2 * Math.PI));
+  const lo = -2, hi = 10, W = 560, H = 190;
+  const sx = (x) => 30 + ((x - lo) / (hi - lo)) * (W - 50);
+  const sa = Math.max(Math.abs(s.a), 0.05);
+  const ymax = Math.max(0.45, pdf(0, 0, sa) * 1.05);
+  const sy = (p) => H - 24 - (Math.min(p, ymax) / ymax) * (H - 44);
+  const xs = Array.from({ length: 121 }, (_, i) => lo + ((hi - lo) * i) / 120);
+  const path = (f) => xs.map((x, i) => `${i ? 'L' : 'M'}${sx(x).toFixed(1)} ${sy(f(x)).toFixed(1)}`).join(' ');
+  const dPath = xs.map((x, i) => `${i ? 'L' : 'M'}${sx(x).toFixed(1)} ${(H - 24 - sigmoid(s.w1 * x + s.w2 * x * x + s.c) * (H - 44)).toFixed(1)}`).join(' ');
+  const set = (p) => setOpts((o) => ({ ...o, ...p }));
+  const f2 = (q) => (q == null ? '–' : Number(q.toFixed(2)).toString());
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <svg viewBox={`0 0 ${W} ${H}`} className="vz-plot" role="img" aria-label={`Real data centred at ${mu}, generated data centred at ${f2(s.b)} with spread ${f2(sa)}, after ${s.step} steps`}>
+        <line x1="30" x2={W - 20} y1={H - 24} y2={H - 24} className="vz-grid" />
+        <path d={path((x) => pdf(x, mu, sigma))} fill="none" stroke="var(--text)" strokeWidth="2.4" />
+        <path d={path((x) => pdf(x, s.b, sa))} fill="none" stroke="var(--accent)" strokeWidth="2.6" />
+        <path d={dPath} fill="none" stroke="var(--amber)" strokeWidth="2" strokeDasharray="6 4" />
+        {[0, 2, 4, 6, 8].map((x) => <text key={x} x={sx(x)} y={H - 6} textAnchor="middle" className="vz-tick">{x}</text>)}
+      </svg>
+      <div className="wg-row vz-legend">
+        <span className="vz-key"><i style={{ background: 'var(--text)' }} />real data N({mu}, {sigma}²)</span>
+        <span className="vz-key"><i style={{ background: 'var(--accent)' }} />generator: N({f2(s.b)}, {f2(sa)}²)</span>
+        <span className="vz-key"><i style={{ background: 'var(--amber)' }} />discriminator D(x) (0 to 1)</span>
+      </div>
+      <p className="wg-p" aria-live="polite" style={{ margin: '8px 0' }}>Step <strong>{s.step}</strong> · generator mean <strong>{f2(s.b)}</strong> (target {mu}) · generator spread <strong>{f2(sa)}</strong> (target {sigma}) · D loss <strong>{f2(lossD)}</strong> · G loss <strong>{f2(lossG)}</strong></p>
+      <Slider label="Discriminator learning rate" min={0.01} max={0.3} step={0.01} value={opts.lr} onChange={(q) => set({ lr: q })} show={(q) => q.toFixed(2)} />
+      <Slider label="Generator learning rate" min={0.005} max={0.2} step={0.005} value={opts.lrG} onChange={(q) => set({ lrG: q })} show={(q) => q.toFixed(3)} />
+      <Slider label="Discriminator steps per generator step" min={1} max={10} step={1} value={opts.dSteps} onChange={(q) => set({ dSteps: q })} />
+      <div className="wg-row" style={{ marginTop: 6 }}>
+        <button type="button" className="wg-btn" onClick={() => setRun((r) => !r)}>{run ? 'Pause' : 'Train'}</button>
+        <button type="button" className="wg-btn ghost" onClick={() => step(10)}>+10 steps</button>
+        <button type="button" className="wg-btn ghost" onClick={reset}>Reset</button>
+        <button type="button" className={'wg-chip' + (opts.nonSat ? ' on' : '')} aria-pressed={opts.nonSat} onClick={() => set({ nonSat: !opts.nonSat })}>non-saturating generator loss</button>
+      </div>
+      <p className="wg-note">Generator: G(z) = a·z + b with z ~ N(0, 1). Discriminator: D(x) = σ(w₁x + w₂x² + c). Each step is a few discriminator updates followed by one generator update, on fresh samples. Training is a tug of war, not a smooth descent: the curves overshoot and wobble. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- upsample (nearest, bilinear and transpose convolutions)
+function Upsample({ spec, fig }) {
+  const g = spec.input;
+  const methods = [
+    { id: 'nearest', label: 'Nearest neighbour (no learning)' },
+    { id: 'bilinear', label: 'Bilinear (no learning)' },
+    { id: 't2', label: 'Transpose conv k=2, s=2', k: 2, s: 2, p: 0 },
+    { id: 't3', label: 'Transpose conv k=3, s=2', k: 3, s: 2, p: 0 },
+    { id: 't4', label: 'Transpose conv k=4, s=2, p=1', k: 4, s: 2, p: 1 },
+  ];
+  const [mi, setMi] = useState(spec.start ?? 4);
+  const m = methods[mi];
+  const kernelFor = (k) => Array.from({ length: k }, () => Array(k).fill(1));
+  const out = useMemo(() => (m.id === 'nearest' ? upsampleNearest(g) : m.id === 'bilinear' ? upsampleBilinear(g) : transposeConvPad(g, kernelFor(m.k), m.s, m.p)), [g, m]);
+  const cover = useMemo(() => (m.k ? transposeConvPad(g.map((r) => r.map(() => 1)), kernelFor(m.k), m.s, m.p) : null), [g, m]);
+  const inner = cover && cover.length > 3 ? cover.slice(1, -1).map((r) => r.slice(1, -1)) : cover;
+  const uneven = cover && new Set(inner.flat()).size > 1;
+  const n = g.length;
+  const tone = (v) => `color-mix(in srgb, var(--accent) ${Math.round(Math.min(1, Math.abs(v) / (spec.max || 9)) * 70)}%, var(--surface2))`;
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-tabs" role="tablist">{methods.map((x, k) => <button key={x.id} type="button" role="tab" aria-selected={mi === k} className={'wg-tab' + (mi === k ? ' on' : '')} onClick={() => setMi(k)}>{x.label}</button>)}</div>
+      <div className="vz-conv" style={{ marginTop: 10, alignItems: 'flex-start' }}>
+        <div><span className="wg-k">Input {n}×{n}</span><Grid data={g} tone={tone} /></div>
+        <span className="vz-op">→</span>
+        <div><span className="wg-k">Output {out.length}×{out[0].length}{m.k ? ` = (${n} − 1)·${m.s} − 2·${m.p} + ${m.k}` : ' = 2 × the input'}</span><Grid data={out.map((r) => r.map((q) => Math.round(q * 100) / 100))} tone={tone} cls="out" /></div>
+        {cover ? <div><span className="wg-k">How many kernel copies reach each output cell</span><Grid data={cover} tone={(v) => `color-mix(in srgb, var(--amber) ${Math.round((v / Math.max(...cover.flat())) * 70)}%, var(--surface2))`} /></div> : null}
+      </div>
+      <p className="wg-p" aria-live="polite" style={{ margin: '10px 0 0' }}>{!m.k ? 'A fixed rule: nothing here can be learned. It only copies or blends neighbouring values.' : uneven ? `Uneven overlap: some output cells receive more copies of the kernel than others (${Math.min(...cover.flat())} to ${Math.max(...cover.flat())}), so even a constant input gives a pattern of bright and dark cells. This is the checkerboard artefact.` : `Even overlap in the middle: every inner output cell receives ${inner[0][0]} copies of the kernel, so a constant input stays constant there (the border cells see fewer copies because the output is cropped).`} {m.k ? 'The kernel here is all ones to show the overlap; in a real layer its numbers are learned.' : ''}</p>
+      <p className="wg-note">{spec.note || ''}</p>
+    </div>
+  );
+}
+
+export const VIZ = { ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

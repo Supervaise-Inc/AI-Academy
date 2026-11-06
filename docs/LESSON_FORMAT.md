@@ -157,6 +157,7 @@ Kinds: `fc_vs_conv` (parameters of a fully connected layer vs a conv layer for a
   "analogies": [ { "a": "king", "b": "man", "c": "woman", "expect": "queen" } ] }
 ```
 The validator recomputes each analogy (a − b + c, nearest by the metric, excluding a, b, c) and fails unless it lands on `expect`. Say in `note` that the coordinates are illustrative.
+A point may set `"hideLabel": true` to draw as a small dot with its label shown only when it is selected: use it for crowds of points that sit on top of each other (for example generated samples near the real clusters).
 
 ### `heatmap` (a labelled matrix; tabs for several matrices)
 ```json
@@ -277,6 +278,18 @@ Use it whenever a lesson introduces a formula: every symbol is a `{t, id}` term 
 
 ### `fusion` (how a model can combine modalities)
 `{ "type": "fusion", "title": "…", "intro": "…", "patterns": [ { "name": "Two encoders, one space (CLIP)", "inputs": ["image","text"], "stages": ["image encoder","text encoder","compare vectors"], "output": "similarity score", "how": "…", "examples": "…", "good": "…", "bad": "…" }, … ≥2 ], "note": "…" }`. Tabs show each pattern as a row of chips (inputs → stages → output) with an explanation, examples, strengths and weaknesses.
+
+### `ganlab` (a one-dimensional GAN trained live in the browser)
+`{ "type": "ganlab", "title": "…", "intro": "…", "mu": 4, "sigma": 1, "lr": 0.1, "lrG": 0.02, "dSteps": 5, "nonSat": true, "seed": 11, "note": "…", "checks": [ { "steps": 3000, "meanMin": 3.3, "meanMax": 4.5, "spreadMin": 0.5, "spreadMax": 1.6 } ] }`. Real data N(mu, sigma²); generator G(z) = a·z + b; discriminator D(x) = σ(w₁x + w₂x² + c); each step is `dSteps` discriminator updates then one generator update with batch 64. The figure shows the real and generated densities and D(x), the step count, the two losses, sliders for both learning rates and the number of D steps per G step, a Train / +10 steps / Reset set of buttons, and a toggle between the original and the non-saturating generator loss. Measured with the defaults above: after 300 / 1,000 / 3,000 steps the generator is (a 0.99 / 0.89 / 1.06, b 3.41 / 3.91 / 3.74): the mean is learned quickly and the spread wobbles. Other settings collapse the spread towards 0 (for example lr 0.05 with 1 D step: a ≈ 0.03 after 1,500 steps): training is a tug of war. `checks` run the same simulation in the validator and bound the generator's mean (`b`) and spread (`|a|`) after `steps` steps (optionally overriding `lr`, `lrG`, `dSteps`, `nonSat`).
+
+### `upsample` (nearest, bilinear and transpose-convolution upsampling)
+`{ "type": "upsample", "title": "…", "intro": "…", "input": [[1,2,3],[4,5,6],[7,8,9]], "start": 4, "max": 9, "note": "…" }`. A 3×3 to 5×5 grid is upsampled by 2 by five methods (tabs): nearest neighbour, bilinear (PyTorch's `align_corners=False`), and transpose convolutions with kernel 2/stride 2, kernel 3/stride 2 and kernel 4/stride 2/padding 1 (the DCGAN setting). For the transpose convolutions a second grid counts how many kernel copies reach each output cell: uneven counts (kernel 3, stride 2) are the checkerboard artefact.
+
+### `calc` kind `gan_loss`
+`{ "type": "calc", "kind": "gan_loss", "title": "…" }`: two sliders for the discriminator's logits on a fake and a real picture; shows the discriminator's two loss terms, the value V = ln D(x) + ln(1 − D(G(z))) (equilibrium −ln 4 = −1.386) and the generator's original loss ln(1 − D) against the non-saturating −ln D with their gradients with respect to the logit (−D and D − 1): the original gradient vanishes when D(fake) ≈ 0.
+
+### `cnnstack` with transpose convolutions
+Layers may also be `{ "type": "reshape", "shape": [4,4,512] }` (a no-parameter reshape of the previous output into H×W×C: put it after an `fc` layer) and `{ "type": "convT", "k": 4, "stride": 2, "pad": 1, "filters": 256, "outputPadding": 0 }` (a transpose convolution: output size `(n − 1)·stride − 2·pad + k + outputPadding`, parameters `k·k·C_in·filters + filters`). The receptive-field column shows "–" for these layers. Example (the DCGAN generator): input `[1,1,100]`, `fc` 8192 (827,392), `reshape` [4,4,512], convT 256 (2,097,408) → 8×8, 128 (524,416) → 16×16, 64 (131,136) → 32×32, 3 (3,075) → 64×64×3.
 
 ### `calc` kind `split`
 `{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.

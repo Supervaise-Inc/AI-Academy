@@ -132,7 +132,7 @@ function check(file) {
         if ((s.steps || []).length < 3) at('needs ≥3 steps');
         (s.steps || []).forEach((st, k) => { if (!isStr(st.title) || !isStr(st.body, 30)) at(`step ${k + 1} needs title and body`); (st.active || []).forEach((a) => !ids.includes(a) && at(`step ${k + 1} activates unknown node "${a}"`)); if (!(st.active || []).length) at(`step ${k + 1} needs an active list`); });
       },
-      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost or vit_tokens'); },
+      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens', 'gan_loss'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost, vit_tokens or gan_loss'); },
       network: () => {
         const L = s.layers;
         if (!Array.isArray(L) || L.length < 3 || L.some((n) => !(n >= 1 && n <= 5))) return at('layers must be ≥3 numbers, each 1..5');
@@ -333,6 +333,20 @@ function check(file) {
       fusion: () => {
         if (!Array.isArray(s.patterns) || s.patterns.length < 2) return at('patterns needs ≥2 entries');
         s.patterns.forEach((p, k) => { if (!isStr(p.name) || !Array.isArray(p.inputs) || !Array.isArray(p.stages) || !isStr(p.output) || !isStr(p.how) || !isStr(p.examples) || !isStr(p.good) || !isStr(p.bad)) at(`pattern ${k + 1} needs name, inputs[], stages[], output, how, examples, good, bad`); });
+      },
+      ganlab: () => {
+        (s.checks || []).forEach((c, k) => {
+          const R = M.ganRun(c.steps, { mu: s.mu ?? 4, sigma: s.sigma ?? 1, lr: c.lr ?? s.lr ?? 0.1, lrG: c.lrG ?? s.lrG ?? 0.02, dSteps: c.dSteps ?? s.dSteps ?? 5, nonSat: c.nonSat ?? s.nonSat ?? true, seed: s.seed ?? 11 });
+          const sp = Math.abs(R.state.a);
+          if (c.meanMin != null && R.state.b < c.meanMin) at(`check ${k + 1}: generator mean ${R.state.b.toFixed(2)} < ${c.meanMin}`);
+          if (c.meanMax != null && R.state.b > c.meanMax) at(`check ${k + 1}: generator mean ${R.state.b.toFixed(2)} > ${c.meanMax}`);
+          if (c.spreadMin != null && sp < c.spreadMin) at(`check ${k + 1}: generator spread ${sp.toFixed(2)} < ${c.spreadMin}`);
+          if (c.spreadMax != null && sp > c.spreadMax) at(`check ${k + 1}: generator spread ${sp.toFixed(2)} > ${c.spreadMax}`);
+        });
+      },
+      upsample: () => {
+        const g = s.input;
+        if (!Array.isArray(g) || g.length < 3 || g.length > 5 || g.some((r) => !Array.isArray(r) || r.length !== g.length)) at('input must be a 3×3 to 5×5 square matrix of numbers');
       },
       mlp: () => { if (!Array.isArray(s.layers) || s.layers.length < 3 || s.layers.some((n) => !(n >= 1))) at('layers must be ≥3 positive numbers'); },
       curve: () => {

@@ -428,6 +428,15 @@ export function convShapes(input, layers) {
       const s = L.stride || L.k;
       rf += (L.k - 1) * jump; jump *= s;
       h = outSize(h, L.k, s); w = outSize(w, L.k, s);
+    } else if (L.type === 'convT') {
+      const s = L.stride || 1, p = L.pad || 0;
+      params = L.k * L.k * c * L.filters + L.filters;
+      rf = null; jump = 1;
+      h = outSizeT(h, L.k, s, p, L.outputPadding || 0); w = outSizeT(w, L.k, s, p, L.outputPadding || 0); c = L.filters;
+    } else if (L.type === 'reshape') {
+      const tot = L.shape[0] * L.shape[1] * L.shape[2];
+      h = L.shape[0]; w = L.shape[1]; c = L.shape[2]; flat = null;
+      params = 0; rf = null; if (tot !== (L._from || tot)) params = 0;
     } else if (L.type === 'flatten') {
       flat = h * w * c; h = 1; w = 1; c = flat;
     } else if (L.type === 'fc') {
@@ -435,7 +444,7 @@ export function convShapes(input, layers) {
       params = inN * L.units + L.units;
       flat = L.units; h = 1; w = 1; c = L.units;
     }
-    return { type: L.type, shape: [h, w, c], params, rf: L.type === 'fc' || L.type === 'flatten' ? null : rf, valid: h >= 1 && w >= 1 };
+    return { type: L.type, shape: [h, w, c], params, rf: L.type === 'fc' || L.type === 'flatten' || L.type === 'convT' || L.type === 'reshape' ? null : rf, valid: h >= 1 && w >= 1 };
   });
 }
 
@@ -590,4 +599,71 @@ export function patchPermutation(g, seed = 4) {
   const p = Array.from({ length: g * g }, (_, i) => i);
   for (let i = p.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [p[i], p[j]] = [p[j], p[i]]; }
   return p;
+}
+
+// ---- Week 12: GANs and transpose convolution
+// A one-dimensional GAN. Real data ~ N(mu, sigma^2). Generator G(z) = a*z + b with z ~ N(0,1) (a learnable scale and shift).
+// Discriminator D(x) = sigmoid(w1*x + w2*x^2 + c). Alternating gradient steps with batch size `batch`, learning rate `lr` for both.
+export const sigmoid = (u) => 1 / (1 + Math.exp(-u));
+export function ganInit() { return { a: 0.5, b: 0, w1: 0, w2: 0, c: 0, step: 0 }; }
+function gaussStream(seed) {
+  const r = mulberry32(seed);
+  return () => { let u = 0, v = 0; while (u === 0) u = r(); while (v === 0) v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+}
+// One alternating step (one D step then one G step). `nonSat` chooses the generator loss: true = -ln D(G(z)), false = ln(1 - D(G(z))).
+export function ganStep(s, { mu = 4, sigma = 1, lr = 0.05, lrG = null, batch = 64, nonSat = true, seed = 11, dSteps = 1 } = {}) {
+  const lg = lrG == null ? lr : lrG;
+  const g = gaussStream(seed * 7919 + s.step);
+  const n = batch;
+  const out = { ...s };
+  let nd = 0;
+  // --- discriminator: dSteps gradient steps on fresh real and fake samples
+  for (let k = 0; k < dSteps; k++) {
+    const xr = Array.from({ length: n }, () => mu + sigma * g());
+    const zz = Array.from({ length: n }, () => g());
+    const xf0 = zz.map((q) => out.a * q + out.b);
+    let gw1 = 0, gw2 = 0, gc = 0, lossD = 0;
+    xr.forEach((x) => { const u = out.w1 * x + out.w2 * x * x + out.c; const p = sigmoid(u); lossD -= Math.log(p + 1e-12); const d = p - 1; gw1 += d * x; gw2 += d * x * x; gc += d; });
+    xf0.forEach((x) => { const u = out.w1 * x + out.w2 * x * x + out.c; const p = sigmoid(u); lossD -= Math.log(1 - p + 1e-12); const d = p; gw1 += d * x; gw2 += d * x * x; gc += d; });
+    nd = lossD / (2 * n);
+    out.w1 -= (lr * gw1) / (2 * n); out.w2 -= (lr * gw2) / (2 * n); out.c -= (lr * gc) / (2 * n);
+  }
+  // --- generator step (against the updated discriminator)
+  const z = Array.from({ length: n }, () => g());
+  let ga = 0, gb = 0, lossG = 0;
+  z.forEach((q) => {
+    const x = out.a * q + out.b;
+    const u = out.w1 * x + out.w2 * x * x + out.c; const p = sigmoid(u);
+    const dLdu = nonSat ? p - 1 : -p;
+    lossG += nonSat ? -Math.log(p + 1e-12) : Math.log(1 - p + 1e-12);
+    const dudx = out.w1 + 2 * out.w2 * x;
+    ga += dLdu * dudx * q; gb += dLdu * dudx;
+  });
+  out.a -= (lg * ga) / n; out.b -= (lg * gb) / n;
+  out.step = s.step + 1;
+  return { state: out, lossD: nd, lossG: lossG / n };
+}
+export function ganRun(steps, opts = {}) {
+  let s = ganInit(), last = null;
+  for (let i = 0; i < steps; i++) { last = ganStep(s, opts); s = last.state; }
+  return { state: s, lossD: last ? last.lossD : null, lossG: last ? last.lossG : null };
+}
+// Output size of a transpose convolution (PyTorch convention): (n - 1) * stride - 2 * pad + kernel + outputPadding
+export const outSizeT = (n, k, s = 1, p = 0, op = 0) => (n - 1) * s - 2 * p + k + op;
+
+// Upsampling a small grid by 2: nearest neighbour, bilinear (PyTorch's align_corners=False) or a transpose convolution (kernel k, stride 2, padding p).
+export function upsampleNearest(g) { const n = g.length, m = g[0].length; return Array.from({ length: 2 * n }, (_, i) => Array.from({ length: 2 * m }, (_, j) => g[i >> 1][j >> 1])); }
+export function upsampleBilinear(g) {
+  const n = g.length, m = g[0].length;
+  const src = (i, size) => Math.min(size - 1, Math.max(0, (i + 0.5) / 2 - 0.5));
+  const at = (a, b) => g[Math.min(n - 1, Math.max(0, a))][Math.min(m - 1, Math.max(0, b))];
+  return Array.from({ length: 2 * n }, (_, i) => Array.from({ length: 2 * m }, (_, j) => {
+    const y = src(i, n), x = src(j, m), y0 = Math.floor(y), x0 = Math.floor(x), fy = y - y0, fx = x - x0;
+    return at(y0, x0) * (1 - fy) * (1 - fx) + at(y0, x0 + 1) * (1 - fy) * fx + at(y0 + 1, x0) * fy * (1 - fx) + at(y0 + 1, x0 + 1) * fy * fx;
+  }));
+}
+export function transposeConvPad(inp, ker, stride = 2, pad = 0) {
+  const full = transposeConv(inp, ker, stride);
+  const oh = full.length - 2 * pad, ow = full[0].length - 2 * pad;
+  return Array.from({ length: oh }, (_, i) => Array.from({ length: ow }, (_, j) => full[i + pad][j + pad]));
 }
