@@ -1,306 +1,2667 @@
 # %% [markdown]
-# # Week 7 — Attention Mechanisms: lab notebook
+# # Week 7 — Language Models and Attention: lab notebook
 #
-# Built for **Google Colab**. First choose **File → Save a copy in Drive** so that your own work is saved in your own copy.
+# Built for **Google Colab**. Before you start, choose **File → Save a copy in Drive**, so that you work in your own copy and your answers are kept.
 #
-# **Runtime:** a CPU is enough (nothing to change). **Estimated time:** about 3 hours, but the code itself runs in seconds.
+# **Runtime:** a normal CPU runtime is fine for everything; no GPU is needed and nothing is downloaded: the lab's memory task is generated from random numbers. **Time:** about 3 hours. The slowest cells (training an RNN on long sequences) take under a minute each on a free Colab CPU.
 #
-# This is Laboratory 3, Part 1: *Scaled dot-product attention*. You compute attention by hand, check it in PyTorch, then run two small experiments.
+# This lab is called **Imagine a model that remembers, then give it attention**. First you imagine yourself reading a long letter: do you carry everything in your head, or may you glance back at any line? Then you build the story yourself on a controlled **memory task** (the label is the first symbol of a long random sequence): you feel a window model and an RNN forget as the sequence grows, watch the gradient shrink through time, build an LSTM cell by hand and see it last longer, compute attention by hand, compare hard and soft attention (and why only soft can be trained), and finally give a tiny model an attention layer and watch it solve the task at lengths where the RNN fails, while measuring the cost of attention.
 #
-# **What you will do**
-# - Part A: explain in words why soft attention can be trained and hard attention cannot.
-# - Part B: compute scores, weights and output for one query, three keys and three values, by hand and then in PyTorch.
-# - Part C: test what the √d_k scaling does as the key size grows, and compare `argmax` (hard) with `softmax` (soft) attention.
-# - Reflect on what surprised you.
+# ### What you will do
 #
-# **How this notebook works:** run the cells from top to bottom with the ▶ button. **Your turn** cells are for you to fill in. A **Check** cell tells you whether you are right. Open the **Show a possible answer** block only after you have tried.
+# 1. **Part 1. Sequences and the memory task** (20 min): make the data, measure what a last-symbol model and a fixed window can do, and see why longer sequences need more.
+# 2. **Part 2. An RNN from scratch** (25 min): write the recurrence by hand, check it against PyTorch, train an RNN classifier at growing lengths and find where it stops learning.
+# 3. **Part 3. Gradients through time** (25 min): compute the vanishing gradient by hand, verify it with autograd, measure it in a real RNN, and meet exploding gradients and clipping.
+# 4. **Part 4. LSTM: gates and a memory highway** (30 min): build one LSTM step by hand, check it against PyTorch, see the memory highway and compare an LSTM with the RNN.
+# 5. **Part 5. Attention by hand** (30 min): compute scores, weights and outputs, write scaled dot-product attention, understand the square root of d_k and measure the cost.
+# 6. **Part 6. Hard vs soft attention** (25 min): compare the two, see which one has gradients, and train a model with attention on the memory task.
+# 7. **Part 7. Self-attention layer, design and reflect** (15 min): write a self-attention layer, compare all models and design a system for a real problem.
+#
+# ### How this notebook works
+#
+# Run the cells from top to bottom with the ▶ button. Every part starts with **✏️ Imagine first**: write a prediction before you run the code, then see how close you were. **✏️ Your turn** cells (the exercises) are for you: write the answer in the starter cell. A **Check** cell tells you whether you are right (✓ or ✗ with a hint). Open **Show a possible answer** only after you tried. Your key numbers are collected in a dictionary called `RESULTS` that Part 7 prints.
 
 # %% [markdown]
 # ## Setup
 #
-# Colab already has everything we need (PyTorch, NumPy, Matplotlib), so nothing is installed. The cell below imports the libraries, fixes the random seed and defines a small `check` helper that prints ✓ or ✗.
+# Run this cell once. It loads the libraries, fixes the random seed so your results match the ones in the lesson, and defines helpers: `check(...)` to test your answers; `make_memory_task(...)` to create the lab's **memory task** (a sequence of random symbols where the label is the *first* symbol, so a model must remember it across the whole sequence); `one_hot_batch(...)` to turn symbols into vectors; `train_seq_model(...)` to train a PyTorch sequence model and keep its learning curve; `softmax_np(...)` for attention weights; and `show_attention(...)` to draw an attention matrix. Everything runs on a CPU in a few minutes and nothing is downloaded.
 
 # %%
-import os
+import os, gc, math, random, time, warnings
+warnings.filterwarnings("ignore")
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 
-SEED = 0
-torch.manual_seed(SEED)
-np.random.seed(SEED)
+SEED = 42
+random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 device = "cuda" if torch.cuda.is_available() else "cpu"
-print("device:", device)
-QUICK = bool(os.environ.get("NB_TEST"))  # shortens long loops when the notebook is tested
+QUICK = bool(os.environ.get("NB_TEST"))   # lets the author shorten long loops when testing; leave it alone
+print("Running on:", device)
 
+RESULTS = {}   # a place to keep your key numbers and answers; the last part prints them together
 
 def check(name, ok, hint=""):
+    """Print a tick or a cross with a hint, so you know whether your answer is right."""
     print(("✓ " if ok else "✗ ") + name + ("" if ok else "  → " + hint))
 
+N_SYMBOLS = 8   # the memory task uses the symbols 0..7
+
+def make_memory_task(n, length, seed=0, n_symbols=N_SYMBOLS):
+    """n sequences of `length` random symbols in 0..n_symbols-1. The label of a sequence is its FIRST symbol, so to answer at the end
+    the model must remember symbol 1 across `length - 1` more symbols. Returns X (n, length) int64 and y (n,) int64."""
+    r = np.random.RandomState(seed)
+    X = r.randint(0, n_symbols, size=(n, length)).astype(np.int64)
+    return X, X[:, 0].copy()
+
+def one_hot_batch(X, n_symbols=N_SYMBOLS):
+    """(n, length) integer symbols -> (n, length, n_symbols) float32 one-hot vectors."""
+    return F.one_hot(torch.as_tensor(X), n_symbols).float()
+
+def train_seq_model(model, Xtr, ytr, Xte, yte, epochs=200, lr=0.01, batch=64, seed=0, clip=1.0, verbose=False):
+    """Train a model that maps (batch, length, n_symbols) to class scores (batch, n_symbols) with cross-entropy and Adam.
+    Returns a dict with per-epoch lists loss, train_acc, test_acc. Gradients are clipped to norm `clip`."""
+    g = torch.Generator().manual_seed(seed)
+    Xtr, ytr, Xte, yte = one_hot_batch(Xtr), torch.as_tensor(ytr), one_hot_batch(Xte), torch.as_tensor(yte)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    hist = {"loss": [], "train_acc": [], "test_acc": []}
+    for ep in range(epochs):
+        model.train(); perm = torch.randperm(len(Xtr), generator=g); tot = 0.0
+        for b in range(0, len(Xtr), batch):
+            idx = perm[b:b + batch]
+            opt.zero_grad(); loss = F.cross_entropy(model(Xtr[idx]), ytr[idx]); loss.backward()
+            if clip: nn.utils.clip_grad_norm_(model.parameters(), clip)
+            opt.step(); tot += float(loss) * len(idx)
+        model.eval()
+        with torch.no_grad():
+            hist["loss"].append(tot / len(Xtr))
+            hist["train_acc"].append(float((model(Xtr).argmax(1) == ytr).float().mean()))
+            hist["test_acc"].append(float((model(Xte).argmax(1) == yte).float().mean()))
+        if verbose and (ep % 20 == 0 or ep == epochs - 1): print(f"epoch {ep:3d}  loss {hist['loss'][-1]:.3f}  train {hist['train_acc'][-1]:.2f}  test {hist['test_acc'][-1]:.2f}")
+    return hist
+
+def softmax_np(z, axis=-1):
+    """Softmax of a NumPy array along an axis (numerically stable)."""
+    z = np.asarray(z, dtype=float); e = np.exp(z - z.max(axis=axis, keepdims=True))
+    return e / e.sum(axis=axis, keepdims=True)
+
+def show_attention(W, row_labels=None, col_labels=None, title="", ax=None):
+    """Draw an attention-weight matrix W (rows = queries, columns = keys) as a heat map with the numbers in the cells."""
+    W = np.asarray(W); ax = ax or plt.gca()
+    im = ax.imshow(W, cmap="Greens", vmin=0, vmax=max(1e-9, W.max()))
+    ax.set_xticks(range(W.shape[1])); ax.set_yticks(range(W.shape[0]))
+    ax.set_xticklabels(col_labels or range(W.shape[1]), rotation=45, ha="right"); ax.set_yticklabels(row_labels or range(W.shape[0]))
+    for i in range(W.shape[0]):
+        for j in range(W.shape[1]): ax.text(j, i, f"{W[i, j]:.2f}", ha="center", va="center", fontsize=8)
+    ax.set_title(title)
+    return im
 
 # %% [markdown]
-# ## Part A: soft versus hard attention (concepts)
+# ### Smoke test
 #
-# In the lesson section *Soft weights and parallel computation* we saw two ways to use scores. **Hard attention** picks the single key with the highest score and copies its value. **Soft attention** turns all scores into weights that sum to 1 (with softmax) and returns a weighted average of all the values.
-#
-# ### ✏️ Your turn: write the explanation
-#
-# In your own words (3 to 5 sentences): why can soft attention be trained by gradient descent, while hard attention cannot? Think about what happens to the output when one score changes by a tiny amount.
+# Run this cell to check that the helpers work and that figures appear in the notebook. It prints four tiny sequences (the label of each is its first symbol), the shape of the one-hot array and the softmax of (2, 1, 0.1), which will come back in Part 5 and Part 6.
 
 # %%
-part_a = ""  # YOUR ANSWER HERE: write your explanation between the quotes
+X0, y0 = make_memory_task(4, 6, seed=0)
+print(X0)
+print("labels:", y0, "| the first column:", X0[:, 0])
+print("one-hot shape:", tuple(one_hot_batch(X0).shape))
+print("softmax of (2, 1, 0.1):", np.round(softmax_np([2, 1, 0.1]), 3))
+plt.figure(figsize=(3, 2)); plt.plot([0, 1, 2], [0, 1, 4], "o-"); plt.title("figures work"); plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# ## Part 1. Sequences and the memory task (20 min)
+#
+# *Lesson section: "Sequences".* A sentence is not a bag of words: the order matters, and the word that decides the meaning is sometimes far away from the place where you need it. In this part you build the lab's **memory task**, a clean version of that problem. Each example is a sequence of random symbols from 0 to 7, and the answer to give at the end is the *first* symbol. A model that cannot carry information across the whole sequence cannot win, and a model that can remember scores 100%. You measure what a model that sees only the last symbol can do, then what a model with a fixed window can do, and you discover why a window is not a real solution. These are the same ideas as the lesson's figure on sequences: the farther back the important thing is, the harder it is to reach.
+#
+# The data comes from `make_memory_task(n, length, seed)` in the setup cell. It returns the sequences `X` (shape n by length, integers 0 to 7) and the labels `y`, which are simply `X[:, 0]`. The models see each symbol as a one-hot vector of 8 numbers (`one_hot_batch` does that), and `train_seq_model` trains any model that turns a batch of one-hot sequences into 8 class scores. Chance accuracy is 1 out of 8 classes, that is 0.125.
+
+# %% [markdown]
+# ### ✏️ Imagine first
+#
+# Before you run any code, write three numbers. (1) What accuracy does a model get if it guesses at random among the 8 symbols? (2) What accuracy does a model with a perfect memory get? (3) What accuracy do you expect from a model that is only allowed to look at the *last* symbol of each sequence? Put your reasons in a markdown cell. You will compare your numbers with the measurements in Steps 1.1 and 1.2.
+#
+# Write your prediction in the starter cell below (it does not matter if you are wrong: the point is to commit before you look).
 
 # %%
-# Check: it only looks at whether you wrote something and mentioned the key ideas.
-if not part_a.strip():
-    print("Fill in your answer above, then run this cell again.")
+# Imagine first: what can a model do on the memory task?
+my_chance = None        # accuracy of a model that guesses at random, a number between 0 and 1
+my_perfect = None       # accuracy of a model with a perfect memory
+my_last_symbol = None   # accuracy of a model that sees only the LAST symbol of each sequence
+
+# %% [markdown]
+# ### Step 1.1. Make the data and look at it
+#
+# Every experiment starts by looking at the data. The first block makes a training set of 1,000 sequences of length 10 and a test set of 300 new ones (different seeds, so no sequence leaks from one to the other), and prints five sequences with their labels. The second block counts how often each label occurs, compares the counts with the equal share you would expect, and measures how often the label happens to equal the *last* symbol. If the 8 classes were not balanced, "accuracy" would be easy to inflate by always answering the most common class, so we check.
+
+# %%
+Xtr, ytr = make_memory_task(1000, 10, seed=1)      # training set: 1000 sequences of 10 symbols
+Xte, yte = make_memory_task(300, 10, seed=2)       # test set: 300 new sequences
+print("shapes:", Xtr.shape, ytr.shape, "| test:", Xte.shape)
+for i in range(5):
+    print(Xtr[i], "-> label", ytr[i])
+
+# %%
+counts = np.bincount(ytr, minlength=N_SYMBOLS)
+print("class counts :", counts)
+print("class shares :", np.round(counts / len(ytr), 3))
+print("chance accuracy 1/8 =", 1 / N_SYMBOLS)
+print("best constant guess on the test set:", round(float(np.bincount(yte).max() / len(yte)), 3))
+print("share of sequences whose label equals their LAST symbol:", round(float((Xtr[:, -1] == ytr).mean()), 3))
+plt.figure(figsize=(5, 2.5))
+plt.bar(range(N_SYMBOLS), counts, color="tab:blue"); plt.axhline(len(ytr) / N_SYMBOLS, color="k", ls="--", label="equal share")
+plt.xlabel("label (the first symbol)"); plt.ylabel("sequences"); plt.title("The 8 classes are balanced"); plt.legend()
+plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# **What you should see:** You should see `shapes: (1000, 10) (1000,) | test: (300, 10)`. In each printed sequence the label is the first number: the first sequence `5 3 4 0 7 1 3 5 7 0` has label 5. The class counts are `[120 118 120 134 141 141 107 119]`: every class has close to 125 sequences (1,000 divided by 8), with shares between 0.107 and 0.141. So a model that always answers the most common class gets about 0.14 on the training labels (on the 300 test sequences the most common class happens to reach 0.187, which is just the luck of a small sample). Chance accuracy is 1/8 = 0.125. The last line is the important one: the label equals the last symbol in 0.127 of the sequences, the same as chance. The last symbol carries no information about the label, because the symbols are drawn independently.
+#
+# **Tips and common mistakes**
+#
+# - The bar chart should look flat: the dashed line is the equal share (125 sequences per class) and the bars wobble around it by about 10-15%. A real imbalance would be a tall bar next to short ones.
+# - Use different seeds for training and test data (here 1 and 2). If both used the same seed, the test set would be a copy of the training set and the accuracy would be meaningless.
+# - A test set of 300 sequences gives accuracies with an error of about plus or minus 0.02, so chance level shows up anywhere between roughly 0.10 and 0.15.
+#
+# **Try also (optional)**
+#
+# - Make the data with `length=3` and print ten sequences. Where is the label? Is it easier to see by eye?
+# - Change the number of training sequences to 100. Does the class balance get better or worse?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.1. Two numbers from the data
+#
+# Your task: from the training labels `ytr` and the counts, compute `share_max`, the largest class share, and `share_last`, the share of training sequences whose label equals their last symbol. Why it matters: both numbers tell you what a "lazy" model could reach without any memory, and you will compare every later model with them.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+share_max = None    # the largest class share among the training labels (a number between 0 and 1)
+share_last = None   # share of training sequences whose label equals their last symbol
+
+# %%
+if share_max is None or share_last is None:
+    print("Fill in share_max and share_last above, then run this cell again.")
 else:
-    text = part_a.lower()
-    check("You wrote at least a few words", len(text.split()) >= 15, "Write 3 to 5 full sentences.")
-    check("You mention gradients, smoothness or derivatives",
-          any(w in text for w in ["gradient", "smooth", "derivative", "differentiab"]),
-          "Say what happens to the gradient or whether the output changes smoothly.")
-    check("You compare soft with hard", "soft" in text and "hard" in text, "Mention both soft and hard attention.")
-
-# %% [markdown]
-# <details><summary>Show a possible answer</summary>
-#
-# Soft attention is a smooth weighted average: if a score changes a little, the weights and the output change a little, so there is a gradient to follow. Hard attention picks the maximum. The output jumps when a different key becomes the maximum and does not change at all otherwise, so the gradient is zero almost everywhere and the model gets no signal to learn from.
-#
-# </details>
-
-# %% [markdown]
-# ## Part B: attention by hand, then in PyTorch
-#
-# We use the example from the lesson (Figure 3): one query `q = (1, 0)`, three keys and three values, with `d_k = 2`. The steps are:
-#
-# 1. scores: `q · kᵢ / √d_k`
-# 2. weights: softmax of the scores (they sum to 1)
-# 3. output: the weighted sum of the values
-#
-# ### ✏️ Your turn: do it by hand first
-#
-# On paper, compute the three dot products `q · kᵢ`, divide each by √2, then the softmax, then the output. Type your three scores here (rounded to 4 decimals). The next cell checks them against PyTorch.
-
-# %%
-my_scores = None  # YOUR ANSWER HERE, for example [a, b, c]
-
-# %%
-# Check: compare your hand-computed scores with the real computation.
-q = torch.tensor([[1., 0.]])                        # 1 query
-K = torch.tensor([[1., 0.], [0., 1.], [1., 1.]])    # 3 keys
-V = torch.tensor([[1., 0.], [0., 1.], [2., 2.]])    # 3 values
-true_scores = (q @ K.T / (2 ** 0.5))[0]
-if my_scores is None:
-    print("Fill in your answer above, then run this cell again.")
-else:
-    ok = len(my_scores) == 3 and bool(np.allclose(my_scores, true_scores.numpy(), atol=1e-3))
-    check("scores match", ok, "Dot products are 1, 0 and 1; then divide each by √2 ≈ 1.4142.")
-
-# %% [markdown]
-# Now the same computation in PyTorch, step by step. Compare each printed value with your paper work.
-
-# %%
-scores = q @ K.T / (2 ** 0.5)       # step 1: similarity of the query to each key, scaled
-w = F.softmax(scores, dim=-1)       # step 2: turn scores into weights that sum to 1
-out = w @ V                         # step 3: weighted average of the values
-print("scores :", scores.numpy().round(4))
-print("weights:", w.numpy().round(4))
-print("output :", out.numpy().round(4))
-
-# Sanity checks with the values computed for this example
-assert np.allclose(scores.numpy(), [[0.7071, 0.0, 0.7071]], atol=1e-4)
-assert np.allclose(w.numpy(), [[0.4011, 0.1978, 0.4011]], atol=1e-4)
-assert np.allclose(out.numpy(), [[1.2033, 1.0]], atol=1e-4)
-assert abs(w.sum().item() - 1.0) < 1e-6
-print("✓ matches scores [0.7071, 0, 0.7071], weights [0.4011, 0.1978, 0.4011], output [1.2033, 1.0]")
-
-# %% [markdown]
-# Keys 1 and 3 have the same score, so they get the same weight (0.4011 each). Key 2 is less similar to the query, so it gets less (0.1978).
-#
-# Now we wrap the three steps in a reusable function. It also works for batches and for many queries at once, which we need in Part C.
-
-# %%
-def scaled_dot_product_attention(query, key, value, scale=True):
-    """Return (output, weights). Set scale=False to skip the 1/sqrt(d_k) factor."""
-    d_k = query.shape[-1]
-    scores = torch.matmul(query, key.transpose(-2, -1))
-    if scale:
-        scores = scores / (d_k ** 0.5)
-    weights = F.softmax(scores, dim=-1)
-    return torch.matmul(weights, value), weights
-
-
-out2, w2 = scaled_dot_product_attention(q, K, V)
-print(out2.numpy().round(4), w2.numpy().round(4))
-assert torch.allclose(out2, out)
-
-# %% [markdown]
-# ### ✏️ Your turn: remove the scaling
-#
-# Call the function with `scale=False` on the same `q`, `K`, `V`. Store the weights (a list of 3 numbers) in `answer`. Do the weights move closer together or further apart?
-
-# %%
-answer = None  # YOUR CODE HERE, for example: answer = scaled_dot_product_attention(q, K, V, scale=False)[1][0].tolist()
-
-# %%
-# Check
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
-else:
-    check("unscaled weights are right", bool(np.allclose(answer, [0.4223, 0.1554, 0.4223], atol=1e-3)),
-          "Use scale=False and take the weights (second return value).")
+    check("share_max is the largest class share", abs(share_max - counts.max() / len(ytr)) < 1e-9, "Use counts.max() / len(ytr).")
+    check("share_last is the share with label == last symbol", abs(share_last - float((Xtr[:, -1] == ytr).mean())) < 1e-9, "Compare ytr with Xtr[:, -1] and take the mean.")
+    RESULTS["p1_share_max"] = round(float(share_max), 3); RESULTS["p1_share_last"] = round(float(share_last), 3)
 
 # %% [markdown]
 # <details><summary>Show a possible answer</summary>
 #
 # ```python
-# _, w_unscaled = scaled_dot_product_attention(q, K, V, scale=False)
-# answer = w_unscaled[0].tolist()   # [0.4223, 0.1554, 0.4223]
+# share_max = counts.max() / len(ytr)
+# share_last = float((Xtr[:, -1] == ytr).mean())
 # ```
 #
-# Without scaling the scores are 1, 0, 1 instead of 0.7071, 0, 0.7071, so the weights move further apart: the big scores get more of the weight (0.4223 instead of 0.4011).
+# What you should get: `share_max` is 0.141 (141 of 1,000 sequences, classes 4 and 5) and `share_last` is 0.127.
 #
 # </details>
 
 # %% [markdown]
-# ## Part C: experiments
+# ### Step 1.2. A baseline that cannot remember
 #
-# ### C1. Why divide by √d_k?
+# The simplest model that reads the sequence at all is one that looks only at the last symbol. The class `WindowModel(k)` below takes the last `k` symbols of each sequence (as one-hot vectors placed side by side) and applies one linear layer to them. With `k = 1` it sees one symbol. We train it with `train_seq_model` for 100 epochs with a learning rate of 0.01 and compare its accuracy with chance. `count_params` counts the numbers the model can adjust. Predict first: do you expect the training accuracy to be below, near or above the test accuracy?
+
+# %%
+class WindowModel(nn.Module):
+    """Sees only the last k symbols (one-hot vectors placed side by side) and applies ONE linear layer."""
+    def __init__(self, k):
+        super().__init__()
+        self.k = k
+        self.lin = nn.Linear(k * N_SYMBOLS, N_SYMBOLS)
+    def forward(self, x):                                  # x: (batch, length, 8)
+        return self.lin(x[:, -self.k:, :].reshape(len(x), -1))
+
+def count_params(model):
+    """Number of trainable numbers in a PyTorch model."""
+    return sum(p.numel() for p in model.parameters())
+
+EP1 = 15 if QUICK else 100          # epochs for the small window models (QUICK is False on the Spark)
+torch.manual_seed(SEED)
+m_last = WindowModel(1)
+h_last = train_seq_model(m_last, Xtr, ytr, Xte, yte, epochs=EP1, lr=0.01)
+print("parameters:", count_params(m_last))
+print(f"last-symbol model: train accuracy {h_last['train_acc'][-1]:.3f} | test accuracy {h_last['test_acc'][-1]:.3f} | chance {1 / N_SYMBOLS:.3f}")
+
+# %% [markdown]
+# **What you should see:** You should see `parameters: 72` (a weight for each of 8 inputs and 8 classes is 64, plus 8 biases) and `last-symbol model: train accuracy 0.173 | test accuracy 0.123 | chance 0.125`. On new data the model is exactly at chance (0.123). On the training data it is a little better (0.173): with 72 free numbers and only 1,000 examples it finds some accidental pattern, which does not carry over to new sequences. That gap between training and test accuracy is the sign of a model that has nothing real to learn. The reason is the one from Step 1.1: the symbols are independent, so the last symbol says nothing about the first. Compare with your Imagine-first number for the last-symbol model: it should have been about 0.125, no better than guessing.
 #
-# A dot product of two random vectors adds up `d_k` terms, so its typical size grows with `d_k`. Large scores make softmax very "peaky": one key takes almost all the weight and the gradients become tiny. Dividing by √d_k keeps the scores at a similar size.
+# **Tips and common mistakes**
 #
-# We test it. For each `d_k` we draw 2000 random queries and 3 random keys per query from a standard normal distribution, then measure the **mean largest softmax weight**. With 3 keys, a perfectly even split would give 0.333 and a one-hot split 1.0.
+# - `reshape(len(x), -1)` flattens the last k one-hot vectors into one row of k times 8 numbers; the linear layer then has k times 8 inputs.
+# - The model has no hidden layer, so it can only learn a weighted vote of the symbols it can see. That is enough for this task as soon as it can see the first symbol (Step 1.3).
+# - If your test accuracy is far from 0.125 (say above 0.3) check that `Xte` was made with a different seed than `Xtr` and that you did not give the model the first symbol by mistake.
+#
+# **Try also (optional)**
+#
+# - Print `h_last['train_acc'][:5]` and `h_last['train_acc'][-5:]`. Does the training accuracy keep rising while the test accuracy does not?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.2. A window of two
+#
+# Your task: train `WindowModel(2)` exactly like the one above (same seed `torch.manual_seed(SEED)` before building it, `EP1` epochs, `lr=0.01`) and store its final test accuracy in `acc_k2`. Why it matters: you test the guess "two symbols are almost as bad as one" before you change the window further in Step 1.3.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+acc_k2 = None   # test accuracy of a WindowModel(2) trained like the one above (same seed, EP1 epochs, lr=0.01)
+
+# %%
+if acc_k2 is None:
+    print("Train WindowModel(2) above, store its final test accuracy in acc_k2, then run this cell again.")
+else:
+    check("acc_k2 is a number between 0 and 1", 0 <= acc_k2 <= 1, "Use hist['test_acc'][-1].")
+    check("two symbols are still not enough to see the first one (accuracy below 0.3)", acc_k2 < 0.3, "A window of 2 on a sequence of 10 cannot see symbol 1, so it should stay near 0.125.")
+    RESULTS["p1_acc_k2"] = round(float(acc_k2), 3)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# torch.manual_seed(SEED)
+# m2 = WindowModel(2)
+# h2 = train_seq_model(m2, Xtr, ytr, Xte, yte, epochs=EP1, lr=0.01)
+# acc_k2 = h2["test_acc"][-1]
+# ```
+#
+# What you should get: `acc_k2` is about 0.147. The check only asks for a value below 0.3, because the exact digits can change a little between PyTorch versions.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 1.3. A fixed window: the n-gram idea
+#
+# A window of the last k symbols is the n-gram idea of Week 6: predict from a fixed number of recent items and forget everything older. A model with a window of k symbols is like a (k+1)-gram model. Here we widen the window step by step on sequences of length 10: k = 1, 3, 5, 9 and 10. The first symbol sits 10 steps back from the end, so only the window with k = 10 can reach it. Predict the shape of the curve before you look: a slow climb, or something else?
+
+# %%
+window_acc = {}
+for k in [1, 3, 5, 9, 10]:
+    torch.manual_seed(SEED)
+    m = WindowModel(k)
+    h = train_seq_model(m, Xtr, ytr, Xte, yte, epochs=EP1, lr=0.01)
+    window_acc[k] = h["test_acc"][-1]
+    print(f"window k = {k:>2}: parameters {count_params(m):>4} | train {h['train_acc'][-1]:.3f} | test {h['test_acc'][-1]:.3f}")
+if not QUICK:
+    assert window_acc[10] > 0.9 and window_acc[1] < 0.3     # sanity check: only the full window can see symbol 1
+RESULTS["p1_window_acc"] = {k: round(v, 3) for k, v in window_acc.items()}
+
+# %%
+plt.figure(figsize=(5, 3))
+plt.plot(list(window_acc), list(window_acc.values()), "o-", color="tab:blue", label="window model")
+plt.axhline(1 / N_SYMBOLS, color="gray", ls="--", label="chance 0.125")
+plt.xlabel("window size k (the last k symbols)"); plt.ylabel("test accuracy"); plt.ylim(0, 1.05)
+plt.title("Length 10: only the full window sees symbol 1"); plt.legend(); plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# **What you should see:** You should see five lines. For k = 1, 3, 5 and 9 the test accuracy stays at chance: 0.123, 0.137, 0.143 and 0.130. The training accuracy creeps up (0.173, 0.208, 0.227, 0.288) as the number of parameters grows (72, 200, 328, 584), but this is only memorising noise: it never shows up on the test set. Then for k = 10 (648 parameters) both training and test accuracy jump to **1.000**. The plot is a flat line at 0.125 followed by a cliff, not a slope. There is no partial credit for a window that stops one step short of the first symbol: k = 9 is as bad as k = 1. The `assert` in the block checks this cliff, so a broken run is noticed immediately. This is the lesson's point about n-grams: a model with a limited window is blind to everything beyond it.
+#
+# **Tips and common mistakes**
+#
+# - `window_acc` is a dictionary from k to the final test accuracy; `RESULTS` stores a rounded copy.
+# - The learning is easy once the first symbol is visible: a linear layer can read it off directly. The difficulty of the task is entirely about *reach*, not about computing a complicated function.
+# - Each run uses `torch.manual_seed(SEED)` before building the model, so the numbers are repeatable. A different PyTorch version can change the training accuracies in the last digit; the cliff between k = 9 and k = 10 will stay.
+#
+# **Try also (optional)**
+#
+# - Add k = 2, 4, 6, 7, 8 to the loop. Is there any value below 10 with a test accuracy clearly above 0.2?
+# - Make the sequences of length 12 and find the smallest working k. Does your rule 'k must equal the length' still hold?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.3. How far back is symbol 1?
+#
+# Your task: fill in `k_needed`, the smallest window size that lets a model see the first symbol of a length-10 sequence, and let the check compare it with the measurements. Why it matters: it turns the picture of the cliff into a rule you can reuse on longer sequences in Step 1.4.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+k_needed = None   # the smallest window size k that lets the model see the first symbol of a length-10 sequence
+
+# %%
+if k_needed is None:
+    print("Fill in k_needed above, then run this cell again.")
+else:
+    check("k_needed is 10", k_needed == Xtr.shape[1], "To see symbol 1 the window must reach back to position 1: it must cover the whole sequence.")
+    check("it matches the measurements", window_acc[k_needed] > 0.9 and window_acc[k_needed - 1] < 0.3, "Compare window_acc for k = 9 and k = 10.")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# k_needed = 10   # the first symbol is 10 steps back from the end, so the window covers the whole sequence
+# ```
+#
+# What you should get: `k_needed` is 10.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 1.4. Why longer sequences are harder to remember
+#
+# If the first symbol is always the answer, a window must cover the *whole* sequence. The first block prints, for lengths 5, 10, 20 and 40, the window you need and the number of parameters of that window model: by formula (length times 8 times 8 weights, plus 8 biases) and counted with `count_params`. The second block trains a full-window model at lengths 5, 20 and 40, and then shows what goes wrong when a window model meets a sequence of a different length than it was built for. The point: a window can be made to work, but only by knowing the length in advance and paying for it.
+
+# %%
+print(f"{'length':>6} {'window needed':>14} {'parameters (formula)':>21} {'parameters (counted)':>21}")
+for L in [5, 10, 20, 40]:
+    formula = L * N_SYMBOLS * N_SYMBOLS + N_SYMBOLS          # weights k*8*8, plus 8 biases
+    print(f"{L:>6} {L:>14} {formula:>21} {count_params(WindowModel(L)):>21}")
+
+# %%
+long_acc = {}
+for L in [5, 20, 40]:
+    Xa, ya = make_memory_task(1000, L, seed=1); Xb, yb = make_memory_task(300, L, seed=2)
+    torch.manual_seed(SEED)
+    h = train_seq_model(WindowModel(L), Xa, ya, Xb, yb, epochs=EP1, lr=0.01)
+    long_acc[L] = h["test_acc"][-1]
+    print(f"full window at length {L:>2}: test accuracy {h['test_acc'][-1]:.3f}")
+# A window model is tied to one length: a window of 20 cannot be fed sequences of length 10.
+try:
+    WindowModel(20)(one_hot_batch(make_memory_task(4, 10)[0]))
+except RuntimeError:
+    print("a window-20 model fed length-10 input -> RuntimeError: the shapes do not match")
+# The other way round it does not even complain: a window-10 model fed length-20 input silently looks at the last 10 symbols only.
+print("window-10 model on length-20 input, output shape:", tuple(WindowModel(10)(one_hot_batch(make_memory_task(4, 20)[0])).shape))
+
+# %% [markdown]
+# **What you should see:** You should see that the formula and the count agree: 328, 648, 1,288 and 2,568 parameters for lengths 5, 10, 20 and 40. The size grows in step with the length, and the window needed is always the whole sequence. The full-window models still learn: test accuracy 1.000 at lengths 5 and 20 and 0.950 at length 40 (100 epochs are a little short for 2,568 weights hiding one useful input in 40). The last two lines show the trap. A window-20 model fed length-10 input stops with a `RuntimeError` because the shapes do not match, which at least is loud. The other way round is worse: a window-10 model fed length-20 input runs without complaint and returns an answer of the right shape (`(4, 8)`), but it silently looks at the last 10 symbols only, so it cannot see the first symbol and is wrong 7 times out of 8. A real language has no length to know in advance: a document can be 10 words or 10,000.
+#
+# **Tips and common mistakes**
+#
+# - The window needed here equals the length only because the label is the *first* symbol. For a sentence, the word that matters can be anywhere from 1 to hundreds of words back, so there is no good fixed k.
+# - More parameters is not the real cost. The real cost is that the model has to be rebuilt and retrained for every length, and nothing it learned about position 1 is reused at position 2.
+# - n-gram count tables of Week 6 are worse still: they grow exponentially with the window, not linearly.
+#
+# **Try also (optional)**
+#
+# - Train the full-window model at length 80 with 100 epochs. Does it still reach 0.9?
+# - Compare `count_params(WindowModel(80))` with the number of training sequences (1,000). What does that suggest about overfitting?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.4. Parameters of a long window
+#
+# Your task: compute `params_100`, the number of parameters of a full-window model for sequences of length 100, with the formula (length times 8 times 8, plus 8). The check compares it with a real `WindowModel(100)`. Why it matters: it shows how the cost of the window approach scales.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+params_100 = None   # number of parameters of a full-window model for sequences of length 100
+
+# %%
+if params_100 is None:
+    print("Fill in params_100 above, then run this cell again.")
+else:
+    check("params_100 matches the model", params_100 == count_params(WindowModel(100)), "Weights are length * 8 * 8, plus 8 biases.")
+    RESULTS["p1_params_100"] = int(params_100)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# params_100 = 100 * N_SYMBOLS * N_SYMBOLS + N_SYMBOLS
+# ```
+#
+# What you should get: `params_100` is 6,408.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 1.5. Imagine and write: far-away words in real language
+#
+# The memory task is artificial on purpose. Real language has the same problem, only with meaning instead of random symbols. Think of three kinds of sentence where the word you need is far back: **agreement** (the verb must agree with a subject that came many words earlier), **pronouns** (who is *she* or *it* in the sentence?), and **questions** (an answer that depends on a question asked many lines before). Write one sentence for each, mark the word that matters, and count how many words separate it from the place where a model needs it. This is the question the rest of the week answers.
+
+# %% [markdown]
+# **What you should see:** There is no single right answer, but a good example has the key word at least six words back, and removing it should make the next word unpredictable. For instance, in "The keys to the old cabinet in the corner of the classroom are missing" the verb *are* needs the plural *keys*, 11 words back, while the nearest noun, *classroom*, is singular and would give the wrong verb. A model with a window of five words would see *corner of the classroom* and be tempted by *is*. In "Ana lent her notebook to Maria, and after the long class on Friday she gave it back" the word *she* refers to Ana or to Maria, which only the earlier part of the sentence can settle. In a chat, a question such as "Which city is the capital of Japan?" followed by several lines of other text still has to be answered with Tokyo. In each case the useful word is far back and the words in between are mostly noise, exactly like the random symbols in the memory task.
+#
+# **Try also (optional)**
+#
+# - Find one example in your own language (Filipino, Cebuano, Ilocano or another) where a word at the start of a sentence decides a word at the end, such as an affix or a pronoun that marks focus.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 1.5. Three far-away examples
+#
+# Your task: fill in the dictionary `far_examples` with one sentence, the word that matters and its distance in words for each of the three kinds. Why it matters: it keeps the abstract task tied to language, and you will use these sentences again when you reflect in Part 7.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+far_examples = {
+    "agreement": {"sentence": "", "far_word": "", "distance": 0},
+    "pronoun": {"sentence": "", "far_word": "", "distance": 0},
+    "question": {"sentence": "", "far_word": "", "distance": 0},
+}   # write a sentence, the word that matters, and how many words back it is
+
+# %%
+filled = [v for v in far_examples.values() if v["sentence"].strip() and v["far_word"].strip() and v["distance"] > 0]
+if len(filled) < 3:
+    print(f"You have filled in {len(filled)} of 3 examples. Complete all three, then run this cell again.")
+else:
+    check("each far word appears in its sentence", all(v["far_word"].lower() in v["sentence"].lower() for v in filled), "The word that matters must be a word of your sentence.")
+    check("each distance is at least 6 words", all(v["distance"] >= 6 for v in filled), "Choose examples where the word that matters is far back.")
+    RESULTS["p1_far_examples"] = far_examples
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# far_examples = {
+#     "agreement": {"sentence": "The keys to the old cabinet in the corner of the classroom are missing.", "far_word": "keys", "distance": 11},
+#     "pronoun": {"sentence": "Ana lent her notebook to Maria, and after the long class on Friday she gave it back.", "far_word": "Maria", "distance": 11},
+#     "question": {"sentence": "Which city is the capital of Japan? ... (a long answer later) ... so the answer is Tokyo.", "far_word": "Japan", "distance": 14},
+# }
+# ```
+#
+# What you should get: Any three examples with the key word at least six words back pass the check.
+#
+# </details>
+
+# %% [markdown]
+# ## Part 2. An RNN from scratch (25 min)
+#
+# *Lesson section: "RNN".* A window forgets everything older than k steps. A recurrent neural network (RNN) tries something different: it carries a small vector, the **hidden state**, from one step to the next, and updates it every time a new symbol arrives: new state = tanh(Wx times the input + Wh times the old state + b). Nothing else is remembered. Everything the model knows about symbol 1 when it reaches symbol 10 has to survive inside that one vector. In this part you write the recurrence by hand in NumPy, check it against PyTorch's `nn.RNN`, see that the same weights are used at every step, and then train an RNN classifier on the memory task at growing lengths and watch where it stops learning. These are the numbers behind the lesson's figure of the unrolled RNN.
+
+# %% [markdown]
+# ### ✏️ Imagine first
+#
+# Predict the test accuracy of a small RNN (32 hidden units) trained for 150 epochs on the memory task at length 10, and at length 60. Write both numbers and one sentence about why one might be harder than the other. Think about what has to happen to the information about symbol 1 in each case. You will compare with the measured table in Step 2.3.
+#
+# Write your prediction in the starter cell below (it does not matter if you are wrong: the point is to commit before you look).
+
+# %%
+# Imagine first: can a small RNN remember the first symbol?
+my_acc_len10 = None   # predicted test accuracy of a small RNN on length 10
+my_acc_len60 = None   # predicted test accuracy of the same RNN on length 60
+my_reason = None      # one sentence: what makes the long one harder?
+
+# %% [markdown]
+# ### Step 2.1. The recurrence by hand
+#
+# The whole RNN is a loop of three lines. At each step the new hidden state is `tanh(Wx @ x_t + Wh @ h + b)`, where `Wx` turns the input into the state's units, `Wh` mixes the old state, and `b` is a bias. We start from a state of all zeros. The first block defines `rnn_forward` and runs it on a tiny example with two input numbers, two hidden units and three steps, with small matrices written out in the code so that you can follow the arithmetic with a calculator. The second block copies the same numbers into PyTorch's `nn.RNN` and asserts that both give the same states, then compares the parameter counts. PyTorch has two bias vectors (`bias_ih` and `bias_hh`) where we use one, so we set the second to zero.
+
+# %%
+def rnn_forward(x_seq, Wx, Wh, b):
+    """A vanilla RNN written by hand: h_t = tanh(Wx x_t + Wh h_(t-1) + b), starting from h_0 = 0.
+    x_seq has shape (T, I), Wx (H, I), Wh (H, H), b (H,). Returns all hidden states as an array (T, H)."""
+    h = np.zeros(Wh.shape[0])
+    states = []
+    for x_t in x_seq:
+        h = np.tanh(Wx @ x_t + Wh @ h + b)
+        states.append(h)
+    return np.array(states)
+
+Wx = np.array([ [0.5, -0.3], [0.2, 0.8] ])      # (H=2, I=2): how the input enters the state
+Wh = np.array([ [0.6, 0.1], [-0.4, 0.5] ])      # (H=2, H=2): how the old state feeds the new one
+b = np.array([0.1, -0.1])
+x_seq = np.array([ [1.0, 0.0], [0.0, 1.0], [1.0, 1.0] ])   # three steps, two input numbers each
+H_by_hand = rnn_forward(x_seq, Wx, Wh, b)
+for t, h in enumerate(H_by_hand, 1):
+    print(f"h_{t} =", np.round(h, 4))
+
+# %%
+rnn = nn.RNN(input_size=2, hidden_size=2, batch_first=True)
+with torch.no_grad():                              # copy OUR numbers into PyTorch's RNN
+    rnn.weight_ih_l0.copy_(torch.tensor(Wx)); rnn.weight_hh_l0.copy_(torch.tensor(Wh))
+    rnn.bias_ih_l0.copy_(torch.tensor(b)); rnn.bias_hh_l0.zero_()      # PyTorch has two bias vectors; we use one
+out, _ = rnn(torch.tensor(x_seq, dtype=torch.float32).unsqueeze(0))
+H_torch = out[0].detach().numpy()
+print("PyTorch :", np.round(H_torch.astype(float), 4).tolist())
+print("by hand :", np.round(H_by_hand, 4).tolist())
+assert np.allclose(H_by_hand, H_torch, atol=1e-6)
+print("the two agree: our five lines of NumPy are an RNN")
+
+I_, H_ = 2, 2
+print("parameters by hand: H*H + I*H + H =", H_ * H_ + I_ * H_ + H_, "| nn.RNN counts", count_params(rnn), "(PyTorch keeps a second bias vector of size H)")
+
+# %% [markdown]
+# **What you should see:** You should see `h_1 = [0.537 0.0997]`, `h_2 = [0.1314 0.4892]` and `h_3 = [0.4035 0.7976]`. Check the first one by hand: the input of step 1 is (1, 0), so `Wx @ x` is (0.5, 0.2); the old state is zero, so `Wh @ h` is (0, 0); adding the bias (0.1, -0.1) gives (0.6, 0.1); and tanh gives (0.537, 0.0997). For step 2 the input (0, 1) gives (-0.3, 0.8), the old state gives (0.3322, -0.1649), the bias adds (0.1, -0.1), the total is (0.1322, 0.5351) and tanh gives (0.1314, 0.4892). The PyTorch states are identical (the `assert` passes), so five lines of NumPy are an RNN. The parameter line says: by hand H times H plus I times H plus H is 4 + 4 + 2 = 10, while `nn.RNN` counts 12 because of its second bias vector.
+#
+# **Tips and common mistakes**
+#
+# - `Wx` has shape (H, I) and `Wh` has shape (H, H): the rows are the hidden units. That is why the product `Wx @ x_t` has H numbers.
+# - `rnn.weight_ih_l0` means 'input to hidden, layer 0' and `weight_hh_l0` means 'hidden to hidden, layer 0'. The names are PyTorch's, the matrices are the ones you wrote.
+# - The state is squashed by tanh into the range from -1 to 1 at every step. Remember this when you see the gradients in Part 3.
+#
+# **Try also (optional)**
+#
+# - Change `x_seq` to a sequence of four identical inputs `[1, 1]`. Does the state settle to a fixed value? (The exercise below asks for its value after four steps.)
+# - Set `Wh` to all zeros and run `rnn_forward` again. What does the state depend on now?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 2.1. A new input and a bigger network
+#
+# Your task: run `rnn_forward` on the 4-step input of ones `x_ones` with the same matrices, store the final state in `h_new`, and compute `params_formula`, the parameter count H times H plus I times H plus H, for a network with I = 8 inputs and H = 32 hidden units (the size used in Step 2.3). Why it matters: you check that you can run the recurrence and count its weights.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+h_new = None            # final hidden state (array of 2 numbers) for the 4-step input of ones given in the next line
+x_ones = np.ones((4, 2))
+params_formula = None   # parameters H*H + I*H + H for an RNN with I = 8 inputs and H = 32 hidden units
+
+# %%
+if h_new is None or params_formula is None:
+    print("Fill in h_new and params_formula above, then run this cell again.")
+else:
+    truth = rnn_forward(x_ones, Wx, Wh, b)[-1]
+    check("h_new is the last state of rnn_forward on x_ones", np.allclose(h_new, truth, atol=1e-6), "Call rnn_forward(x_ones, Wx, Wh, b) and take the last row.")
+    check("params_formula is H*H + I*H + H", params_formula == 32 * 32 + 8 * 32 + 32, "32*32 + 8*32 + 32.")
+    check("PyTorch counts one more bias vector", count_params(nn.RNN(8, 32)) == params_formula + 32, "nn.RNN has bias_ih and bias_hh.")
+    RESULTS["p2_params_I8_H32"] = int(params_formula)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# h_new = rnn_forward(x_ones, Wx, Wh, b)[-1]
+# params_formula = 32 * 32 + 8 * 32 + 32
+# ```
+#
+# What you should get: `h_new` is about (0.6263, 0.7876) and `params_formula` is 1,312 (PyTorch counts 1,344 because of its second bias).
+#
+# </details>
+
+# %% [markdown]
+# ### Step 2.2. Unrolling and weight sharing
+#
+# Drawn out in time, the RNN looks like a very deep network with one layer per step. But those layers are not independent: the same `Wx`, `Wh` and `b` are used at every step. The first block records the memory address of the `Wh` array at each of 50 steps and asserts that there is only one. The second block builds `nn.RNN(8, 32)` and runs it on sequences of length 5 and 50, printing its parameter count each time. The consequence is large: the number of parameters does not depend on how long the sequence is, which the window model of Part 1 could not do.
+
+# %%
+def rnn_forward_trace(x_seq, Wx, Wh, b):
+    """Same as rnn_forward but also returns, for every step, the memory address of the matrix Wh that was used."""
+    h = np.zeros(Wh.shape[0]); addresses = []
+    for x_t in x_seq:
+        addresses.append(Wh.__array_interface__["data"][0])
+        h = np.tanh(Wx @ x_t + Wh @ h + b)
+    return h, addresses
+
+_, addr = rnn_forward_trace(np.random.RandomState(0).randn(50, 2), Wx, Wh, b)
+print("steps:", len(addr), "| different Wh matrices used:", len(set(addr)))
+assert len(set(addr)) == 1
+for T in [5, 50]:
+    r = nn.RNN(8, 32, batch_first=True)
+    out, _ = r(torch.randn(1, T, 8))
+    print(f"nn.RNN(8, 32) run on length {T:>2}: output {tuple(out.shape)}, parameters {count_params(r)}")
+
+# %% [markdown]
+# **What you should see:** You should see `steps: 50 | different Wh matrices used: 1`: all 50 steps multiply by the very same array. The second part prints `output (1, 5, 32), parameters 1344` and `output (1, 50, 32), parameters 1344`: the same module handles length 5 and length 50 and has 1,344 parameters both times (1,312 + 32 for the second bias vector). Compare with Step 1.4, where a window model for length 40 needed 2,568 parameters and had to be rebuilt for every length. Weight sharing is what makes an RNN able to read any length. It is also the root of its main problem: since the same `Wh` is applied again and again, what happens to a signal after 50 steps is Wh multiplied by itself 50 times.
+#
+# **Tips and common mistakes**
+#
+# - `Wh.__array_interface__['data'][0]` is the address of the array's data in memory; two names for the same array give the same address.
+# - The module `nn.RNN(8, 32)` does not know the length of the sequence it will see. The length only decides how many times the loop runs.
+# - Sharing weights across time is the same idea as sharing a filter across positions in a convolutional network (Week 4): one small set of numbers, used everywhere.
+#
+# **Try also (optional)**
+#
+# - Count the parameters of `nn.RNN(8, 64)` and compare with 1,344. Which grows faster, the hidden size or the length?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 2.2. Parameters at two lengths
+#
+# Your task: store in `count_len5` and `count_len500` the parameter count of an `nn.RNN(8, 32)` used for sequences of length 5 and of length 500. Why it matters: it checks that you have understood that the length does not enter the count.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+count_len5 = None    # parameters of an nn.RNN(8, 32) used for sequences of length 5
+count_len500 = None  # parameters of the same nn.RNN used for sequences of length 500
+
+# %%
+if count_len5 is None or count_len500 is None:
+    print("Fill in both numbers above, then run this cell again.")
+else:
+    check("the count does not depend on the length", count_len5 == count_len500 == count_params(nn.RNN(8, 32)), "The same weights are used at every step, so the length does not matter.")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# count_len5 = count_params(nn.RNN(8, 32))     # the module is the same whatever the length of the input
+# count_len500 = count_params(nn.RNN(8, 32))
+# ```
+#
+# What you should get: Both are 1,344.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 2.3. Build the classifier and train it at growing lengths
+#
+# Now we use the RNN as a memory machine. `RNNClassifier(hidden)` reads a one-hot sequence with `nn.RNN`, takes the hidden state after the **last** step, and maps it to 8 class scores with `nn.Linear`. For the answer to be right, the last state must still contain symbol 1. We train it with `train_seq_model` for `EP2 = 150` epochs, with 32 hidden units and a learning rate of 0.003 (a smaller step than in Part 1; Step 2.3b shows why), on 1,000 training and 300 test sequences at lengths 5, 10 and 20. The first block prints the final test accuracy and the first epoch at which the test accuracy reaches 0.9. The second block repeats length 20 with a learning rate of 0.01. The third block pushes on to lengths 40 and 60 and prints a summary table. Training in the third block takes about half a minute.
+
+# %%
+class RNNClassifier(nn.Module):
+    """One-hot symbols -> nn.RNN -> the LAST hidden state -> a linear layer with 8 class scores."""
+    def __init__(self, hidden=32):
+        super().__init__()
+        self.rnn = nn.RNN(N_SYMBOLS, hidden, batch_first=True)
+        self.out = nn.Linear(hidden, N_SYMBOLS)
+    def forward(self, x):
+        states, _ = self.rnn(x)              # (batch, length, hidden): the state after every step
+        return self.out(states[:, -1])       # only the state after the LAST step is used to answer
+
+EP2 = 12 if QUICK else 150               # epochs for the RNNs
+def make_split(length, n_train=1000, n_test=300):
+    return make_memory_task(n_train, length, seed=1) + make_memory_task(n_test, length, seed=2)
+
+rnn_hist, rnn_final = {}, {}
+for L in [5, 10, 20]:
+    Xa, ya, Xb, yb = make_split(L)
+    torch.manual_seed(SEED)
+    rnn_hist[L] = train_seq_model(RNNClassifier(32), Xa, ya, Xb, yb, epochs=EP2, lr=0.003)
+    rnn_final[L] = rnn_hist[L]["test_acc"][-1]
+    first = next((e + 1 for e, a in enumerate(rnn_hist[L]["test_acc"]) if a >= 0.9), None)
+    print(f"length {L:>2}: final test accuracy {rnn_final[L]:.3f} | first epoch with test accuracy >= 0.9: {first}")
+if not QUICK:
+    assert rnn_final[5] > 0.9          # sanity check: the RNN can learn the easiest length
+
+# %%
+# The same task at length 20, but with a larger learning rate (0.01 instead of 0.003).
+Xa, ya, Xb, yb = make_split(20)
+torch.manual_seed(SEED)
+h_fast = train_seq_model(RNNClassifier(32), Xa, ya, Xb, yb, epochs=EP2, lr=0.01)
+print(f"length 20, lr = 0.01: final test accuracy {h_fast['test_acc'][-1]:.3f} | best epoch {max(h_fast['test_acc']):.3f} | final train {h_fast['train_acc'][-1]:.3f}")
+
+# %%
+for L in [40, 60]:
+    Xa, ya, Xb, yb = make_split(L)
+    torch.manual_seed(SEED)
+    rnn_hist[L] = train_seq_model(RNNClassifier(32), Xa, ya, Xb, yb, epochs=EP2, lr=0.003)
+    rnn_final[L] = rnn_hist[L]["test_acc"][-1]
+    print(f"length {L:>2}: final test accuracy {rnn_final[L]:.3f} | best {max(rnn_hist[L]['test_acc']):.3f} | final train {rnn_hist[L]['train_acc'][-1]:.3f}")
+RESULTS["p2_rnn_test_acc"] = {L: round(a, 3) for L, a in rnn_final.items()}
+print("\nlength  final test accuracy")
+for L, a in rnn_final.items():
+    print(f"{L:>6}  {a:.3f}")
+
+# %% [markdown]
+# **What you should see:** You should see that the RNN *learns the task*: final test accuracy **1.000** at lengths 5, 10 and 20, reaching 0.9 after 4, 7 and 15 epochs. So a vanilla RNN can remember a symbol across 19 steps. But the longer the sequence, the longer it takes (4, 7, 15 epochs), and then it stops. At length 40 the same model still ends at 1.000, but it needs 71 epochs to pass 0.9 (Step 2.4). At length 60 it fails: final test accuracy 0.097 (best epoch 0.160, chance 0.125). The training accuracy of that run is 0.551: the network has *memorised* some of the 1,000 training sequences instead of finding the rule, which is what a model does when it cannot see how to carry the signal. This is the finding of the part, and you should state it honestly: with these settings an RNN works up to length 40 and fails at 60. Two cautions. First, the exact length at which it breaks depends on the learning rate, the seed and even the number of CPU threads: in other runs with the same code, length 40 ended at 0.91 and not 1.00. Second, Step 2.3b shows that the learning rate matters as much as the length: at length 20 with a learning rate of 0.01, the same network does not learn (final test accuracy 0.390, best epoch 0.693, final train 0.516; it wobbles from run to run between about 0.25 and 0.4). A big step makes the gradient noisy, and the gradient from step 20 back to step 1 is already small and delicate (Part 3).
+#
+# **Tips and common mistakes**
+#
+# - `states[:, -1]` takes the hidden state after the last step for every sequence in the batch. Using only that state is what forces the model to remember.
+# - `train_seq_model` clips the gradient norm to 1.0. Without it the 0.01 runs would be even more unstable; you will see why in Step 3.4.
+# - Do not read 0.097 as 'worse than chance'. With 300 test sequences, accuracies between 0.09 and 0.16 are all consistent with guessing.
+#
+# **Try also (optional)**
+#
+# - Train at length 60 for 400 epochs (change `EP2`) and watch whether it eventually learns. It may take two minutes, so run it in its own cell.
+# - Change the hidden size from 32 to 128 at length 60. Does a bigger state remember better?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 2.3. A very small memory
+#
+# Your task: train `RNNClassifier(4)`, with only 4 hidden units, on length 10 (use `make_split(10)`, `torch.manual_seed(SEED)` before the model, `epochs=EP2`, `lr=0.003`) and store the final test accuracy in `acc_h4`. Why it matters: you see how much room the state needs to hold even one symbol out of 8.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+acc_h4 = None    # final test accuracy of RNNClassifier(4) on length 10 (seed 42, lr 0.003, EP2 epochs)
+
+# %%
+if acc_h4 is None:
+    print("Train RNNClassifier(4) on length 10, store the final test accuracy in acc_h4, then run this cell again.")
+else:
+    Xa, ya, Xb, yb = make_split(10)
+    torch.manual_seed(SEED)
+    truth = train_seq_model(RNNClassifier(4), Xa, ya, Xb, yb, epochs=EP2, lr=0.003)["test_acc"][-1]
+    check("acc_h4 matches a run with the same seed", abs(acc_h4 - truth) < 0.02, "Use make_split(10), torch.manual_seed(SEED) before the model, epochs=EP2, lr=0.003.")
+    RESULTS["p2_acc_h4"] = round(float(acc_h4), 3)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# Xa, ya, Xb, yb = make_split(10)
+# torch.manual_seed(SEED)
+# acc_h4 = train_seq_model(RNNClassifier(4), Xa, ya, Xb, yb, epochs=EP2, lr=0.003)["test_acc"][-1]
+# ```
+#
+# What you should get: `acc_h4` is about 0.227: four hidden units can hold a little of the information (well above chance) but not enough to carry one of eight symbols reliably.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 2.4. Learning curves
+#
+# A final accuracy hides *how* a model learned. The block below plots the test accuracy against the epoch for each length that was trained in Step 2.3. Look for two things: when the curve leaves the chance line, and how steep it is afterwards. The longer the sequence, the longer the model sits at chance before it finds the signal.
+
+# %%
+plt.figure(figsize=(6.5, 3.4))
+for L, c in zip([5, 10, 20, 40, 60], ["tab:green", "tab:blue", "tab:orange", "tab:red", "tab:purple"]):
+    if L in rnn_hist:
+        plt.plot(range(1, len(rnn_hist[L]["test_acc"]) + 1), rnn_hist[L]["test_acc"], color=c, label=f"length {L}")
+plt.axhline(1 / N_SYMBOLS, color="gray", ls="--", label="chance")
+plt.xlabel("epoch"); plt.ylabel("test accuracy"); plt.title("RNN learning curves: longer sequences learn later, or never")
+plt.legend(fontsize=8); plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# **What you should see:** You should see five curves. The length-5 curve (green) shoots up within a few epochs and length 10 (blue) a little later; length 20 (orange) wobbles around 0.3 to 0.6 for the first 10 epochs, then climbs and passes 0.9 at epoch 15. The length-40 curve (red) is much more erratic: it sits at chance for about 10 epochs, jumps to 0.51 at epoch 21, falls back to 0.21 at epoch 41, then climbs slowly (0.65, 0.81, 0.90 at epochs 51, 61, 71) and reaches 1.0 at about epoch 120. The length-60 curve (purple) never leaves the chance line: it stays between 0.10 and 0.16 for all 150 epochs. The epochs to reach 0.9 are 4, 7, 15 and 71 for lengths 5, 10, 20 and 40. Notice the growth: doubling the length from 20 to 40 made the wait almost five times longer, and the path becomes bumpy because the gradient that links the last answer to symbol 1 is small and noisy. For length 60 within 150 epochs the model never finds a path. Longer sequences need more training or are impossible, because the signal that tells the model whether it is on the right track gets weaker with distance (Part 3 measures this).
+#
+# **Tips and common mistakes**
+#
+# - The flat start of the curves is not a bug: the network is truly at chance until the weights start to carry information across all the steps. Only the fully trained value matters for the final table; the path there is a good diagnostic.
+# - Because test and training sets are fixed, small steps in the curve are real changes of a few sequences out of 300 (each is 0.0033).
+#
+# **Try also (optional)**
+#
+# - Plot the training loss (`rnn_hist[L]['loss']`) instead of the test accuracy. Is the loss also flat before the jump?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 2.4. Epochs to 90 percent
+#
+# Your task: for lengths 5, 10, 20 and 40, find the first epoch (counting from 1) at which the test accuracy reaches at least 0.9, and store them in the dictionary `epoch_to_90`. Why it matters: it turns the picture into numbers you can compare with the LSTM in Part 4.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+epoch_to_90 = None   # dict: for each length in 5, 10, 20, 40 the first epoch (counting from 1) with test accuracy of at least 0.9
+
+# %%
+if epoch_to_90 is None:
+    print("Fill in epoch_to_90 above (a dict like {5: 3, 10: 7, ...}), then run this cell again.")
+else:
+    def first_epoch(L):
+        return next((e + 1 for e, a in enumerate(rnn_hist[L]["test_acc"]) if a >= 0.9), None)
+    check("epoch_to_90 matches the learning curves", all(epoch_to_90.get(L) == first_epoch(L) for L in [5, 10, 20, 40]), "For each length, find the first index where rnn_hist[L]['test_acc'] reaches 0.9 and add 1.")
+    RESULTS["p2_epoch_to_90"] = epoch_to_90
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# def first_epoch(L):
+#     return next((e + 1 for e, a in enumerate(rnn_hist[L]["test_acc"]) if a >= 0.9), None)
+# epoch_to_90 = {L: first_epoch(L) for L in [5, 10, 20, 40]}
+# ```
+#
+# What you should get: `epoch_to_90` is `{5: 4, 10: 7, 20: 15, 40: 71}`.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 2.5. Imagine and write: where does the information travel?
+#
+# Look at the unrolled RNN of the lesson: symbol 1 enters at the first step, and the answer is read after the last step. In between, the information about symbol 1 can only travel through the hidden state. At every step the old state is multiplied by `Wh` and squashed by tanh, so it is partly overwritten by the new symbol and partly shrunk. Write down, for a sequence of length 20 and of length 60, how many times the memory of symbol 1 has been multiplied by `Wh` and passed through tanh when the answer is read, and what you expect this to do to a small signal.
+
+# %% [markdown]
+# **What you should see:** Symbol 1 enters at step 1. Steps 2 to 20 each apply `Wh` and tanh once, so at length 20 it has been through **19** multiplications and **19** tanh; at length 60 it has been through **59**. The general rule is length minus one. If each pass keeps, say, half of the signal, 19 passes leave one half-millionth (0.5 to the power 19 is 1.9e-6) and 59 passes leave 1.7e-18. A gradient is a signal travelling the other way, back along the same path, and so it shrinks in the same way; that is why training gets slower with length and finally fails. A real model can sometimes keep more than half, which is why length 40 still works here, but each extra step makes it harder. That is Part 3.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 2.5. Count the passes
+#
+# Your task: store in `n_mult_20` and `n_mult_60` the number of times the memory of symbol 1 is multiplied by `Wh` (and passed through tanh) before the answer is read, at length 20 and at length 60. Why it matters: this count is the exponent in every vanishing-gradient formula of Part 3.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+n_mult_20 = None   # how many times is the memory of symbol 1 multiplied by Wh (and passed through tanh) before the answer at length 20?
+n_mult_60 = None   # the same at length 60
+
+# %%
+if n_mult_20 is None or n_mult_60 is None:
+    print("Fill in both numbers above, then run this cell again.")
+else:
+    check("length 20 gives 19", n_mult_20 == 19, "Symbol 1 enters at step 1; steps 2 to 20 each apply Wh and tanh once: 20 - 1.")
+    check("length 60 gives 59", n_mult_60 == 59, "60 - 1.")
+    RESULTS["p2_n_mult"] = (int(n_mult_20), int(n_mult_60))
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# n_mult_20 = 20 - 1
+# n_mult_60 = 60 - 1
+# ```
+#
+# What you should get: `n_mult_20` is 19 and `n_mult_60` is 59.
+#
+# </details>
+
+# %% [markdown]
+# ## Part 3. Gradients through time (25 min)
+#
+# *Lesson sections: "RNN" and "LSTM".* In Part 2 the RNN learned slowly and then not at all as the sequences grew. The reason lies in the gradient, the signal that tells each weight how to change. To learn that symbol 1 matters, the error at the last step must be sent back along the whole chain of steps to step 1. At each step back it is multiplied by the factor w times (1 minus h squared) (the derivative of the recurrence), and a product of many numbers smaller than 1 collapses toward zero. This is the **vanishing gradient**. In this part you compute it by hand for the smallest possible RNN (one number as hidden state), verify it with PyTorch's autograd, measure it in a real `nn.RNN`, see how the recurrent weight changes it (including the opposite problem, **exploding gradients**, and the fix of gradient clipping), and compare with Week 3's table of 0.25 to the power n. These are the numbers behind the lesson's figure of gradient flow through time.
+
+# %% [markdown]
+# ### ✏️ Imagine first
+#
+# The scalar RNN is h_t = tanh(w h_(t-1) + u x_t) with w = 0.9 and u = 0.8, and inputs of plus or minus 1. The gradient of the last state with respect to the first state is a product of T minus 1 factors, each at most 0.9. Before you run anything, write your estimate of that gradient for T = 10, T = 30 and T = 60. It is enough to give the order of magnitude, such as 1e-3. You will compare it with the measurements in Step 3.1.
+#
+# Write your prediction in the starter cell below (it does not matter if you are wrong: the point is to commit before you look).
+
+# %%
+# Imagine first: how large is the gradient that reaches step 1?
+my_grad_T10 = None    # your guess for the gradient from the last step back to step 1, T = 10, w = 0.9 (a number, e.g. 1e-3)
+my_grad_T30 = None    # T = 30
+my_grad_T60 = None    # T = 60
+
+# %% [markdown]
+# ### Step 3.1. The scalar RNN gradient by hand
+#
+# Take the smallest RNN: the state is one number, `h_t = tanh(w * h_(t-1) + u * x_t)`, with inputs `x_t` equal to +1 or -1 drawn at random. The chain rule says that the influence of an early state on the last one is a product: `dh_T/dh_t` equals `dh_T/dh_(t+1)` times `dh_(t+1)/dh_t`, and `dh_(t+1)/dh_t` is `w * (1 - h_(t+1)^2)` (the derivative of tanh is one minus tanh squared). The function `scalar_rnn_influence` computes this product from the end backwards and returns the array `infl`, where `infl[t]` is `dh_T/dh_t` and `infl[T]` is 1 (a state influences itself with weight 1; the code asserts it). The first block prints the influence of step 1 for T = 10, 30 and 60, and of step T minus 1 for comparison. The second block plots all of it for T = 30 on a log scale. The third block repeats the experiment with 300 different random input signals, because one signal is only one example.
+
+# %%
+def scalar_rnn_influence(T, w=0.9, u=0.8, seed=0):
+    """Scalar RNN h_t = tanh(w h_(t-1) + u x_t) with random inputs x_t = +1 or -1 and h_0 = 0.
+    Returns x (index 1..T), the states h (index 0..T) and infl, where infl[t] = dh_T / dh_t for t = 1..T.
+    By the chain rule infl[t] = infl[t+1] * dh_(t+1)/dh_t = infl[t+1] * w * (1 - h_(t+1)^2), and infl[T] = 1."""
+    r = np.random.RandomState(seed)
+    x = np.concatenate([[0.0], r.choice([-1.0, 1.0], size=T)])
+    h = np.zeros(T + 1)
+    for t in range(1, T + 1):
+        h[t] = np.tanh(w * h[t - 1] + u * x[t])
+    infl = np.ones(T + 1)
+    for t in range(T - 1, 0, -1):
+        infl[t] = infl[t + 1] * w * (1 - h[t + 1] ** 2)
+    infl[0] = np.nan
+    return x, h, infl
+
+for T in [10, 30, 60]:
+    x, h, infl = scalar_rnn_influence(T, w=0.9)
+    assert infl[T] == 1.0
+    print(f"T = {T:>2}: influence of step 1 on step T = {infl[1]:.2e} | influence of step T - 1 = {infl[T - 1]:.3f}")
+
+# %%
+x, h, infl = scalar_rnn_influence(30, w=0.9)
+plt.figure(figsize=(6, 3))
+plt.semilogy(range(1, 31), infl[1:], "o-", color="tab:red")
+plt.xlabel("time step t"); plt.ylabel("dh_30 / dh_t  (log scale)"); plt.title("w = 0.9: the past fades fast")
+plt.tight_layout(); plt.show()
+
+# %%
+# One input signal is only one example. Repeat with 300 different random +-1 signals and look at the typical (geometric mean) influence.
+print(f"{'T':>3} {'typical influence of step 1':>28} {'smallest':>10} {'largest':>10}")
+for T in [10, 30, 60]:
+    vals = np.array([scalar_rnn_influence(T, w=0.9, seed=s)[2][1] for s in range(300)])
+    print(f"{T:>3} {10 ** np.log10(vals).mean():>28.2e} {vals.min():>10.1e} {vals.max():>10.1e}")
+
+# %% [markdown]
+# **What you should see:** You should see `T = 10: influence of step 1 on step T = 1.09e-05`, `T = 30: 8.72e-14` and `T = 60: 7.42e-24`. The last step's own neighbour (step T minus 1) still has an influence of 0.13 to 0.9, but step 1 has a gradient of about one hundred-thousandth at T = 10, one in ten trillion at T = 30, and one in 10 to the 23 at T = 60. The plot is a nearly straight line going down on a log scale: every step back multiplies the influence by roughly the same factor. The repeated experiment gives the *typical* (geometric mean) influence of step 1 over 300 signals: 4.5e-04 at T = 10, 7.1e-12 at T = 30 and 2.3e-23 at T = 60, with a big spread between signals (at T = 30 from 8e-19 to 6.5e-07). Your estimates from the Imagine-first cell: if you guessed "about 0.9 to the power T minus 1" you would have said 0.39 for T = 10; the true gradients are far smaller, because the factor (1 minus h squared) is also below 1 and is very small when the state is near plus or minus 1. **Compare with the lesson:** the lesson's figure uses its own fixed input signal and reports about 7.8e-5 at T = 10 and 3.6e-11 at T = 30 for the same w = 0.9. Our single seed gave 1.1e-05 and 8.7e-14, and the typical values differ again, because the numbers depend on which inputs happen to be drawn. All of them show the same collapse (about four powers of ten lost for every 10 steps), and the lesson's values lie inside the range of the 300 signals.
+#
+# **Tips and common mistakes**
+#
+# - `np.random.RandomState(seed).choice([-1.0, 1.0], size=T)` makes the same input signal every time for the same seed, so the numbers are repeatable. Changing the seed changes the details but not the collapse.
+# - The product runs backwards: `infl[t] = infl[t + 1] * w * (1 - h[t + 1] ** 2)`. The loop starts at `T - 1` and goes down to 1.
+# - A semi-log plot (`plt.semilogy`) turns a product of equal factors into a straight line, so the slope is the average factor per step.
+#
+# **Try also (optional)**
+#
+# - Change `u` from 0.8 to 0.1. With small inputs the state stays near zero, so (1 minus h squared) is close to 1 and the factor is close to w. What does the influence at T = 30 become?
+# - Plot `infl` for three different seeds in one figure.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 3.1. Sixty steps in powers of ten
+#
+# Your task: store in `log10_60` the base-10 logarithm of the influence of step 1 on step 60 for w = 0.9, u = 0.8 and seed 0, which tells you "how many powers of ten are lost". Why it matters: the logarithm is the natural way to talk about numbers this small.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+log10_60 = None   # log10 of the influence of step 1 on step 60 for w = 0.9, u = 0.8, seed 0 (a negative number)
+
+# %%
+if log10_60 is None:
+    print("Fill in log10_60 above, then run this cell again.")
+else:
+    truth = float(np.log10(scalar_rnn_influence(60, w=0.9)[2][1]))
+    check("log10_60 matches", abs(log10_60 - truth) < 1e-6, "Take np.log10 of scalar_rnn_influence(60, w=0.9)[2][1].")
+    RESULTS["p3_log10_60"] = round(float(log10_60), 2)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# log10_60 = float(np.log10(scalar_rnn_influence(60, w=0.9)[2][1]))
+# ```
+#
+# What you should get: `log10_60` is about -23.13 (the influence is 7.4e-24).
+#
+# </details>
+
+# %% [markdown]
+# ### Step 3.2. Verify by autograd
+#
+# A hand formula is only worth trusting if a second method agrees with it. PyTorch's autograd computes derivatives automatically by running the chain rule on the recorded computation. We rebuild the same scalar RNN (same inputs, in 64-bit numbers for accuracy), call `retain_grad()` on every intermediate state so that its gradient is kept, run `hs[T].backward()`, and read `hs[t].grad`, which is exactly `dh_T/dh_t`. Then we compare with the product from Step 3.1 for every t.
+
+# %%
+T, w, u = 30, 0.9, 0.8
+x, h, infl = scalar_rnn_influence(T, w, u)
+hs = [torch.tensor(0.0, dtype=torch.float64, requires_grad=True)]        # h_0
+for t in range(1, T + 1):
+    hs.append(torch.tanh(w * hs[-1] + u * x[t]))
+    hs[-1].retain_grad()                                                   # keep the gradient of this intermediate value
+hs[T].backward()                                                          # dh_T / dh_t arrives in hs[t].grad
+auto = np.array([hs[t].grad.item() for t in range(1, T + 1)])
+print("by hand  dh_30/dh_1 =", f"{infl[1]:.4e}")
+print("autograd dh_30/dh_1 =", f"{auto[0]:.4e}")
+print("largest relative difference over all steps:", f"{np.max(np.abs(auto - infl[1:]) / infl[1:]):.1e}")
+assert np.allclose(auto, infl[1:], rtol=1e-6)
+
+# %% [markdown]
+# **What you should see:** You should see `by hand dh_30/dh_1 = 8.7247e-14` and `autograd dh_30/dh_1 = 8.7247e-14`, and `largest relative difference over all steps: 1.3e-15`: the two methods agree to 15 digits, which is the rounding of 64-bit numbers. The `assert` passes silently. So the formula 'product of w times (1 minus h squared)' is not an approximation or a story: it is what backpropagation through time computes. The vanishing gradient is a property of this product.
+#
+# **Tips and common mistakes**
+#
+# - Intermediate tensors do not keep their `.grad` unless you ask with `retain_grad()`; only 'leaf' tensors (like the initial state) do. Without it, `hs[t].grad` would be `None`.
+# - `hs[T].backward()` makes the gradient of hs[T] with respect to itself equal to 1, which is the starting value `infl[T] = 1`.
+# - We used `dtype=torch.float64`. In 32-bit numbers a value like 1e-24 is still representable, but accuracy is lost in the long product.
+#
+# **Try also (optional)**
+#
+# - Print `auto[:5]` and `infl[1:6]` and compare them by eye.
+# - Use `w = 1.0` and `u = 0` (the state stays 0 and the factor is exactly 1). What should the gradient be? Check.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 3.2. A gradient in the middle
+#
+# Your task: store in `auto_h15` the autograd value of `dh_30/dh_15`, the influence of the middle step on the last one. Why it matters: it makes you read the gradient from the right place in the autograd graph.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+auto_h15 = None   # the autograd value of dh_30/dh_15 (a number)
+
+# %%
+if auto_h15 is None:
+    print("Fill in auto_h15 above, then run this cell again.")
+else:
+    check("auto_h15 is dh_30/dh_15", abs(auto_h15 - hs[15].grad.item()) < 1e-12 * max(1, abs(auto_h15)) + 1e-15, "hs[15].grad holds dh_30/dh_15 after hs[T].backward().")
+    check("it matches the product formula", abs(auto_h15 - infl[15]) < 1e-9, "infl[15] from scalar_rnn_influence is the same quantity.")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# auto_h15 = hs[15].grad.item()
+# ```
+#
+# What you should get: `auto_h15` is about 2.45e-07 (fifteen steps back, about 6 powers of ten lost).
+#
+# </details>
+
+# %% [markdown]
+# ### Step 3.3. Vanishing over time in a real RNN
+#
+# The scalar RNN is a toy. Does the same thing happen in a real `nn.RNN` with 32 hidden units and 8 inputs? We take a freshly initialised network (no training), feed it 20 random sequences, and take the sum of the final hidden state as a stand-in loss. Backpropagation then gives, for each time step, the gradient with respect to the input at that step; `grad_norms_per_step` returns the size (norm) of that gradient at every step, averaged over the sequences. The first block prints the gradient norm at the last step and at step 1 for T = 10, 30 and 60. The second block plots the logarithm of the norm against the number of steps back from the end, all three lengths in one figure.
+
+# %%
+def grad_norms_per_step(T, hidden=32, n=20, seed=0):
+    """Mean over n random sequences of the gradient norm of h_T (summed) with respect to the input at each step, for a fresh nn.RNN."""
+    torch.manual_seed(seed)
+    r = nn.RNN(8, hidden, batch_first=True)
+    x = torch.randn(n, T, 8, requires_grad=True)
+    out, _ = r(x)
+    out[:, -1].sum().backward()
+    return x.grad.norm(dim=2).mean(0).numpy()         # one number per time step
+
+g_by_T = {T: grad_norms_per_step(T) for T in [10, 30, 60]}
+for T, g in g_by_T.items():
+    print(f"T = {T:>2}: gradient norm at the last step {g[-1]:.3e} | at step 1 {g[0]:.3e} | ratio {g[0] / g[-1]:.1e}")
+
+# %%
+plt.figure(figsize=(6.5, 3.4))
+for T, c in zip([10, 30, 60], ["tab:blue", "tab:orange", "tab:red"]):
+    g = g_by_T[T]
+    plt.plot(np.arange(T)[::-1], np.log10(g), "o-", ms=3, color=c, label=f"T = {T}")
+plt.xlabel("steps back from the last step"); plt.ylabel("log10 of gradient norm"); plt.title("A fresh nn.RNN: the early steps get almost no gradient")
+plt.legend(); plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# **What you should see:** You should see that the gradient at the last step is about 1.9 to 2.0 whatever T is, but at step 1 it is **3.95e-03** for T = 10, **1.85e-08** for T = 30 and **1.34e-16** for T = 60: the ratios between step 1 and the last step are 2e-03, 9e-09 and 7e-17. In the plot the three curves lie on top of one another: each is a straight line falling at about 0.28 powers of ten per step (for T = 60, 16.2 powers of ten over 59 steps), so a signal is multiplied by about 0.53 each step back. The line for T = 10 is the first part of the line for T = 60. The slope is a property of the weights, not of the sequence length; the length only decides how far down the line you must go. The early steps of a long sequence receive an essentially zero gradient: a weight cannot learn that symbol 1 matters if it never feels it. Without any training the picture is already bad; training adjusts the weights but cannot change the arithmetic of a long product.
+#
+# **Tips and common mistakes**
+#
+# - The loss `out[:, -1].sum()` is a simple stand-in: any function of the last state would show the same decay. With a real classifier the gradient first passes through the linear layer, which only rescales it.
+# - Each input vector has 8 numbers, so `x.grad.norm(dim=2)` takes the length of the 8-number gradient at each step of each sequence, and `.mean(0)` averages over the 20 sequences.
+# - PyTorch initialises the weights of `nn.RNN` with small uniform numbers (between about -0.18 and 0.18 for 32 units). That is a small recurrent matrix, and small matrices make the decay fast.
+#
+# **Try also (optional)**
+#
+# - Change `hidden` to 128. Does a larger state change the slope?
+# - Plot the gradient norm against the *absolute* time step instead of steps back. Where are the large gradients now?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 3.3. How many steps until it is a thousand times smaller?
+#
+# Your task: for T = 60, store in `steps_to_1e3` the number of steps back from the last step at which the gradient norm first drops below one thousandth of the last step's gradient norm. Why it matters: it gives the 'memory horizon' of this untrained RNN in steps.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+steps_to_1e3 = None   # for T = 60: how many steps back from the last step does the gradient first drop below 1/1000 of the last step's gradient?
+
+# %%
+if steps_to_1e3 is None:
+    print("Fill in steps_to_1e3 above, then run this cell again.")
+else:
+    g = g_by_T[60]
+    back = int(np.argmax(g[::-1] < g[-1] / 1000))
+    check("steps_to_1e3 matches", steps_to_1e3 == back, "Reverse g (so index 0 is the last step) and find the first index where it is below g[-1] / 1000.")
+    RESULTS["p3_steps_to_1e3"] = int(steps_to_1e3)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# g = g_by_T[60]
+# steps_to_1e3 = int(np.argmax(g[::-1] < g[-1] / 1000))
+# ```
+#
+# What you should get: `steps_to_1e3` is 11: after about 11 steps the signal is already a thousand times weaker.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 3.4. The effect of the recurrent weight, exploding gradients and clipping
+#
+# If a product of numbers below 1 vanishes, a product of numbers above 1 should explode. The recurrent weight w decides which. The first block scans w = 0.5, 0.9, 1.1 and 1.5 in the scalar RNN and prints the influence of step 1 on step 30. The second block builds a **ReLU** RNN (`nonlinearity="relu"`, which does not squash its output) whose recurrent matrix is `scale` times an orthogonal matrix (so each step stretches the state by about `scale`), and prints the gradient norm at step 1 for scales 0.5, 1.0 and 1.5 and for T = 10, 30, 60 and 100. The third block takes the scale-1.5 network at T = 60, shows the norm of its parameter gradients before and after `clip_grad_norm_(..., max_norm=1.0)`. The last is the standard tool against exploding gradients, and it is already built into `train_seq_model`.
+
+# %%
+print(f"{'w':>5} {'influence of step 1 on step 30':>32}")
+w_table = {}
+for w in [0.5, 0.9, 1.1, 1.5]:
+    w_table[w] = scalar_rnn_influence(30, w)[2][1]
+    print(f"{w:>5} {w_table[w]:>32.2e}")
+
+# %%
+def relu_rnn_grad(T, scale, hidden=32, seed=0):
+    """Gradient norm (parameters) and input-gradient norm at step 1 for a ReLU RNN whose Wh is `scale` times an orthogonal matrix."""
+    torch.manual_seed(seed)
+    r = nn.RNN(8, hidden, nonlinearity="relu", batch_first=True)
+    Q, _ = torch.linalg.qr(torch.randn(hidden, hidden))
+    with torch.no_grad():
+        r.weight_hh_l0.copy_(scale * Q)
+    x = torch.randn(1, T, 8, requires_grad=True)
+    out, _ = r(x)
+    out[:, -1].sum().backward()
+    return r, x.grad.norm(dim=2)[0, 0].item()
+
+print(f"{'scale of Wh':>12} {'T':>4} {'gradient norm at step 1':>25}")
+for scale in [0.5, 1.0, 1.5]:
+    for T in [10, 30, 60, 100]:
+        _, g1 = relu_rnn_grad(T, scale)
+        print(f"{scale:>12} {T:>4} {g1:>25.3e}")
+
+# %%
+r_big, _ = relu_rnn_grad(60, 1.5)
+before = nn.utils.clip_grad_norm_(r_big.parameters(), max_norm=1.0)       # returns the norm BEFORE clipping
+after = torch.sqrt(sum((p.grad ** 2).sum() for p in r_big.parameters()))
+print(f"parameter-gradient norm before clipping: {float(before):.3e}")
+print(f"parameter-gradient norm after clipping to 1.0: {float(after):.3f}")
+assert abs(float(after) - 1.0) < 1e-4
+
+# %% [markdown]
+# **What you should see:** You should see, for the scalar tanh RNN at T = 30: 1.42e-18 for w = 0.5, 8.72e-14 for w = 0.9, 8.66e-13 for w = 1.1 and 2.09e-11 for w = 1.5. A bigger w helps (more than seven powers of ten between 0.5 and 1.5), but even w = 1.5 does not explode: the influence is still tiny. The reason is **saturation**: with a large w the state is pushed toward plus or minus 1, where the tanh derivative (1 minus h squared) is almost 0, and this factor wins over w. The tanh keeps the scalar case bounded from above. The ReLU network has no such guard. With scale 0.5 the gradient at step 1 is 4.4e-05 at T = 10, 4.9e-15 at T = 30, and exactly 0.0 beyond that (every unit has been switched off or the number underflowed). With scale 1.0 it vanishes too: 1.3e-02, 9.9e-07, 1.3e-12 and 8.4e-21 for T = 10, 30, 60 and 100, because ReLU switches off about half of the units at every step. With scale 1.5 it does the opposite: 0.65, 0.89, 11.8 and 8.5. It grows (not as fast as 1.5 to the power 59, again because half the units are off), and the **parameter gradients** of the scale-1.5 network at T = 60 have a norm of 1.18e+03. After `clip_grad_norm_` with `max_norm=1.0` the norm is exactly 1.000 (the `assert` checks this) and the direction is unchanged, only the length is cut. So there are two failure modes. Vanishing is silent and has no cheap fix. Exploding is loud and clipping solves it. The sweet spot of w is a knife edge, and this is the motivation for the LSTM in Part 4.
+#
+# **Tips and common mistakes**
+#
+# - `torch.linalg.qr` of a random matrix gives an orthogonal matrix Q, which rotates without changing lengths. Multiplying by `scale` then stretches by exactly `scale`.
+# - `clip_grad_norm_` returns the norm *before* clipping, so you can log how often clipping is active. To measure the norm after, we compute it again from the parameters' `.grad`.
+# - The gradient at T = 100 for the scale-1.5 network (8.5) is smaller than at T = 60 (11.8). Growth is not smooth for a ReLU network: which units are on depends on the input. Do not expect a perfect geometric series.
+#
+# **Try also (optional)**
+#
+# - Try scale = 1.2 and T = 60. Is the gradient already large?
+# - In the scalar RNN set `u = 0.05` (very small inputs) and scan the same four w values. The tanh now stays in its linear range; what happens for w = 1.5?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 3.4. Where does the influence reach 1e-12?
+#
+# Your task: scan the recurrent weights in `w_grid` (0.5, 0.6, ..., 1.5) for the scalar tanh RNN at T = 30, and store in `first_w` the smallest w whose influence of step 1 on step 30 is at least 1e-12. Why it matters: it shows how large w must be before the memory is measurable at all, and how weak that is.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+w_grid = np.round(np.arange(0.5, 1.51, 0.1), 1)   # the recurrent weights to scan
+first_w = None   # the SMALLEST w in w_grid whose influence of step 1 on step 30 is at least 1e-12 (u = 0.8, seed 0)
+
+# %%
+if first_w is None:
+    print("Fill in first_w above, then run this cell again.")
+else:
+    vals = {float(wv): scalar_rnn_influence(30, float(wv))[2][1] for wv in w_grid}
+    truth = min(wv for wv, v in vals.items() if v >= 1e-12)
+    check("first_w is the smallest w with influence >= 1e-12", abs(first_w - truth) < 1e-9, "Compute scalar_rnn_influence(30, w)[2][1] for every w in w_grid and keep the smallest w whose value is at least 1e-12.")
+    print(f"influence at w = {truth}: {vals[truth]:.2e}; at the largest w in the grid (1.5): {vals[1.5]:.2e}")
+    RESULTS["p3_first_w"] = float(first_w)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# vals = {float(wv): scalar_rnn_influence(30, float(wv))[2][1] for wv in w_grid}
+# first_w = min(wv for wv, v in vals.items() if v >= 1e-12)
+# ```
+#
+# What you should get: `first_w` is 1.2 (the influence is 2.06e-12); at w = 1.1 it is 8.66e-13, just under the threshold.
+#
+# </details>
+
+# %% [markdown]
+# ### Step 3.5. Summary: relate the numbers to Week 3's 0.25 to the power n
+#
+# In Week 3 you saw that the derivative of the sigmoid is at most 0.25, so the gradient through n sigmoid layers is at most 0.25 to the power n. The RNN suffers from the same disease in time: the "layers" are the time steps, and the factor is w times (1 minus h squared). Write a short paragraph that compares the two, using these numbers, then compute the Week 3 bound for 10 and 30 layers in the exercise below.
+
+# %% [markdown]
+# **What you should see:** Here is a model paragraph. In Week 3 a chain of n sigmoid layers could pass at most 0.25 to the power n of the gradient back: 9.5e-07 for 10 layers and 8.7e-19 for 30. In the scalar RNN with w = 0.9 the influence of the first step was 1.1e-05 after 10 steps and 8.7e-14 after 30, and in the real `nn.RNN` the gradient at step 1 was 2e-03 and 9e-09 of the last step's. These are not the same numbers, since the RNN's factor is not 0.25 but about 0.5 per step, but the story is the same: a product of many factors below 1 shrinks exponentially with the number of factors. The difference is that in Week 3 the layers had *different* weights that could be helped by a better activation (ReLU), whereas the RNN applies the *same* weight at every step, so it cannot just 'use a different activation'. A fix must change the structure of the path itself: for instance a path on which the signal is carried forward almost unchanged. That is the idea of the LSTM cell state in Part 4, and of attention, which skips the path altogether, in Parts 5 and 6.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 3.5. The Week 3 bound
+#
+# Your task: compute `bound_10` and `bound_30`, the bound 0.25 to the power n for a chain of 10 and of 30 sigmoid layers. Why it matters: you will compare these with the RNN numbers in your write-up.
+#
+# Replace the `None` values (or edit the code) in the starter cell, run it, then run the **Check** cell below it.
+
+# %%
+bound_10 = None   # 0.25 ** 10, the Week 3 bound for a 10-layer sigmoid chain
+bound_30 = None   # 0.25 ** 30
+
+# %%
+if bound_10 is None or bound_30 is None:
+    print("Fill in both numbers above, then run this cell again.")
+else:
+    check("0.25 ** 10", abs(bound_10 - 0.25 ** 10) < 1e-12, "Use 0.25 ** 10.")
+    check("0.25 ** 30", abs(bound_30 - 0.25 ** 30) < 1e-24, "Use 0.25 ** 30.")
+    RESULTS["p3_bound_30"] = float(bound_30)
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# bound_10 = 0.25 ** 10
+# bound_30 = 0.25 ** 30
+# ```
+#
+# What you should get: `bound_10` is 9.5e-07 and `bound_30` is 8.7e-19.
+#
+# </details>
+
+# %% [markdown]
+# ## Part 4. LSTM: gates and a memory highway (30 min)
+#
+# *Lesson section: "LSTM".* In Parts 2 and 3 you watched a plain RNN forget: the signal from step 1 is multiplied by a number smaller than one at every step, so after a few dozen steps nothing is left. The LSTM (long short-term memory) is the classic repair. It keeps a second, separate memory line called the **cell state** `c`, and it changes that line only by small, gated amounts: a **forget gate** decides how much of the old memory to keep, an **input gate** decides how much of a new candidate to write, and an **output gate** decides how much of the memory to show to the rest of the network. When the forget gate is close to 1, the old memory passes straight through, like a motorway with no traffic lights. In this part you write one LSTM step by hand in NumPy, check it against PyTorch, compute how much gradient survives on the highway, train an LSTM and an RNN on the memory task at four lengths, and open the trained LSTM to look at its gates. ==You will measure the contrast honestly, and you will see that it is smaller than the gradient numbers alone would suggest.==
+#
+# Because this part must run on its own, it defines its own small models: the `SeqClassifier` below is the same idea as the RNN classifier of Part 2 (a recurrent layer over one-hot symbols, then the last hidden state into a linear layer), with a switch for the recurrent layer.
+
+# %% [markdown]
+# ### ✏️ Imagine first
+#
+# Before you run anything, make two predictions and write them down. (1) In Part 2 your RNN learned the memory task up to some length and then failed. An LSTM of the same size (32 hidden units) gets the same settings and the same training budget. What is the longest length among 10, 20, 40, 60 and 80 at which you think it still reaches 90 percent test accuracy, and do you expect it to go further than the RNN? (2) With a forget gate fixed at 0.95, the cell-state gradient from step 30 back to step 1 is the product of 29 numbers equal to 0.95. The RNN's gradient over the same distance was tiny (Part 3). Roughly how many times larger is the LSTM's: 10 times, 1,000 times, a million times, or 10 to the power 9? You will compare with measured numbers in Steps 4.3 and 4.4.
+#
+# Write your prediction in the starter cell below (it does not matter if you are wrong: the point is to commit before you look).
+
+# %%
+# Imagine first: how far does an LSTM remember, and how much more gradient does its highway carry?
+my_lstm_length = None      # 10, 20, 40, 60 or 80: the longest length where you think the LSTM reaches 90 percent
+my_gradient_ratio = None   # your guess for (LSTM cell-state gradient) / (RNN gradient) after 30 steps, e.g. 1e3
+
+# %% [markdown]
+# ### Step 4.1. One LSTM step by hand
+#
+# An LSTM step takes the current input `x`, the previous hidden state `h` and the previous cell state `c`, and computes four things from the same inputs: three gates `f`, `i`, `o` (each between 0 and 1, from a sigmoid) and a candidate `g` (between minus 1 and 1, from a tanh). Then `c_new = f * c + i * g` (keep part of the old memory, add part of the candidate) and `h_new = o * tanh(c_new)` (show part of the memory). The `*` is an element-wise product: each of the two units has its own gates. We use two inputs and two hidden units so that every matrix fits on the screen. The numbers are our own (they are not the lesson figure's), chosen so that the forget gate is high for unit 0 and lower for unit 1.
+
+# %%
+def sigmoid(z):
+    return 1 / (1 + np.exp(-z))
+
+# Each gate has input weights W (2x2), recurrent weights U (2x2) and a bias b (2,)
+P = {
+    "f": (np.array([ [0.5, -0.3], [0.2, 0.4] ]), np.array([ [0.1, 0.2], [-0.2, 0.3] ]), np.array([2.0, 0.0])),
+    "i": (np.array([ [0.6, 0.1], [-0.4, 0.5] ]), np.array([ [0.2, -0.1], [0.3, 0.1] ]), np.array([0.0, 0.0])),
+    "o": (np.array([ [0.3, 0.3], [0.1, -0.2] ]), np.array([ [-0.1, 0.4], [0.2, 0.2] ]), np.array([0.5, 0.5])),
+    "g": (np.array([ [0.8, -0.5], [0.3, 0.7] ]), np.array([ [0.3, 0.1], [-0.2, 0.4] ]), np.array([0.0, 0.0])),
+}
+
+def lstm_step(x, h, c, P):
+    """One LSTM step in NumPy. Returns the new hidden state, the new cell state and a dict with the four gate vectors."""
+    f = sigmoid(P["f"][0] @ x + P["f"][1] @ h + P["f"][2])     # forget gate
+    i = sigmoid(P["i"][0] @ x + P["i"][1] @ h + P["i"][2])     # input gate
+    o = sigmoid(P["o"][0] @ x + P["o"][1] @ h + P["o"][2])     # output gate
+    g = np.tanh(P["g"][0] @ x + P["g"][1] @ h + P["g"][2])     # candidate memory
+    c_new = f * c + i * g
+    h_new = o * np.tanh(c_new)
+    return h_new, c_new, {"f": f, "i": i, "o": o, "g": g}
+
+x = np.array([1.0, -0.5]); h0 = np.array([0.2, -0.1]); c0 = np.array([0.8, -0.4])
+h1, c1, gates = lstm_step(x, h0, c0, P)
+for name, v in gates.items():
+    print(f"gate {name} =", np.round(v, 3))
+print("old cell c0 =", c0, "-> new cell c1 =", np.round(c1, 3))
+print("new hidden h1 =", np.round(h1, 3))
+# unit 0 by hand: c1[0] = f0 * c0[0] + i0 * g0
+by_hand = gates["f"][0] * c0[0] + gates["i"][0] * gates["g"][0]
+assert abs(by_hand - c1[0]) < 1e-12
+print("unit 0 by hand:", round(float(by_hand), 4))
+
+# %% [markdown]
+# **What you should see.**
+#
+# The forget gate of unit 0 is 0.934 (we gave it a bias of 2, so it starts out keeping most of its memory), while unit 1 has a forget gate of 0.483. The new cell of unit 0 is 1.264: it is 0.934 times the old 0.8 plus 0.646 times the candidate 0.800, exactly the line `f * c + i * g` written out by hand, and the assert passes. Notice that the old memory is *scaled*, not erased and rewritten: that is the whole idea. The hidden state `h1` is a filtered view of the cell (the output gate is between 0 and 1, so `h1` is smaller than `tanh(c1)`).
+
+# %% [markdown]
+# Tips and common mistakes:
+#
+# - `f * c` is an element-wise product (NumPy `*`), not a matrix product (`@`). Mixing them up gives wrong shapes or silently wrong numbers.
+# - The gates use a sigmoid (0 to 1: how much), the candidate uses a tanh (minus 1 to 1: what value). Using tanh for a gate would allow negative amounts.
+# - All four computations read the *same* `x` and `h`; only the weights differ.
+
+# %% [markdown]
+# Try also (optional):
+#
+# - Set `c0` to zeros and run again. How much of `c1` now comes from the input gate and the candidate alone?
+# - Change the bias of the forget gate of unit 1 from 0 to 3. What happens to `c1[1]`?
+# - Feed the output `h1, c1` back in as the next state with the same `x` and print `c2`. Does unit 0 keep growing?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 4.1 - Erase and keep
+#
+# Copy `P`, set the forget-gate bias of unit 0 to minus 6 (so `f` is almost 0) and compute the new `c` of unit 0 with `lstm_step`; then set it to plus 6 (so `f` is almost 1) and compute again. Store the two numbers in `c_erase` and `c_keep`. Why it matters: The forget gate is the knob that makes the memory last or vanish. Seeing its two extremes tells you what the network has to learn to remember something.
+
+# %%
+c_erase = None     # YOUR CODE: c1[0] when the forget bias of unit 0 is -6
+c_keep = None      # YOUR CODE: c1[0] when the forget bias of unit 0 is +6
+
+# %%
+# Check
+if c_erase is None or c_keep is None:
+    print("Fill in your two numbers above, then run this cell again.")
+else:
+    P_e = {k: tuple(a.copy() for a in v) for k, v in P.items()}; P_e["f"][2][0] = -6.0
+    P_k = {k: tuple(a.copy() for a in v) for k, v in P.items()}; P_k["f"][2][0] = 6.0
+    check("c_erase is about i*g (the old memory is gone)", abs(c_erase - lstm_step(x, h0, c0, P_e)[1][0]) < 1e-9, "set P_e['f'][2][0] = -6 and read c1[0]")
+    check("c_keep: the old memory 0.8 passes through (c_keep minus c_erase is about 0.8)", abs(c_keep - lstm_step(x, h0, c0, P_k)[1][0]) < 1e-9 and abs((c_keep - c_erase) - 0.8) < 0.01, "with f near 1 the old 0.8 passes through, on top of the new i*g")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# P_e = {k: tuple(a.copy() for a in v) for k, v in P.items()}; P_e["f"][2][0] = -6.0
+# P_k = {k: tuple(a.copy() for a in v) for k, v in P.items()}; P_k["f"][2][0] = 6.0
+# c_erase = float(lstm_step(x, h0, c0, P_e)[1][0])
+# c_keep = float(lstm_step(x, h0, c0, P_k)[1][0])
+# ```
+# The copies matter: `P_e = P` would change the original dictionary too, because both names would point to the same arrays. With a forget bias of minus 6 the gate is about 0.0025, so the old memory 0.8 is almost wiped and `c1[0]` is 0.521 (only the input gate times the candidate remains). With plus 6 the gate is about 0.9975 and `c1[0]` is 1.316. The difference between the two answers, 0.795, is the old memory 0.8 that now passes through; the part both share is the new input times candidate. A network that has to remember symbol 1 for many steps must learn forget gates near 1 on the units that store it.
+# </details>
+
+# %% [markdown]
+# ### Step 4.2. Check it against PyTorch's LSTMCell
+#
+# You should never trust hand-written code until it agrees with a trusted implementation. PyTorch's `nn.LSTMCell(2, 2)` does exactly one step. Its weights are stored in four stacked blocks in the order **input, forget, cell (g), output**, so we copy our `i`, `f`, `g`, `o` matrices into the right row blocks. PyTorch has two bias vectors (`bias_ih` and `bias_hh`); we put our bias in the first and zeros in the second. Then we assert that PyTorch's `h` and `c` equal ours.
+
+# %%
+H = 2
+cell = nn.LSTMCell(2, H)
+with torch.no_grad():
+    for k, name in enumerate(["i", "f", "g", "o"]):          # PyTorch's block order
+        W, U, b = P[name]
+        cell.weight_ih[k * H:(k + 1) * H] = torch.tensor(W, dtype=torch.float32)
+        cell.weight_hh[k * H:(k + 1) * H] = torch.tensor(U, dtype=torch.float32)
+        cell.bias_ih[k * H:(k + 1) * H] = torch.tensor(b, dtype=torch.float32)
+        cell.bias_hh[k * H:(k + 1) * H] = 0.0
+    th, tc = cell(torch.tensor(x, dtype=torch.float32)[None], (torch.tensor(h0, dtype=torch.float32)[None], torch.tensor(c0, dtype=torch.float32)[None]))
+print("PyTorch h =", np.round(th[0].numpy(), 4), "| ours =", np.round(h1, 4))
+print("PyTorch c =", np.round(tc[0].numpy(), 4), "| ours =", np.round(c1, 4))
+assert np.allclose(th[0].numpy(), h1, atol=1e-5) and np.allclose(tc[0].numpy(), c1, atol=1e-5)
+n_formula = 4 * (H * 2 + H * H + H)
+n_torch = sum(p.numel() for p in cell.parameters())
+print("parameters by formula 4*(H*I + H*H + H):", n_formula, "| in PyTorch (two bias vectors):", n_torch)
+
+# %% [markdown]
+# **What you should see.**
+#
+# The two lines agree to four decimals and the assert passes: your NumPy step is the LSTM. The formula gives 40 parameters: four blocks, each with input weights (2 x 2), recurrent weights (2 x 2) and a bias (2). PyTorch counts 48 because it keeps two bias vectors per gate (they do the same job together, a historical detail), which adds 4 x 2 = 8. Compare with a plain RNN of the same size: one block of 2 x 2 + 2 x 2 + 2 = 10 parameters. **An LSTM has four times the parameters of an RNN of the same width** because it has four computations (three gates and a candidate) where the RNN has one.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 4.2 - Count the parameters
+#
+# Compute by formula the number of parameters of `nn.LSTM(8, 32)` and of `nn.RNN(8, 32)` the way PyTorch counts them (two bias vectors), store them in `n_lstm` and `n_rnn`, and then check with `sum(p.numel() ...)` on real modules. What is the ratio? Why it matters: The models of Step 4.4 use exactly these sizes (8 one-hot inputs, 32 hidden units). Knowing the cost of the gates in numbers helps you judge later whether the extra memory is worth it.
+
+# %%
+n_lstm = None    # YOUR CODE: parameters of nn.LSTM(8, 32)
+n_rnn = None     # YOUR CODE: parameters of nn.RNN(8, 32)
+
+# %%
+# Check
+if n_lstm is None or n_rnn is None:
+    print("Fill in your two numbers above, then run this cell again.")
+else:
+    real_l = sum(p.numel() for p in nn.LSTM(8, 32).parameters()); real_r = sum(p.numel() for p in nn.RNN(8, 32).parameters())
+    check("parameters of nn.LSTM(8, 32)", n_lstm == real_l, "4 blocks of (32*8 + 32*32 + 32 + 32)")
+    check("parameters of nn.RNN(8, 32)", n_rnn == real_r, "one block of (32*8 + 32*32 + 32 + 32)")
+    print("ratio LSTM / RNN =", round(n_lstm / n_rnn, 2))
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# n_rnn = 32 * 8 + 32 * 32 + 32 + 32          # W_x, W_h and two biases
+# n_lstm = 4 * n_rnn                           # four blocks: input, forget, cell, output
+# ```
+# One block has 32 x 8 = 256 input weights, 32 x 32 = 1,024 recurrent weights and two biases of 32: 1344 parameters, which is the RNN. The LSTM has four such blocks: 5376 parameters. The ratio is exactly 4. In a real network the extra parameters are the price of the gates; they are small here (a few thousand), but in a model with 1,000 hidden units the same ratio means millions.
+# </details>
+
+# %% [markdown]
+# ### Step 4.3. The memory highway: how much gradient survives
+#
+# Why does the cell state help? Look at the update `c_t = f_t * c_(t-1) + i_t * g_t`. The direct path from `c_(t-1)` to `c_t` is multiplied only by the forget gate `f_t`. So the gradient that travels along the cell state from step T back to step t is the product of the forget gates in between. If the gate is constant, that product is `f` to the power `T - t`: for `f = 0.95` and `T = 30` it is 0.95 raised to the power 29. There is no `tanh'` factor and no recurrent weight matrix on this path, which is what killed the RNN's gradient in Part 3. The first block prints the product for four gate values and three sequence lengths. The second block recomputes the scalar-RNN influence of Part 3 with our own small helper (so that this part is self-contained) and plots it against the highway on a log scale.
+
+# %%
+print(f"{'f':>5} {'T=10':>10} {'T=30':>10} {'T=60':>10}")
+for f in [0.5, 0.9, 0.95, 0.99]:
+    print(f"{f:5.2f} " + " ".join(f"{f ** (T - 1):10.3g}" for T in (10, 30, 60)))
+
+# %% [markdown]
+# **What you should see.**
+#
+# Each row is `f` to the power `T - 1`, the gradient from the last step back to step 1. With `f = 0.5` the memory is gone in 10 steps (0.0020). With `f = 0.95` we still have 0.226 left at T = 30 (the lesson's 0.226) and 0.0485 at T = 60. With `f = 0.99` about 0.747 survives at T = 30 and 0.553 at T = 60. Compare with the RNN of Part 3, where the same distance left something like 10 to the power minus 11. ==A gate near 1 turns a vanishing gradient into a gentle slope.==
+
+# %%
+def rnn_influence(T, w=0.9, u=0.8, seed=0):
+    """Scalar RNN h_t = tanh(w*h_(t-1) + u*x_t) with random +-1 inputs.
+    Returns d h_T / d h_t for t = 1..T: the product of w*(1 - h_k^2) for k = t+1..T (and 1 for t = T)."""
+    xs = np.random.RandomState(seed).choice([-1.0, 1.0], size=T)
+    hs, h = [], 0.0
+    for t in range(T):
+        h = np.tanh(w * h + u * xs[t]); hs.append(h)
+    infl = np.ones(T)
+    for t in range(T - 2, -1, -1):
+        infl[t] = infl[t + 1] * w * (1 - hs[t + 1] ** 2)
+    return infl
+
+T = 60
+steps_back = np.arange(T - 1, -1, -1)                    # distance from the last step
+plt.figure(figsize=(7, 3.6))
+plt.semilogy(steps_back, rnn_influence(T, w=0.9), "k", lw=2, label="RNN (w = 0.9)")
+for f in (0.9, 0.95, 0.99):
+    plt.semilogy(steps_back, f ** steps_back, label=f"LSTM cell state, f = {f}")
+plt.gca().invert_xaxis(); plt.xlabel("step t (the last step T = 60 is on the right)"); plt.ylabel("gradient from step 60 back to step t")
+plt.legend(fontsize=8); plt.title("Gradient reaching step t: RNN against the LSTM highway"); plt.tight_layout(); plt.show()
+rnn_g = rnn_influence(30, w=0.9)[0]; lstm_g = 0.95 ** 29
+print(f"T = 30: RNN {rnn_g:.2e} | LSTM (f = 0.95) {lstm_g:.3f} | ratio {lstm_g / rnn_g:.2e}")
+RESULTS["p4_gradient_ratio_T30"] = float(lstm_g / rnn_g)
+
+# %% [markdown]
+# **What you should see.**
+#
+# The black RNN curve drops almost vertically on the log scale; the LSTM curves are gentle lines (a straight line on a log scale means a constant loss factor per step, here `f`). At T = 30 the RNN keeps 8.72e-14 (your signs of the random inputs differ from the lesson's, so the exact number differs, but it is of the same tiny order as the lesson's 10 to the power minus 11), while the highway with `f = 0.95` keeps 0.226. The ratio is 2.6e+12: compare it with your Imagine-first guess. The highway is not magic, though: a gate of 0.95 still halves the signal about every 14 steps, which is why very long sequences are still hard.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 4.3 - How long does a memory last?
+#
+# A memory is practically lost when less than 1 percent of the gradient is left. For a constant forget gate, find with a short loop the smallest number of steps `k` such that `f ** k` is below 0.01, for `f = 0.9`, `f = 0.95` and `f = 0.99`. Store them in `k_09`, `k_95`, `k_99`. Why it matters: It turns the abstract number 0.95 into a distance: how many words the LSTM could in principle look back in a sentence.
+
+# %%
+k_09 = None    # YOUR CODE: smallest k with 0.9 ** k < 0.01
+k_95 = None    # YOUR CODE: the same for 0.95
+k_99 = None    # YOUR CODE: the same for 0.99
+
+# %%
+# Check
+def first_below(f, limit=0.01):
+    k = 0
+    while f ** k >= limit: k += 1
+    return k
+if None in (k_09, k_95, k_99):
+    print("Fill in your three numbers above, then run this cell again.")
+else:
+    check("f = 0.9", k_09 == first_below(0.9), "keep multiplying by 0.9 until the product is below 0.01")
+    check("f = 0.95", k_95 == first_below(0.95), "the same with 0.95")
+    check("f = 0.99", k_99 == first_below(0.99), "the same with 0.99")
+    assert k_09 < k_95 < k_99
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# def first_below(f, limit=0.01):
+#     k = 0
+#     while f ** k >= limit:
+#         k += 1
+#     return k
+# k_09, k_95, k_99 = first_below(0.9), first_below(0.95), first_below(0.99)
+# ```
+# The loop multiplies by `f` until the product drops under 0.01. You can also solve it with logarithms: `ceil(log(0.01) / log(f))`. The answers are 44 steps for 0.9, 90 for 0.95 and 459 for 0.99. So a gate of 0.99 lets a signal travel about 459 steps before it falls under 1 percent. That is a long way, but a book has many thousands of words: the highway extends the reach of the memory, it does not remove the limit.
+# </details>
+
+# %% [markdown]
+# ### Step 4.4. Train an LSTM and an RNN on the memory task
+#
+# Now the real test. We train `SeqClassifier` (a recurrent layer over the one-hot symbols, then the **last** hidden state into `nn.Linear(32, 8)`) with `nn.RNN` and with `nn.LSTM`, 32 hidden units each, on the memory task at lengths 10, 20, 40, 60 and 80: 1,000 training sequences, 300 test sequences, Adam with a learning rate of 0.003 (the setting of the RNN in Part 2; a larger step of 0.01 made the RNN unreliable there), 150 epochs, gradient clipping at 1 (all inside `train_seq_model`). The label is the first symbol, so the model must carry symbol 1 across the whole sequence. Chance is 0.125. For each run we record the final test accuracy, the best test accuracy over the epochs, and the first epoch with at least 0.9 test accuracy (the number of epochs it needed). One training at a time, so each cell takes about a minute on a CPU. We use the same data and seed for both models so the comparison is fair.
+
+# %%
+class SeqClassifier(nn.Module):
+    """A recurrent layer (RNN or LSTM) over one-hot symbols; the LAST hidden state goes into a linear layer."""
+    def __init__(self, kind="lstm", hidden=32):
+        super().__init__()
+        self.rnn = (nn.LSTM if kind == "lstm" else nn.RNN)(N_SYMBOLS, hidden, batch_first=True)
+        self.out = nn.Linear(hidden, N_SYMBOLS)
+    def forward(self, x):
+        o, _ = self.rnn(x)
+        return self.out(o[:, -1])
+
+def get_data(L):
+    """1,000 training and 300 test sequences of length L (fixed seeds)."""
+    Xtr, ytr = make_memory_task(1000, L, seed=1)
+    Xte, yte = make_memory_task(300, L, seed=2)
+    return Xtr, ytr, Xte, yte
+
+LENGTHS = (10, 20, 40, 60, 80)
+EPOCHS = 6 if QUICK else 150
+ACC, MODELS, CURVES = {"rnn": {}, "lstm": {}}, {}, {}
+
+def run_model(kind, L):
+    torch.manual_seed(SEED)
+    model = SeqClassifier(kind)
+    hist = train_seq_model(model, *get_data(L), epochs=EPOCHS, lr=0.003, seed=SEED)
+    te = hist["test_acc"]
+    reach = next((e + 1 for e, a in enumerate(te) if a >= 0.9), None)
+    ACC[kind][L] = {"final": te[-1], "best": max(te), "train": hist["train_acc"][-1], "epochs_to_90": reach}
+    MODELS[(kind, L)], CURVES[(kind, L)] = model, hist
+    print(f"{kind:4s} length {L:2d}: final test {te[-1]:.3f} | best {max(te):.3f} | train {hist['train_acc'][-1]:.3f} | first epoch with test >= 0.9: {reach}")
+
+for L in LENGTHS:
+    run_model("rnn", L)
+
+# %%
+for L in LENGTHS:
+    run_model("lstm", L)
+
+# %%
+print(f"{'length':>6} {'RNN final':>10} {'RNN best':>9} {'LSTM final':>11} {'LSTM best':>10}")
+for L in LENGTHS:
+    r, l = ACC["rnn"][L], ACC["lstm"][L]
+    print(f"{L:6d} {r['final']:10.3f} {r['best']:9.3f} {l['final']:11.3f} {l['best']:10.3f}")
+plt.figure(figsize=(6.4, 3.6))
+for kind, col in (("rnn", "tab:red"), ("lstm", "tab:blue")):
+    plt.plot(list(ACC[kind]), [ACC[kind][L]["final"] for L in ACC[kind]], "o-", color=col, label=kind.upper())
+plt.axhline(1 / 8, color="gray", ls="--", label="chance (0.125)")
+plt.xlabel("sequence length"); plt.ylabel("final test accuracy"); plt.ylim(0, 1.05); plt.legend(); plt.title("Memory task: RNN against LSTM"); plt.tight_layout(); plt.show()
+RESULTS["p4_rnn_final"] = {L: round(ACC["rnn"][L]["final"], 3) for L in ACC["rnn"]}
+RESULTS["p4_lstm_final"] = {L: round(ACC["lstm"][L]["final"], 3) for L in ACC["lstm"]}
+if not QUICK:
+    assert ACC["rnn"][10]["final"] > 0.9 and ACC["lstm"][10]["final"] > 0.9, "both models should learn the shortest length"
+
+# %% [markdown]
+# **What you should see.**
+#
+# **The RNN.** At length 10 the RNN learns the task (1.000 test accuracy, reaching 0.9 at epoch 9). At length 20 this run ends at 0.750 (training accuracy 0.757): it has not settled. Part 2 may show a different number for the same length, because near its limit the RNN's result depends on the hardware, the number of CPU threads and the random seed; that unreliability is itself the finding. At length 40 it reaches 1.000 (0.9 at epoch 40), but at length 60 the final test accuracy is 0.140 and at length 80 it is 0.113, near chance 0.125, with training accuracies of only 0.527 and 0.458: it cannot even fit the training set.
+#
+# **The LSTM.** It reaches 1.000 at length 10 (0.9 at epoch 24), 1.000 at length 20 (epoch 24) and 1.000 at length 40 (epoch 45). At length 60 the final test accuracy is 0.107 and at length 80 it is 0.143, with training accuracies of 0.745 and 0.731: it fits part of the training set (it partly memorises 1,000 sequences) without finding the rule 'copy the first symbol', and that does not carry over to new sequences.
+#
+# **What the contrast really is.** With these settings **the LSTM does not reach further than the RNN: both solve length 40 and both fail at length 60.** The differences are smaller: on this machine the LSTM learned every length up to 40 while the RNN wobbled at 20, and the LSTM needed more epochs at the shortest length (24 against 9), because it has four times the parameters and its gates have to be learned first. This is a less dramatic result than the gradient numbers of Step 4.3 (0.226 against 8.7e-14) might lead you to expect, and it is the honest one. A likely reason, which we did not test here, is that Adam divides each gradient by its running size, so a small gradient still produces a usable step, and clipping and a small learning rate keep training stable; the RNN's tiny gradient is slow and noisy, not absent. A bigger model, different settings or many more epochs may move both limits. What the LSTM does show clearly is *how* it keeps information: the cell-state product of Step 4.3 and the gates of Step 4.5.
+
+# %% [markdown]
+# Tips and common mistakes:
+#
+# - Compare models with the same data, the same seed and the same budget; otherwise a difference may come from the setup and not from the model.
+# - A failing run is not a bug. If the training accuracy is high and the test accuracy is near chance, the model memorised the training set; if both are near chance, it could not find the signal at all. Read `train` next to `final` in the printout.
+# - `train_seq_model` returns lists with one entry per epoch. `hist['test_acc'][-1]` is the last epoch, `max(...)` is the best one.
+
+# %% [markdown]
+# Try also (optional):
+#
+# - Train the LSTM at length 50 and find where between 40 and 60 it stops (and the RNN too).
+# - Change the hidden size from 32 to 64 for the LSTM at length 60 (set `hidden=64` in `SeqClassifier`). Does it help?
+# - Plot `CURVES[('lstm', 20)]['test_acc']` and `CURVES[('rnn', 20)]['test_acc']` against the epoch. Which one is steadier?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 4.4 - Read the table
+#
+# From the dictionary `ACC`, find (a) the longest length at which the LSTM's final test accuracy is at least 0.9 (`lstm_reach`), (b) the same for the RNN (`rnn_reach`), and (c) how many percentage points the LSTM beats the RNN by at length 20 (`gap20`, a number between 0 and 100, rounded to a whole number). Compare (a) with your Imagine-first guess. Why it matters: A table of accuracies is only useful if you can say in one sentence where each model stops working.
+
+# %%
+lstm_reach = None   # YOUR CODE: the longest length with ACC["lstm"][L]["final"] >= 0.9
+rnn_reach = None    # YOUR CODE: the same for the RNN
+gap20 = None        # YOUR CODE: percentage points, LSTM minus RNN, at length 20
+
+# %%
+# Check
+if None in (lstm_reach, rnn_reach, gap20):
+    print("Fill in your three numbers above, then run this cell again.")
+elif QUICK:
+    print("(Quick test mode: the short training does not give the real numbers; skipping the check.)")
+else:
+    ok = lambda k: max([L for L in ACC[k] if ACC[k][L]["final"] >= 0.9], default=0)
+    check("longest length for the LSTM", lstm_reach == ok("lstm"), "look for the largest L whose final accuracy is at least 0.9")
+    check("longest length for the RNN", rnn_reach == ok("rnn"), "the same for the RNN")
+    check("gap at length 20", abs(gap20 - 100 * (ACC["lstm"][20]["final"] - ACC["rnn"][20]["final"])) <= 1, "multiply the difference of the accuracies by 100")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# ok = lambda k: max([L for L in ACC[k] if ACC[k][L]["final"] >= 0.9], default=0)
+# lstm_reach, rnn_reach = ok("lstm"), ok("rnn")
+# gap20 = round(100 * (ACC["lstm"][20]["final"] - ACC["rnn"][20]["final"]))
+# ```
+# `max(..., default=0)` returns 0 when no length qualifies. The LSTM reaches 0.9 up to length 40 and the RNN up to length 40. At length 20 the LSTM is 25 percentage points better. If you guessed that the LSTM would go much further than the RNN, the measurement disagrees: the highway keeps the gradient large, but the model still has to *learn* to use it, and in this small budget both models give out between lengths 40 and 60.
+# </details>
+
+# %% [markdown]
+# ### Step 4.5. Open the gates: what did the LSTM learn about forgetting?
+#
+# A trained LSTM is not a black box: we can recompute its gates ourselves. We take the LSTM trained at length 20 (stored in `MODELS`), read its weight matrices, and run 200 test sequences step by step with the equations of Step 4.1. For each step and each of the 32 hidden units we compute the forget gate `f_t` and the input gate `i_t`, then average over the 200 sequences. PyTorch stacks the gates in the order input, forget, cell, output, so `z.chunk(4, dim=1)` splits them. We assert that our loop reproduces the module's own last hidden state (so we know our gates are the real ones). Then we ask for each unit: if its forget gate stayed at its average value, what fraction of the cell content of step 1 would survive to step 20? That is the product of its mean forget gates from step 2 to step 20, the highway product of Step 4.3 for a gate that is not constant.
+
+# %%
+lstm = MODELS[("lstm", 20)].rnn
+W_ih, W_hh, b_ih, b_hh = (p.detach() for p in (lstm.weight_ih_l0, lstm.weight_hh_l0, lstm.bias_ih_l0, lstm.bias_hh_l0))
+Xg = one_hot_batch(get_data(20)[2][:200])                  # 200 test sequences, shape (200, 20, 8)
+h = torch.zeros(200, 32); c = torch.zeros(200, 32)
+f_unit, i_unit = [], []                                    # per step: mean gate of each of the 32 units
+with torch.no_grad():
+    for t in range(20):
+        z = Xg[:, t] @ W_ih.T + h @ W_hh.T + b_ih + b_hh
+        i, f, g, o = z.chunk(4, dim=1)
+        i, f, g, o = torch.sigmoid(i), torch.sigmoid(f), torch.tanh(g), torch.sigmoid(o)
+        c = f * c + i * g; h = o * torch.tanh(c)
+        f_unit.append(f.mean(0).numpy()); i_unit.append(i.mean(0).numpy())
+    ref, _ = lstm(Xg)
+assert torch.allclose(h, ref[:, -1], atol=1e-5), "our gate loop must reproduce the module"
+f_unit, i_unit = np.array(f_unit), np.array(i_unit)         # shape (20, 32)
+f_steps, i_steps = f_unit.mean(1), i_unit.mean(1)           # mean over the 32 units
+survive_unit = np.prod(f_unit[1:], axis=0)                  # steps 2..20, one number per unit
+best = int(np.argmax(survive_unit))
+print("mean forget gate per step (mean of 32 units):", np.round(f_steps, 2)[:10], "...")
+print("sorted survival per unit (top 6):", np.round(np.sort(survive_unit)[::-1][:6], 3))
+print(f"units with survival above 0.1: {int((survive_unit > 0.1).sum())} of 32 | best unit: {best}")
+print(f"forget gate of unit {best}, steps 1-6:", np.round(f_unit[:6, best], 2), "| input gate, steps 1-6:", np.round(i_unit[:6, best], 2))
+fig, ax = plt.subplots(1, 2, figsize=(9, 3.3))
+ax[0].plot(range(1, 21), f_steps, "o-", label="forget gate, mean of the 32 units")
+ax[0].plot(range(1, 21), f_unit[:, best], "s-", label=f"forget gate, unit {best}")
+ax[0].plot(range(1, 21), i_unit[:, best], "^-", label=f"input gate, unit {best}")
+ax[0].set_xlabel("step t"); ax[0].set_ylim(0, 1.05); ax[0].legend(fontsize=7); ax[0].set_title("Gates of the LSTM trained at length 20")
+ax[1].bar(range(32), np.sort(survive_unit)[::-1]); ax[1].set_xlabel("units, sorted"); ax[1].set_ylabel("survival of step 1 until step 20"); ax[1].set_title("How much each unit keeps")
+plt.tight_layout(); plt.show()
+RESULTS["p4_forget_survive_best_unit"] = round(float(survive_unit.max()), 3)
+
+# %% [markdown]
+# **What you should see.**
+#
+# The assert passes, so these are the gates the trained module really used. The forget gate averaged over the 32 units and 20 steps is 0.79. If every unit sat at that value, what was written at step 1 would shrink to 1.2e-02 by step 20: nothing. But the units differ. Sorted by survival, the top six keep 0.388, 0.282, 0.184, 0.101, 0.084, 0.075 of what was written at step 1, and only 4 of the 32 units are above 0.1; all the others forget quickly. The best, unit 16, has a forget gate of 0.79 at step 1 and 0.93 or more from step 4 on. Its input gate is also high (0.75 or more at every step), so this unit keeps taking in new content while it holds its memory: it is not a clean 'write once, then lock' store, and its mixed content is read out by the final layer together with the other memory units. We do not claim more: the plot shows the gates of a few units, not what they contain, and the survival number uses the *average* gate, while the real gate changes with the sequence.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 4.5 - Count the memory units
+#
+# Using `survive_unit`, count how many units keep at least 10 percent of step 1 (`n_memory_units`) and find which unit keeps the most (`top_unit`). Then write one sentence in `my_reading` saying what the network does with the first symbol; separate what you saw from what you guess. Why it matters: Reading a gate plot is a skill: say what you see, then mark what you guess.
+
+# %%
+n_memory_units = None   # YOUR CODE: how many units have survive_unit above 0.1
+top_unit = None         # YOUR CODE: the index (0 to 31) of the unit with the largest survive_unit
+my_reading = ""         # YOUR ANSWER: one sentence about what the network does with the first symbol
+
+# %%
+# Check
+if n_memory_units is None or top_unit is None:
+    print("Fill in your two numbers above, then run this cell again.")
+else:
+    check("number of memory units", n_memory_units == int((survive_unit > 0.1).sum()), "count with (survive_unit > 0.1).sum()")
+    check("top unit", top_unit == int(np.argmax(survive_unit)), "np.argmax(survive_unit)")
+    check("a sentence about step 1", len(my_reading.split()) >= 8, "write at least 8 words")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# n_memory_units = int((survive_unit > 0.1).sum())
+# top_unit = int(np.argmax(survive_unit))
+# my_reading = "A few units keep their forget gate near 1 after the first steps and so carry part of the first symbol towards the end, while most other units forget quickly."
+# ```
+# `(survive_unit > 0.1)` is a list of True and False; summing it counts the Trues. 4 units keep at least 10 percent and unit 16 keeps the most. A good sentence says that the network seems to write the first symbol into a few cell units and protect them with forget gates near 1, and marks it as an interpretation: the plot shows the gates, not what the units contain.
+# </details>
+
+# %% [markdown]
+# ### Step 4.6. Imagine and write: what an LSTM still cannot do
+#
+# In our small experiment the LSTM kept the first symbol across 40 steps, but not further than the plain RNN, and in real systems it reaches much further. It did not solve everything. Using what you measured in this part and what the lesson said, write three things an LSTM still cannot do well. Hints: think about the order in which it reads, about the size of its state, and about how far it can reach.
+
+# %%
+lstm_limits = [
+    "",    # 1. something about the order in which it computes (does step t need step t-1?)
+    "",    # 2. something about the fixed size of the state (32 numbers for the whole past)
+    "",    # 3. something about long range (your table of Step 4.4)
+]
+filled = [s for s in lstm_limits if len(s.split()) >= 8]
+if len(filled) < 3:
+    print(f"Write three sentences of at least 8 words each ({len(filled)} of 3 so far), then run this cell again.")
+else:
+    check("three limits written", True)
+RESULTS["p4_limits"] = lstm_limits
+
+# %% [markdown]
+# **What a good answer contains.** (1) *Sequential:* each step needs the previous state, so the steps of one sequence cannot be computed in parallel; training on long sequences is slow, and a GPU is used inefficiently. (2) *Fixed-size state:* the whole past has to be squeezed into the cell and hidden vectors, 32 numbers in this lab; as the text grows, something must be thrown away, a bottleneck. (3) *Long range:* the highway helps but is not perfect: forget gates below 1 still shrink the signal, and your table showed the LSTM unable to generalise at lengths 60 and 80 under the same budget. Attention, in Part 5, changes all three (all positions are computed in parallel, the whole past stays available, and any position is one step away), at a price: the n squared cost of Step 5.6.
+
+# %% [markdown]
+# ## Part 5. Attention by hand (30 min)
+#
+# *Lesson section: "Attention".* An RNN or an LSTM reads a sequence through a keyhole: everything it knows about the past must be squeezed into one state vector. **Attention** removes the keyhole. Every position gets a **query** (what am I looking for?), every position also offers a **key** (what do I contain?) and a **value** (what do I give you if you pick me?). The query is compared with all keys by a dot product, the scores are turned into weights by a softmax, and the output is the weighted sum of the values. Anything in the sequence, however far back, is one step away. In this part you compute all of that by hand in NumPy, wrap it in a function, compare it with PyTorch, draw the weights, find out why the scores are divided by the square root of `d_k`, and measure what attention costs. ==The whole mechanism is three matrix products and one softmax.==
+
+# %% [markdown]
+# ### ✏️ Imagine first
+#
+# Read the sentence **the cat sat on the mat** and put yourself in the place of the word *sat*. If you were allowed to look at every word of the sentence and give each a share of your attention (the shares add up to 100 percent), which words would you give the highest shares, and about how much to the best one? Think of what *sat* needs to know: who sat, and where. Write your prediction below. In Step 5.3 you will draw the weights of a tiny hand-made model and compare. (Careful: in that model the vectors are made up by us, so the result tests your reading of the mechanism, not a real language model.)
+#
+# Write your prediction in the starter cell below (it does not matter if you are wrong: the point is to commit before you look).
+
+# %%
+# Imagine first: where does "sat" look in "the cat sat on the mat"?
+my_top_words = []     # the words you would attend to most, in order, e.g. ["cat", "mat"]
+my_top_share = None   # your guess for the largest share, between 0 and 1
+
+# %% [markdown]
+# ### Step 5.1. Scores, weights and output for three tokens
+#
+# We start with three tokens and two-dimensional vectors, small enough to check with a calculator. The matrices are our own invention (they are not the lesson's figure, but the first query is built so that its three scores are 2, 1 and 0.1, the lesson's example, whose softmax is 0.659, 0.242, 0.099). Row `i` of `Q` is the query of token `i`; rows of `K` are the keys; rows of `V` are the values. The scores are `Q @ K.T` (row `i`, column `j`: how well query `i` matches key `j`). The weights are the softmax of each row, and the output is `weights @ V`: for every token, a mix of the values with those weights. We first use the raw scores, then divide them by `sqrt(d_k)` as the Transformer does (Step 5.4 explains why).
+
+# %%
+np.set_printoptions(precision=3, suppress=True)
+Q = np.array([ [1.0, 1.0], [0.0, 1.0], [1.0, 0.0] ])         # three queries, d_k = 2
+K = np.array([ [1.2, 0.8], [0.6, 0.4], [0.05, 0.05] ])       # three keys
+V = np.array([ [1.0, 0.0], [0.0, 1.0], [0.5, 0.5] ])         # three values
+
+scores = Q @ K.T                                             # shape (3, 3)
+print("scores = Q @ K.T:\n", scores)
+w_raw = softmax_np(scores)                                   # softmax of each row, no scaling
+print("weights without scaling, row 0:", w_raw[0])
+d_k = Q.shape[1]
+weights = softmax_np(scores / math.sqrt(d_k))                # with the 1/sqrt(d_k) scaling
+print("weights with scaling:\n", weights)
+print("row sums:", weights.sum(axis=1))
+out = weights @ V
+print("output = weights @ V:\n", out)
+assert np.allclose(weights.sum(axis=1), 1.0)
+
+# %% [markdown]
+# **What you should see.**
+#
+# The first row of scores is exactly [2.  1.  0.1]: query 0 matches key 0 best, key 1 half as well, key 2 hardly at all. Without scaling the softmax gives [0.659 0.242 0.099], the lesson's (0.659, 0.242, 0.099). With scaling by `sqrt(2)` = 1.414 the scores are smaller and the weights flatter: [0.57  0.281 0.149] (token 0 still wins, but with a smaller lead). Each row of weights sums to 1 (the assert passes), so each output row is a weighted average of the rows of `V`. Row 0 of the output is [0.645 0.355]: mostly value 0 (which is `[1, 0]`), mixed with some of values 1 and 2. Query 1, `[0, 1]`, matches key 0 with a score of 0.8 and key 1 with 0.4; query 2 behaves differently again. **Different queries read different mixtures from the same keys and values.**
+
+# %% [markdown]
+# Tips and common mistakes:
+#
+# - `softmax_np(scores)` softmaxes along the last axis, that is, each row separately. A softmax over the whole matrix would make all nine numbers add up to 1, which is wrong.
+# - `Q @ K.T` needs the transpose: both have shape (3, 2), and `(3, 2) @ (3, 2)` does not multiply. `K.T` has shape (2, 3), giving (3, 3).
+# - Scores are not probabilities; the weights are. Only the weights add up to 1.
+
+# %% [markdown]
+# Try also (optional):
+#
+# - Replace `V` by the identity matrix `np.eye(3)`. Then the output equals the weights. Why?
+# - Make the first key a lot larger (multiply it by 5). What happens to row 0 of the weights?
+# - Set all three keys equal. What do the weights become, and what is the output?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.1 - One output row by hand
+#
+# Using the unscaled weights of the first query, `w_raw[0]` = (0.659, 0.242, 0.099), compute the output row 0 by hand (with a calculator, or with Python as a calculator on the three numbers and the rows of `V`): `0.659 * [1, 0] + 0.242 * [0, 1] + 0.099 * [0.5, 0.5]`. Store the two numbers in `out_row0`, as a list of two numbers. Why it matters: The weighted sum is the entire reading step. If you can do it for one row by hand, you understand what the matrix product `weights @ V` does for every row.
+
+# %%
+out_row0 = None   # YOUR CODE: [first number, second number], the unscaled output of query 0
+
+# %%
+# Check
+if out_row0 is None:
+    print("Fill in your two numbers above, then run this cell again.")
+else:
+    expected = softmax_np(scores[0]) @ V
+    check("output row 0", np.allclose(out_row0, expected, atol=0.01), "0.659 * 1 + 0.242 * 0 + 0.099 * 0.5 for the first number")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# out_row0 = [0.659 * 1 + 0.242 * 0 + 0.099 * 0.5, 0.659 * 0 + 0.242 * 1 + 0.099 * 0.5]
+# ```
+# First number: 0.659 + 0 + 0.0495 = 0.7085. Second number: 0 + 0.242 + 0.0495 = 0.2915. The output is ([0.708 0.292]), about (0.709, 0.292). It leans towards value 0 because token 0 has the largest weight, but the other two values leave their mark in proportion to their weights. The sum of the two numbers is 1.00 here only because each value row happens to add up to 1 and the weights add up to 1.
+# </details>
+
+# %% [markdown]
+# ### Step 5.2. Scaled dot-product attention as a function
+#
+# Now we package the three lines into a function, the one you will reuse in Parts 6 and 7: `attention(Q, K, V, scale=True)` returns the output and the weights. `Q` has shape (n, d_k), `K` has shape (m, d_k), `V` has shape (m, d_v); the scores have shape (n, m), and the output has shape (n, d_v). We test it on random matrices, compare it with PyTorch's `F.scaled_dot_product_attention` (which does the same computation and also works on GPUs), and print the shapes.
+
+# %%
+def attention(Q, K, V, scale=True):
+    """Scaled dot-product attention in NumPy. Q (n, d_k), K (m, d_k), V (m, d_v). Returns output (n, d_v) and weights (n, m)."""
+    scores = Q @ K.T
+    if scale:
+        scores = scores / math.sqrt(Q.shape[-1])
+    weights = softmax_np(scores, axis=-1)
+    return weights @ V, weights
+
+rng = np.random.RandomState(0)
+Qr, Kr, Vr = rng.randn(5, 4), rng.randn(5, 4), rng.randn(5, 3)
+out_np, w_np = attention(Qr, Kr, Vr)
+out_t = F.scaled_dot_product_attention(torch.tensor(Qr), torch.tensor(Kr), torch.tensor(Vr)).numpy()
+print("our output shape:", out_np.shape, "| weights shape:", w_np.shape)
+print("maximum difference to PyTorch:", float(np.abs(out_np - out_t).max()))
+assert np.allclose(out_np, out_t, atol=1e-6)
+out3, w3 = attention(Q, K, V)                                # the Step 5.1 toy again
+assert np.allclose(w3, weights) and np.allclose(out3, out)
+print("the Step 5.1 toy gives the same weights and output as before")
+
+# %% [markdown]
+# **What you should see.**
+#
+# The shapes are (5, 3) for the output (5 queries, each a vector of size `d_v` = 3) and (5, 5) for the weights (every query against every key). Our function and PyTorch's differ by 1.1e-16, which is floating-point rounding, so both asserts pass: you have written the same operation that sits inside every Transformer. The only difference from the Transformer is that there `Q`, `K` and `V` come from the input by three learned matrices (Part 7).
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.2 - Predict the shapes
+#
+# For a sequence of n = 7 tokens, with `d_k` = 4 and `d_v` = 3, write the shapes (as tuples) of the scores matrix `Q @ K.T`, of the weights and of the output. Then check by running `attention` on random matrices of these sizes. Why it matters: Most mistakes in attention code are shape mistakes. Reading the shapes is the quickest way to find them.
+
+# %%
+shape_scores = None    # YOUR ANSWER: a tuple such as (2, 3)
+shape_weights = None   # YOUR ANSWER
+shape_output = None    # YOUR ANSWER
+
+# %%
+# Check
+if None in (shape_scores, shape_weights, shape_output):
+    print("Fill in your three shapes above, then run this cell again.")
+else:
+    r = np.random.RandomState(1)
+    o_, w_ = attention(r.randn(7, 4), r.randn(7, 4), r.randn(7, 3))
+    check("scores", tuple(shape_scores) == (7, 7), "(n, d_k) @ (d_k, n) gives (n, n)")
+    check("weights", tuple(shape_weights) == w_.shape, "same shape as the scores")
+    check("output", tuple(shape_output) == o_.shape, "(n, n) @ (n, d_v) gives (n, d_v)")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# shape_scores = (7, 7)
+# shape_weights = (7, 7)
+# shape_output = (7, 3)
+# ```
+# The scores are (7, 4) times (4, 7), that is (7, 7). The weights keep that shape. The output is (7, 7) times (7, 3), that is (7, 3). Notice that the scores matrix is n by n: it grows with the square of the number of tokens. Step 5.6 measures what that costs.
+# </details>
+
+# %% [markdown]
+# ### Step 5.3. Draw the weights of a six-word sentence
+#
+# A table of numbers is hard to read; a heat map is easy. Here is a toy model of the sentence **the cat sat on the mat**. We give every word a four-dimensional vector by hand: the four numbers loosely mean *animal-like*, *action-like*, *place-like* and *function word*. We use the vectors as queries, keys and values at the same time (`Q = K = V = X`), which is what *self*-attention means: the sentence attends to itself. We call `attention`, draw the weights with `show_attention`, and read the row of *sat*. The vectors are invented by us: they let you see the mechanism, they are not what a real model learned.
+
+# %%
+E = {"the": [0.6, 0.0, 0.0, 2.0], "cat": [2.0, 0.6, 0.4, 0.0], "sat": [1.6, 2.0, 1.4, 0.0],
+     "on": [0.0, 1.0, 1.6, 1.0], "mat": [0.4, 0.4, 2.0, 0.0]}     # [animal, action, place, function word]
+words = ["the", "cat", "sat", "on", "the", "mat"]
+X = np.array([E[w] for w in words])                               # shape (6, 4)
+out6, W6 = attention(X, X, X)                                     # Q = K = V = X: self-attention
+print("weights of 'sat' (row 2), in the order of the sentence:", [round(float(v_), 2) for v_ in W6[2]])
+plt.figure(figsize=(5.2, 4.4))
+im = show_attention(W6, row_labels=words, col_labels=words, title="Who attends to whom (rows look at columns)")
+plt.colorbar(im, fraction=0.046); plt.tight_layout(); plt.show()
+
+# %% [markdown]
+# **What you should see.**
+#
+# Each row is one word looking at the whole sentence. The row of *sat*, in the order the, cat, sat, on, the, mat, is [0.02, 0.12, 0.69, 0.08, 0.02, 0.08]: *sat* gives the largest share, 0.69, to **itself**, then 0.12 to *cat* and 0.08 to *mat* (the two words it is related to in our made-up vectors) and almost nothing to the two *the*. Two things to notice. First, the two *the* rows are identical: the same vector gives the same query and the same weights; the model cannot tell the first *the* from the second (no position information, a problem Part 6 and Week 8 solve). Second, with raw vectors a word is most similar to itself, so the diagonal is large. A real Transformer does not use the raw vectors: it first multiplies them by learned matrices `W_Q`, `W_K` and `W_V` (Part 7), so a verb can learn to look at its subject. Compare with your Imagine-first prediction: you probably put *cat* and *mat* high; the toy agrees about the order, but not about the size, because of the self-match.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.3 - Read the heat map
+#
+# From `W6`, find the word (other than *sat* itself) that *sat* attends to most (`top_other`, a string), and how much of its attention *sat* keeps on itself (`self_share`, rounded to two decimals). Why it matters: Reading an attention map correctly (rows are the looking words, columns the looked-at words) is the skill you need for every figure in the Transformer papers.
+
+# %%
+top_other = ""        # YOUR ANSWER: the other word with the largest weight in the row of "sat"
+self_share = None     # YOUR ANSWER: the weight of "sat" on itself, two decimals
+
+# %%
+# Check
+if not top_other or self_share is None:
+    print("Fill in your two answers above, then run this cell again.")
+else:
+    row = W6[2].copy(); row[2] = -1
+    check("the other word", top_other == words[int(np.argmax(row))], "ignore the diagonal entry of the row of sat (index 2)")
+    check("share on itself", abs(self_share - W6[2, 2]) < 0.006, "read the diagonal entry W6[2, 2]")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# row = W6[2].copy(); row[2] = -1
+# top_other = words[int(np.argmax(row))]
+# self_share = round(float(W6[2, 2]), 2)
+# ```
+# Setting the diagonal entry to minus one removes *sat* from the contest, so `argmax` picks the best of the others. The answer is *cat* and *sat* keeps 0.69 of its attention on itself. The row is also a statement about what the output of *sat* contains: 69 percent of its own value and the rest from other words.
+# </details>
+
+# %% [markdown]
+# ### Step 5.4. Why divide by the square root of d_k
+#
+# The scores are dot products of a query and a key. If their numbers are random with mean 0 and variance 1, a dot product of `d_k` such pairs is a sum of `d_k` products, each with variance 1, so the dot product has **variance `d_k`**: the larger the dimension, the larger the scores. Dividing by `sqrt(d_k)` brings the variance back to 1. We check this numerically: for five values of `d_k` we draw 2,000 random query and key pairs and measure the variance of `q . k` and of `q . k / sqrt(d_k)`.
+
+# %%
+rng = np.random.RandomState(0)
+dks = [4, 16, 64, 256, 1024]
+var_raw, var_scaled = [], []
+for dk in dks:
+    q, k = rng.randn(2000, dk), rng.randn(2000, dk)
+    dots = (q * k).sum(axis=1)                      # 2000 dot products q . k
+    var_raw.append(dots.var()); var_scaled.append((dots / math.sqrt(dk)).var())
+print(f"{'d_k':>6} {'var(q.k)':>10} {'var(q.k / sqrt(d_k))':>22}")
+for dk, a, b in zip(dks, var_raw, var_scaled):
+    print(f"{dk:6d} {a:10.1f} {b:22.3f}")
+plt.figure(figsize=(5.6, 3.4))
+plt.loglog(dks, var_raw, "o-", label="var(q.k)"); plt.loglog(dks, var_scaled, "s-", label="var(q.k / sqrt(d_k))")
+plt.xlabel("d_k"); plt.ylabel("variance of the score"); plt.legend(); plt.title("Scores grow with d_k unless we scale"); plt.tight_layout(); plt.show()
+RESULTS["p5_var_raw"] = [round(float(v), 1) for v in var_raw]
+
+# %% [markdown]
+# **What you should see.**
+#
+# The variance of the raw dot product is 3.9 for `d_k` = 4, 16.2 for 16, 62.2 for 64, 252.7 for 256 and 1075.8 for 1024: it follows `d_k` (up to sampling noise, a few percent). After dividing by `sqrt(d_k)` the variance is 0.97 to 1.05 for every `d_k`, about 1. For `d_k` = 64 (the size used in the original Transformer) the standard deviation of the scores would be 8, instead of 1, without the scaling. Why does that matter? Step 5.5.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.4 - Predict, then measure
+#
+# Before running anything, predict the variance of `q . k` for `d_k` = 512 and store it in `var_pred`. Then measure it with 2,000 random pairs (as above, with a new `RandomState`) and store it in `var_meas`. Why it matters: If you can predict the variance from the formula, you do not need to measure it for every size: that is what a good theory buys.
+
+# %%
+var_pred = None    # YOUR ANSWER: what you expect, before measuring
+var_meas = None    # YOUR CODE: the measured variance of q . k for d_k = 512
+
+# %%
+# Check
+if var_pred is None or var_meas is None:
+    print("Fill in your two numbers above, then run this cell again.")
+else:
+    check("prediction", abs(var_pred - 512) <= 1, "the variance of a sum of d_k products of unit variance is d_k")
+    check("measurement is close to 512", 440 < var_meas < 590, "use q, k = rng.randn(2000, 512) and (q * k).sum(axis=1).var()")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# var_pred = 512
+# r512 = np.random.RandomState(5)
+# q512, k512 = r512.randn(2000, 512), r512.randn(2000, 512)
+# var_meas = float((q512 * k512).sum(axis=1).var())
+# ```
+# The prediction needs no code: 512. The measurement needs the same three lines as the cell above. The prediction is 512 and the measured value is 508.7. A measurement with 2,000 draws is not exact (the relative error of a variance estimate is about 3 percent here), but it lands close to the theory.
+# </details>
+
+# %% [markdown]
+# ### Step 5.5. What goes wrong without the scaling
+#
+# A softmax of large numbers is almost a one-hot: the largest score takes nearly all the weight and the others get nearly none. That is bad in two ways. The attention becomes nearly *hard* (it cannot blend), and the gradient through the softmax vanishes: the slope of the softmax is tiny when one weight is near 1 (Part 3's vanishing gradients again, in another place). We measure both for `d_k` = 64 and five random keys. For 1,000 random draws we compute (1) the largest attention weight, with and without the division by `sqrt(d_k)`, and (2) the size (norm) of the gradient of the output with respect to the five numbers that enter the softmax, found by autograd.
+
+# %%
+def one_draw(dk, scaled, rs):
+    q = torch.tensor(rs.randn(dk)); K_ = torch.tensor(rs.randn(5, dk)); v = torch.tensor(rs.randn(5))
+    z = K_ @ q                                            # the five raw scores q . k_j
+    s = (z / math.sqrt(dk) if scaled else z).requires_grad_(True)     # the numbers that enter the softmax
+    w = torch.softmax(s, dim=0)
+    (w @ v).backward()                                    # a scalar output: the weighted sum of random values
+    return w.max().item(), s.grad.norm().item()
+
+rs = np.random.RandomState(0)
+res = {}
+for scaled in (False, True):
+    draws = np.array([one_draw(64, scaled, rs) for _ in range(1000)])
+    res[scaled] = draws.mean(axis=0)
+    print(f"scaled={str(scaled):5s}: mean largest weight {res[scaled][0]:.3f} | mean gradient norm {res[scaled][1]:.4f}")
+print("gradient ratio (scaled / unscaled):", round(res[True][1] / res[False][1], 1))
+RESULTS["p5_saturation"] = {"max_w_unscaled": round(float(res[False][0]), 3), "max_w_scaled": round(float(res[True][0]), 3)}
+
+# %% [markdown]
+# **What you should see.**
+#
+# Without scaling the largest weight is 0.897 on average: nearly one-hot. With scaling it is 0.470: still a clear favourite among five keys (chance would be 0.2) but with room for the others. The gradient tells the same story: 0.1046 without scaling against 0.3552 with it, so the scaled softmax passes about 3.4 times more gradient back to the scores. Scaling is a cheap trick that keeps the softmax in its working range, as normalisation does elsewhere.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.5 - Saturation with d_k = 1024
+#
+# Repeat the weight measurement for `d_k` = 1024 without scaling, using 300 draws (use `one_draw(1024, False, rs2)` with a new `RandomState`). Store the mean largest weight in `maxw_1024`. Is it larger or smaller than for `d_k` = 64, and why? Why it matters: The problem gets worse with the width of the model, which is why the scaling was needed once models grew wide.
+
+# %%
+maxw_1024 = None     # YOUR CODE: mean largest weight, d_k = 1024, no scaling, 300 draws
+bigger = None        # YOUR ANSWER: True if it is larger than the d_k = 64 value, else False
+
+# %%
+# Check
+if maxw_1024 is None or bigger is None:
+    print("Fill in your two answers above, then run this cell again.")
+else:
+    check("the weight is nearly one-hot", maxw_1024 > res[False][0] - 0.01, "the largest of five unscaled weights should be close to 1")
+    check("larger or smaller", bigger is True, "a wider d_k gives larger scores and an even sharper softmax")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# rs2 = np.random.RandomState(7)
+# maxw_1024 = float(np.mean([one_draw(1024, False, rs2)[0] for _ in range(300)]))
+# bigger = bool(maxw_1024 > res[False][0])
+# ```
+# `one_draw` returns the pair (largest weight, gradient norm); we keep the first element. At `d_k` = 1024 the mean largest weight is 0.977, against 0.897 at `d_k` = 64: the scores have a standard deviation of 32, so the softmax is a one-hot almost every time.
+# </details>
+
+# %% [markdown]
+# ### Step 5.6. The cost: n squared scores
+#
+# Attention has a price. The score matrix has `n * n` entries for `n` tokens, so doubling the length quadruples the work and the memory. We time `n` = 128 to 2048 with `d` = 64 on your CPU (the best of five repeats, in PyTorch) and print the number of scores and the memory of the score matrix in float32 (4 bytes per number). The time you measure depends on your computer, but the pattern does not. This is the lesson's `attn_cost` figure, with your own timings.
+
+# %%
+d = 64
+rows = []
+for n in (128, 256, 512, 1024, 2048):
+    Qt, Kt, Vt = torch.randn(n, d), torch.randn(n, d), torch.randn(n, d)
+    best_t = 1e9
+    for _ in range(5):
+        t0 = time.perf_counter(); o_ = torch.softmax(Qt @ Kt.T / math.sqrt(d), dim=-1) @ Vt; best_t = min(best_t, time.perf_counter() - t0)
+    rows.append((n, n * n, n * n * 4 / 1e6, best_t * 1000))
+print(f"{'n':>5} {'scores n^2':>12} {'memory (MB)':>12} {'time (ms)':>10}")
+for n, n2, mb, ms in rows:
+    print(f"{n:5d} {n2:12,d} {mb:12.1f} {ms:10.2f}")
+fig, ax = plt.subplots(1, 2, figsize=(9, 3.2))
+ns = [r[0] for r in rows]
+ax[0].plot(ns, [r[3] for r in rows], "o-"); ax[0].set_xlabel("n (tokens)"); ax[0].set_ylabel("time (ms)"); ax[0].set_title("time against n")
+ax[1].plot([r[1] for r in rows], [r[3] for r in rows], "o-", color="C3"); ax[1].set_xlabel("n squared (scores)"); ax[1].set_title("time against n squared")
+plt.tight_layout(); plt.show()
+RESULTS["p5_cost_ms"] = {r[0]: round(r[3], 2) for r in rows}
+
+# %% [markdown]
+# **What you should see.**
+#
+# For n = 512 there are 262,144 scores (the lesson's 262,144) and the matrix takes 1.0 MB; for n = 2048 there are 4,194,304 scores and 16.8 MB, 16 times more for 4 times the length. The time grows too: 0.48 ms at n = 512, 2.20 ms at 1024 and 9.47 ms at 2048, so doubling n from 1024 to 2048 multiplied the time by 4.3 (an n-squared law alone predicts 4; the rest is probably memory effects, which we did not measure, and your own machine will give different numbers). Compare the two plots and judge how close to a straight line the right-hand one is. For one head in one layer this is small; a model with a long context, many heads and many layers pays it everywhere. That is why so much research in recent years is about making attention cheaper.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 5.6 - Price a long context
+#
+# Compute the number of attention scores for n = 512 (`scores_512`) and for n = 4096 (`scores_4096`), how many times more that is (`times_more`), and the memory in megabytes of the score matrix in float32 for n = 4096 (`mb_4096`, use 4 bytes per number and 1 MB as one million bytes, one decimal). Why it matters: Numbers like these decide what a school server can run. Estimating them in your head before you start a job saves hours.
+
+# %%
+scores_512 = None
+scores_4096 = None
+times_more = None
+mb_4096 = None
+
+# %%
+# Check
+if None in (scores_512, scores_4096, times_more, mb_4096):
+    print("Fill in your four numbers above, then run this cell again.")
+else:
+    check("scores for n = 512", scores_512 == 262144, "n * n")
+    check("scores for n = 4096", scores_4096 == 4096 ** 2, "n * n")
+    check("ratio", abs(times_more - 64) < 0.5, "8 times longer means 8 * 8 times more scores")
+    check("memory", abs(mb_4096 - 67.1) < 0.2, "16,777,216 numbers times 4 bytes, divided by one million")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# scores_512 = 512 ** 2
+# scores_4096 = 4096 ** 2
+# times_more = scores_4096 / scores_512
+# mb_4096 = round(scores_4096 * 4 / 1e6, 1)
+# ```
+# Eight times longer means 8 x 8 = 64 times more scores. 512 squared is 262,144, 4096 squared is 16,777,216, which is 64 times more, and the float32 matrix takes 67.1 MB, for a single head of a single layer.
+# </details>
+
+# %% [markdown]
+# ### Step 5.7. Imagine and write: how could the word it find its noun?
+#
+# In the sentence **The trophy did not fit in the suitcase because it was too big**, a human knows that *it* means the trophy. Using what you learned in this part (query, key, value, dot product, softmax weights), write in three or four sentences how a model could learn to make the word *it* attend to *trophy*. Which vector plays which role? What would the weight on *trophy* have to be, compared with the weights on *suitcase* and *because*? What does the model have to learn for this to work (hint: look at the learned matrices that make the queries and keys)?
+
+# %%
+my_pronoun_answer = ""    # YOUR ANSWER: three or four sentences
+if len(my_pronoun_answer.split()) < 25:
+    print("Write at least 25 words above, then run this cell again.")
+else:
+    check("answer written", True)
+RESULTS["p5_pronoun"] = my_pronoun_answer
+
+# %% [markdown]
+# **What a good answer contains.** The query of *it* asks, in effect, *which noun am I standing for?*; the keys of *trophy* and *suitcase* say *I am a noun that could be an antecedent*; the dot product of the query of *it* with each key gives a score, and the softmax turns the scores into weights. If the model has learned well, the weight on *trophy* is large (for example 0.7), and *suitcase* gets some (for example 0.2), the rest is shared by the other words. The output of *it* is then mostly the value of *trophy*: *it* now carries the meaning of the trophy. What has to be learned are the matrices `W_Q`, `W_K` and `W_V` that make queries and keys from the word vectors, trained on a very large amount of text so that this prediction helps. In the sentence with *small* instead of *big*, a good model attends to *suitcase*: the weights must depend on the whole sentence. Nobody writes the rule; the training finds it.
+
+# %% [markdown]
+# ## Part 6. Hard against soft attention (25 min)
+#
+# *Lesson section: "Hard vs soft".* Attention has to *choose* what to look at. There are two ways to choose. **Hard attention** picks exactly one position, the one with the largest score (an `argmax`), and copies its value: crisp and cheap, like reading one line of the letter. **Soft attention** takes a weighted average of all the values with the softmax weights: blurry, but smooth. They give similar answers when one score is far above the others, but they behave completely differently when you try to *train* them, because training needs gradients. In this part you compare the two on five scores, look at gradients, turn a temperature knob that slides from soft to hard, and then build the real thing: a small classifier with a learned query, which has to find the first symbol of a sequence of up to 80 symbols, where the RNN and the LSTM gave out. ==Soft attention is trained by gradient descent and it solves the task; hard attention hides the gradient and does not.==
+#
+# This part defines its own models and helpers (it needs nothing from Parts 4 and 5 except, optionally, the RNN and LSTM results of Step 4.4 for a comparison table, which show a dash if you have not run them).
+
+# %% [markdown]
+# ### ✏️ Imagine first
+#
+# Suppose you replace the softmax in an attention layer with an `argmax`: the layer now picks exactly one position and ignores all the others. Before you run anything, answer two questions. (1) Can the learned query that decides *which* position to pick be improved by gradient descent through the argmax? Write `"yes"` or `"no"`. (2) In one sentence, why? (Think about what a tiny change in a score does to the output of an argmax.)
+#
+# Write your prediction in the starter cell below (it does not matter if you are wrong: the point is to commit before you look).
+
+# %%
+# Imagine first: can we train through an argmax?
+my_hard_trainable = None   # "yes" or "no"
+my_hard_why = ""           # one sentence
+
+# %% [markdown]
+# ### Step 6.1. Hard and soft side by side
+#
+# We take five positions with scores (2, 1, 0.1, -1, 0.5) and a value vector for each. `soft_attention` computes the softmax weights and the weighted sum of the values; `hard_attention` picks the position with the largest score and returns its value (the weights are one-hot). We print both. We also reproduce the lesson's example, where the scores (2, 1, 0.1) give the soft weights 0.659, 0.242, 0.099 at temperature 1.
+
+# %%
+np.set_printoptions(precision=3, suppress=True)
+scores5 = np.array([2.0, 1.0, 0.1, -1.0, 0.5])
+V5 = np.array([ [1.0, 0.0], [0.0, 1.0], [0.5, 0.5], [-1.0, 0.2], [0.3, 0.9] ])    # one 2-D value per position
+
+def soft_attention(scores, V, T=1.0):
+    """Softmax weights (temperature T) and the weighted sum of the values."""
+    w = softmax_np(np.asarray(scores) / T)
+    return w @ V, w
+
+def hard_attention(scores, V):
+    """Pick the position with the largest score: one-hot weights, and its value."""
+    j = int(np.argmax(scores)); w = np.zeros(len(scores)); w[j] = 1.0
+    return V[j], w
+
+out_soft, w_soft = soft_attention(scores5, V5)
+out_hard, w_hard = hard_attention(scores5, V5)
+print("soft weights:", w_soft, "| sum", round(float(w_soft.sum()), 3), "| output", out_soft)
+print("hard weights:", w_hard, "| output", out_hard)
+print("the lesson's example (2, 1, 0.1):", softmax_np([2.0, 1.0, 0.1]))
+
+# %% [markdown]
+# **What you should see.**
+#
+# The soft weights are [0.559 0.205 0.084 0.028 0.125]: position 0 has the largest share, 0.559, but even position 3 (score -1) keeps 0.028. The output [0.61  0.365] is a blend of all five values. The hard output is exactly the value of position 0, [1. 0.], as if the weights were (1, 0, 0, 0, 0). The lesson's example gives [0.659 0.242 0.099], as in the lesson. The two outputs are different but not far apart here, because position 0 has the highest score by a margin. When two scores are close, the soft output is a real mixture and the hard output jumps to one of them.
+
+# %% [markdown]
+# Try also (optional):
+#
+# - Change the score of position 1 from 1.0 to 2.0 (a tie with position 0). What does `np.argmax` do with a tie? What do the soft weights do?
+# - Multiply all the scores by 5 and print the soft weights. They get close to the hard ones. Why?
+# - Add a sixth position with a very low score. Do the other weights change?
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.1 - How big must the gap be?
+#
+# Change only the first score, keeping (1, 0.1, -1, 0.5) for the others, and find the smallest whole number `s_min` for which soft attention gives the first position a weight of at least 0.9. Use a loop over `s` = 1, 2, 3 ... and `soft_attention`. Why it matters: A soft attention is nearly hard only if the winning score leads by a wide margin. This number tells you how wide.
+
+# %%
+s_min = None    # YOUR CODE: the smallest integer s with a first weight >= 0.9
+
+# %%
+# Check
+if s_min is None:
+    print("Fill in your number above, then run this cell again.")
+else:
+    ok_ = soft_attention([s_min, 1.0, 0.1, -1.0, 0.5], V5)[1][0] >= 0.9
+    below_ = soft_attention([s_min - 1, 1.0, 0.1, -1.0, 0.5], V5)[1][0] < 0.9
+    check("s_min gives at least 0.9", ok_, "try larger values of s")
+    check("s_min is the smallest", below_, "one less should give less than 0.9")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# s_min = next(s for s in range(1, 20) if soft_attention([s, 1.0, 0.1, -1.0, 0.5], V5)[1][0] >= 0.9)
+# ```
+# `next(...)` with a generator returns the first value that satisfies the condition. The answer is s = 4: the winner needs a lead of about 3 points over the runner-up before it takes 90 percent of the weight. In the lesson's terms: a softmax needs scores that are well separated to be nearly hard, and then its gradient is tiny (Step 6.3).
+# </details>
+
+# %% [markdown]
+# ### Step 6.2. Gradients: soft has them, hard has none
+#
+# Training changes the scores by gradient descent, so we need the gradient of the output with respect to the scores: if I raise this score a little, how does the output change? We use PyTorch. We reduce the output to one number (the first component of the attended value) so that we have a scalar to call `.backward()` on. For soft attention the output depends smoothly on every score, so every score gets a gradient. For hard attention the output is `V[argmax(scores)]`: the scores only decide *which row* is copied. A tiny change of a score changes nothing (the same row is still copied) until it overtakes another score, and then the output jumps. The slope is zero almost everywhere, and PyTorch does not even attach a gradient: `argmax` returns an integer index.
+
+# %%
+V5t = torch.tensor(V5, dtype=torch.float32)
+
+s_soft = torch.tensor(scores5, dtype=torch.float32, requires_grad=True)
+soft_loss = (torch.softmax(s_soft, dim=0) @ V5t)[0]          # first component of the soft output
+soft_loss.backward()
+print("soft: gradient of the output with respect to the scores:", s_soft.grad.numpy().round(3))
+
+s_hard = torch.tensor(scores5, dtype=torch.float32, requires_grad=True)
+hard_out = V5t[s_hard.argmax()][0]                           # first component of the hard output
+print("hard: output depends on the scores through a graph?", hard_out.requires_grad, "| s_hard.grad is", s_hard.grad)
+
+# %% [markdown]
+# **What you should see.**
+#
+# Soft attention returns a gradient for every one of the five scores: [ 0.218 -0.125 -0.009 -0.045 -0.039]. The signs make sense: the first component of the values is 1 at position 0 and 0 at position 1, so raising score 0 increases the output (gradient 0.218) and raising score 1 decreases it (gradient -0.125). For hard attention, `hard_out.requires_grad` is False: the computation graph was cut by `argmax`, and `s_hard.grad` is None. There is nothing to descend. A query that decides by argmax receives no learning signal from the loss.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.2 - A gradient by hand
+#
+# For a scalar output `y = sum_j w_j * v_j` with `w = softmax(s)`, the gradient with respect to score `s_j` is `w_j * (v_j - y)`. Use the soft weights and the first component of the values to compute this gradient for all five positions by hand (with NumPy) and store it in `grad_hand` (a NumPy array of 5 numbers). Compare it with `s_soft.grad`. Why it matters: A formula that agrees with autograd is the best proof that you understand what autograd computes. Here it also shows that the gradient of a position is large only if it has a noticeable weight and a value different from the current output.
+
+# %%
+grad_hand = None    # YOUR CODE: an array of 5 numbers, w_j * (v_j - y)
+
+# %%
+# Check
+if grad_hand is None:
+    print("Fill in your array above, then run this cell again.")
+else:
+    check("gradient equals autograd", np.allclose(np.asarray(grad_hand), s_soft.grad.numpy(), atol=1e-5), "use w = softmax_np(scores5), v = V5[:, 0], y = w @ v")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# w_ = softmax_np(scores5); v_ = V5[:, 0]; y_ = w_ @ v_
+# grad_hand = w_ * (v_ - y_)
+# ```
+# The formula comes from the derivative of the softmax: the change of the output when `s_j` rises is the weight `w_j` times how much better `v_j` is than the average `y`. The array [ 0.218 -0.125 -0.009 -0.045 -0.039] equals the autograd result. Position 3 (score -1, value -1) has a weight of only 0.028, so its gradient -0.045 is small even though its value is very different from the output. A position with almost no weight learns almost nothing, which is a first hint of the saturation problem of the next step.
+# </details>
+
+# %% [markdown]
+# ### Step 6.3. Temperature: sliding from soft to hard
+#
+# A softmax can be made sharper with a **temperature** `T`: the weights are `softmax(scores / T)`. At `T = 1` we have the ordinary softmax. A large `T` flattens the weights; a small `T` sharpens them until they are the hard one-hot. We scan `T` in (3, 1, 0.3, 0.1, 0.01) and measure (1) the largest weight, (2) the L1 distance to the hard one-hot weights (sum of the absolute differences; 0 means identical), and (3) the norm of the gradient of the output with respect to the five scores. The point is the combination: as the weights become hard, the gradient disappears.
+
+# %%
+Ts = [3, 1, 0.3, 0.1, 0.01]
+tab = []
+for T in Ts:
+    s_t = torch.tensor(scores5, dtype=torch.float64, requires_grad=True)
+    w_t = torch.softmax(s_t / T, dim=0)
+    (w_t @ torch.tensor(V5[:, 0])).backward()
+    tab.append((T, w_t.max().item(), float(np.abs(w_t.detach().numpy() - w_hard).sum()), s_t.grad.norm().item()))
+print(f"{'T':>5} {'max weight':>11} {'L1 to hard':>11} {'gradient norm':>14}")
+for T, mx, l1, gn in tab:
+    print(f"{T:5.2f} {mx:11.4f} {l1:11.4f} {gn:14.3g}")
+fig, ax = plt.subplots(1, 2, figsize=(9, 3.2))
+ax[0].semilogx(Ts, [r[2] for r in tab], "o-"); ax[0].set_xlabel("temperature T"); ax[0].set_ylabel("L1 distance to the hard weights"); ax[0].invert_xaxis()
+ax[1].loglog(Ts, [r[3] for r in tab], "o-", color="C3"); ax[1].set_xlabel("temperature T"); ax[1].set_ylabel("gradient norm"); ax[1].invert_xaxis()
+plt.tight_layout(); plt.show()
+RESULTS["p6_temperature"] = {r[0]: (round(r[1], 3), float(f"{r[3]:.3g}")) for r in tab}
+
+# %% [markdown]
+# **What you should see.**
+#
+# At `T = 3` the largest weight is 0.310: nearly uniform (one fifth would be 0.2), the distance to hard is 1.38 and the gradient is 0.090. At `T = 1` the largest weight is 0.559. At `T = 0.1` it is 1.0000, and the weights are almost the hard ones (distance 0.0001). At `T = 0.01` the soft weights equal the hard ones to 3.7e-44, **and the gradient norm has dropped to 3.7e-42**, essentially zero. This is the whole trade-off of the lesson in one table: the closer soft attention gets to hard attention, the less gradient it passes. A good attention layer lives in the middle, sharp enough to choose, soft enough to learn. (This is also what the `sqrt(d_k)` scaling of Step 5.5 protects.)
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.3 - How cold is cold enough?
+#
+# From the table `tab`, find the largest temperature in `Ts` for which the L1 distance to the hard weights is below 0.05 (`T_hard`), and the gradient norm at that temperature (`g_at_T`, three decimals). Why it matters: It tells you how close to hard attention you can get before learning stops.
+
+# %%
+T_hard = None     # YOUR CODE: the largest T in Ts with L1 distance below 0.05
+g_at_T = None     # YOUR CODE: the gradient norm at that T, three decimals
+
+# %%
+# Check
+if T_hard is None or g_at_T is None:
+    print("Fill in your two numbers above, then run this cell again.")
+else:
+    want = max(r for r in tab if r[2] < 0.05)
+    check("temperature", T_hard == want[0], "the table has T in column 0 and the L1 distance in column 2")
+    check("gradient norm", abs(g_at_T - want[3]) < 0.0006, "the gradient norm is column 3")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# cand = [r for r in tab if r[2] < 0.05]
+# best_row = max(cand, key=lambda r: r[0])
+# T_hard, g_at_T = best_row[0], round(best_row[3], 3)
+# ```
+# Filtering the rows first and then taking the one with the largest `T` keeps the code short. The answer is T = 0.1, where the gradient norm is already only 0.001 (at T = 1 it was 0.258). A cold softmax is nearly hard and nearly gradient-free at the same time.
+# </details>
+
+# %% [markdown]
+# ### Step 6.4. A learned query finds the first symbol
+#
+# Now the real task. Our `AttnClassifier` works like this. Each one-hot symbol goes through a linear layer into a vector of size 16. Then it has a **learned query** `q` (one vector of size 16), keys and values computed from the symbol vectors by two linear layers, scores `key . q / sqrt(16)`, a softmax over the positions, the weighted sum of the values, and a linear layer to the 8 classes. To answer the task, the query must find the first symbol. But think first: **what does each position know about itself?** Only its symbol. Position 1 and position 7 holding the same symbol look identical to the model, so the query cannot say *the first one*. This is the order problem. The remedy is to add a **position embedding**: a learned vector for position 1, another for position 2, and so on (`nn.Embedding(length, 16)`), added to each symbol vector. We first run the model *without* the position embedding to see it fail, then with it at lengths 10, 20, 40, 60 and 80, using the same data and training budget as Step 4.4 (the training is much quicker; 40 epochs).
+
+# %%
+class AttnClassifier(nn.Module):
+    """One learned query attends over the positions of a sequence. mode: 'soft' (softmax), 'hard' (argmax) or 'ste' (hard forward, soft backward)."""
+    def __init__(self, length, d=16, use_pos=True, mode="soft"):
+        super().__init__()
+        self.d, self.use_pos, self.mode = d, use_pos, mode
+        self.emb = nn.Linear(N_SYMBOLS, d, bias=False)          # symbol -> vector (the same as an embedding table)
+        self.pos = nn.Embedding(length, d)                      # position -> vector
+        self.Wk, self.Wv = nn.Linear(d, d, bias=False), nn.Linear(d, d, bias=False)
+        self.q = nn.Parameter(torch.randn(d) * 0.5)             # the learned query
+        self.out = nn.Linear(d, N_SYMBOLS)
+        self.last_weights = None
+
+    def forward(self, x):                                       # x: (batch, length, 8) one-hot
+        h = self.emb(x)
+        if self.use_pos:
+            h = h + self.pos(torch.arange(x.shape[1]))
+        scores = self.Wk(h) @ self.q / math.sqrt(self.d)        # (batch, length)
+        w = torch.softmax(scores, dim=-1)
+        if self.mode != "soft":
+            w_hard = F.one_hot(scores.argmax(-1), x.shape[1]).float()
+            w = w_hard + (w - w.detach()) if self.mode == "ste" else w_hard
+        self.last_weights = w.detach()
+        return self.out((w.unsqueeze(-1) * self.Wv(h)).sum(1))
+
+def get_data(L):
+    """1,000 training and 300 test sequences of length L (fixed seeds): the same data as Step 4.4."""
+    return (*make_memory_task(1000, L, seed=1), *make_memory_task(300, L, seed=2))
+
+if "ACC" not in globals():
+    ACC = {"rnn": {}, "lstm": {}}                                # filled by Step 4.4 if you ran it
+ACC["attn"], AMODELS = {}, {}
+EPOCHS_A = 5 if QUICK else 40
+
+def run_attn(L, use_pos=True, mode="soft", epochs=None):
+    torch.manual_seed(SEED)
+    model = AttnClassifier(L, use_pos=use_pos, mode=mode)
+    hist = train_seq_model(model, *get_data(L), epochs=epochs or EPOCHS_A, lr=0.01, seed=SEED)
+    te = hist["test_acc"]
+    return model, hist, {"final": te[-1], "best": max(te), "train": hist["train_acc"][-1], "epochs_to_90": next((e + 1 for e, a in enumerate(te) if a >= 0.9), None)}
+
+_, _, no_pos = run_attn(10, use_pos=False)
+print(f"length 10 WITHOUT position embedding: final test {no_pos['final']:.3f}, train {no_pos['train']:.3f}")
+
+# %%
+for L in (10, 20, 40, 60, 80):
+    AMODELS[L], _, ACC["attn"][L] = run_attn(L)
+    a = ACC["attn"][L]
+    print(f"length {L:2d} with positions: final test {a['final']:.3f} | train {a['train']:.3f} | first epoch with test >= 0.9: {a['epochs_to_90']}")
+n_attn = {L: sum(p.numel() for p in AMODELS[L].parameters()) for L in AMODELS}
+print("parameters of AttnClassifier:", n_attn)
+
+# %%
+dash = lambda kind, L: f"{ACC[kind][L]['final']:.3f}" if L in ACC.get(kind, {}) else "   -  "
+print(f"{'length':>6} {'RNN':>7} {'LSTM':>7} {'attention':>10}")
+for L in (10, 20, 40, 60, 80):
+    print(f"{L:6d} {dash('rnn', L):>7} {dash('lstm', L):>7} {dash('attn', L):>10}")
+plt.figure(figsize=(6.4, 3.6))
+for kind, col in (("rnn", "tab:red"), ("lstm", "tab:blue"), ("attn", "tab:green")):
+    if ACC.get(kind):
+        plt.plot(list(ACC[kind]), [ACC[kind][L]["final"] for L in ACC[kind]], "o-", color=col, label={"attn": "attention + positions"}.get(kind, kind.upper()))
+plt.axhline(1 / 8, color="gray", ls="--", label="chance")
+plt.xlabel("sequence length"); plt.ylabel("final test accuracy"); plt.ylim(0, 1.05); plt.legend(); plt.title("Memory task: three kinds of model"); plt.tight_layout(); plt.show()
+RESULTS["p6_attn_final"] = {L: round(ACC["attn"][L]["final"], 3) for L in ACC["attn"]}
+if not QUICK:
+    assert all(ACC["attn"][L]["final"] > 0.95 for L in ACC["attn"]), "soft attention with positions should solve every length"
+
+# %% [markdown]
+# **What you should see.**
+#
+# **Without** a position embedding the model reaches only 0.323 test accuracy at length 10, far from 1.000 (chance is 0.125; it is above chance only because the first symbol is one of the ten symbols that the blurred average still contains). It cannot tell the first position from the others, exactly as predicted. **With** it, attention solves every length: 1.000 at 10, 1.000 at 20, 1.000 at 40 and 1.000 at 80, and it reaches 90 percent test accuracy in 5 epochs at length 80, while the RNN and the LSTM had failed at lengths 60 and 80. At length 10, where all three work, the attention model needs 2 epochs to reach 90 percent, against 9 for the RNN and 24 for the LSTM (from Step 4.4). The reason is the shape of the computation: the position-1 key is one step from the output, whatever the length. There is no chain of 80 multiplications to survive. The model is also small: 952 parameters at length 10 and 2,072 at length 80 (the growth is the position table, 16 numbers per position), against 5,640 for the LSTM of Step 4.4.
+
+# %% [markdown]
+# Tips and common mistakes:
+#
+# - A position embedding is a table, so it has a fixed length: a model trained for 80 positions has no vector for position 81. Week 8 shows sinusoidal positions, which have no such limit.
+# - Dropping the position embedding is not a bug in the code; it is a missing piece of information. When a model cannot do something, ask first whether it can *see* what it needs.
+# - Compare with fair data: all three models use the same sequences and seeds (`get_data`).
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.4 - Count the parameters
+#
+# Count by formula the parameters of `AttnClassifier(80)`: the symbol layer (8 x 16, no bias), the position table (80 x 16), the two linear layers `Wk` and `Wv` (16 x 16 each, no bias), the query (16) and the output layer (16 x 8 + 8). Store the total in `n_formula` and compare with `n_attn[80]`. Which part grows with the length? Why it matters: Knowing where the parameters are tells you what the model can and cannot do (here: there is no recurrent matrix at all).
+
+# %%
+n_formula = None   # YOUR CODE: the total by formula
+
+# %%
+# Check
+if n_formula is None:
+    print("Fill in your number above, then run this cell again.")
+else:
+    check("matches the real count", n_formula == n_attn[80], "8*16 + 80*16 + 2*16*16 + 16 + (16*8 + 8)")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# n_formula = 8 * 16 + 80 * 16 + 2 * 16 * 16 + 16 + (16 * 8 + 8)
+# ```
+# The position table is the only part that depends on the length. The total is 2072: 128 (symbols) + 1,280 (positions) + 512 (keys and values) + 16 (query) + 136 (output). Only the position table grows with the length.
+# </details>
+
+# %% [markdown]
+# ### Step 6.5. Look at the weights the model learned
+#
+# The model stores the attention weights of its last forward pass in `last_weights`. We feed it 300 test sequences of length 20 and plot the weights for the first three as bar charts (one bar per position), then measure the **mean weight on position 1** over all 300 sequences. If the model learned the rule, the bar at position 1 should be tall for every sequence, whatever the symbols are.
+
+# %%
+m20 = AMODELS[20]; Xte20 = get_data(20)[2]
+with torch.no_grad():
+    m20(one_hot_batch(Xte20))
+W20 = m20.last_weights.numpy()                          # (300, 20)
+mean_first = float(W20[:, 0].mean())
+print(f"mean attention weight on position 1 over 300 test sequences: {mean_first:.3f}")
+print("minimum over the sequences:", round(float(W20[:, 0].min()), 3), "| uniform attention would give", 1 / 20)
+fig, ax = plt.subplots(1, 3, figsize=(10, 2.8), sharey=True)
+for k in range(3):
+    ax[k].bar(range(1, 21), W20[k], color="tab:green"); ax[k].set_xlabel("position"); ax[k].set_title("sequence " + "".join(map(str, Xte20[k][:8])) + "...")
+ax[0].set_ylabel("attention weight"); plt.tight_layout(); plt.show()
+RESULTS["p6_mean_weight_position1"] = round(mean_first, 3)
+
+# %% [markdown]
+# **What you should see.**
+#
+# The mean weight on position 1 is 1.0000, and the smallest weight over all 300 sequences is 0.9998; uniform attention would give 0.05. In the three bar charts one bar towers over the other 19. So **soft attention learned to behave almost like hard attention**: nearly all of the weight goes to the one position that holds the answer, but the softmax stayed smooth, and that is why gradient descent could find it. A hard-attention model could not have been trained by the same method. Notice also that the weight depends on the position only, not on the symbols: the same position gets the weight in every sequence.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.5 - Where does the remaining weight go?
+#
+# For the 300 test sequences, compute the mean total weight that the model puts on the *last* position (`mean_last`) and on all positions other than the first (`mean_rest`). The weights of every sequence add up to 1, so `mean_first + mean_rest` should be 1. Why it matters: Checking that the weights add up is a quick test that you are reading the right axis of the array.
+
+# %%
+mean_last = None    # YOUR CODE: mean of W20[:, -1]
+mean_rest = None    # YOUR CODE: mean over sequences of the sum of the weights on positions 2..20
+
+# %%
+# Check
+if mean_last is None or mean_rest is None:
+    print("Fill in your two numbers above, then run this cell again.")
+else:
+    check("the first and the rest add up to 1", abs(mean_first + mean_rest - 1) < 1e-4, "W20[:, 1:].sum(axis=1).mean()")
+    check("last position", abs(mean_last - W20[:, -1].mean()) < 1e-6, "W20[:, -1].mean()")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# mean_last = float(W20[:, -1].mean())
+# mean_rest = float(W20[:, 1:].sum(axis=1).mean())
+# ```
+# The first axis is the sequence, the second is the position. The last position gets 0.0000 on average and all the others together 0.000: the model is not spreading its attention around; the remaining mass is spread thinly over many positions.
+# </details>
+
+# %% [markdown]
+# ### Step 6.6. Try to train hard attention
+#
+# Now the experiment the Imagine-first question was about. We build the same model with `mode='hard'`: the softmax is replaced by a one-hot of the `argmax`. The query and the keys receive no gradient (we check `q.grad`), and the other parts of the model (the output layer, the value layer) can still learn something. We train it at length 10 and look at the loss. Then we try the **straight-through trick**: in the forward pass the weights are the hard one-hot, but in the backward pass the gradient flows as if they were the soft ones (`w_hard + (w_soft - w_soft.detach())`, which has the value of `w_hard` and the gradient of `w_soft`). We train that at lengths 10, 20 and 40 and report what happens, whatever it is.
 
 # %%
 torch.manual_seed(SEED)
-n_trials = 500 if QUICK else 2000
-dims = [2, 8, 32, 64, 256, 1024]
-unscaled, scaled = [], []
-for d in dims:
-    Q = torch.randn(n_trials, 1, d)     # n_trials queries
-    Kr = torch.randn(n_trials, 3, d)    # 3 keys each
-    _, wu = scaled_dot_product_attention(Q, Kr, Kr, scale=False)
-    _, ws = scaled_dot_product_attention(Q, Kr, Kr, scale=True)
-    unscaled.append(wu.max(dim=-1).values.mean().item())
-    scaled.append(ws.max(dim=-1).values.mean().item())
-    print(f"d_k={d:5d}   without scaling: {unscaled[-1]:.3f}   with scaling: {scaled[-1]:.3f}")
-
-plt.figure(figsize=(5, 3))
-plt.plot(dims, unscaled, "o-", label="without √d_k")
-plt.plot(dims, scaled, "s-", label="with √d_k")
-plt.xscale("log", base=2)
-plt.xlabel("d_k")
-plt.ylabel("mean largest weight")
-plt.legend()
-plt.tight_layout()
-plt.show()
-
-# Sanity checks (these hold with large margins for standard-normal data and 3 keys)
-assert unscaled[-1] > 0.9, "unscaled attention should become very peaky for large d_k"
-assert all(0.45 < s < 0.7 for s in scaled), "scaled attention should stay moderate"
-
-# %% [markdown]
-# Without scaling, the largest weight climbs from about 0.6 towards 1 as `d_k` grows (the softmax saturates). With scaling it stays roughly between 0.55 and 0.6 for every `d_k`. This is why the Transformer uses `softmax(QKᵀ/√d_k)V`.
-#
-# ### ✏️ Your turn: report the effect at d_k = 64
-#
-# Put the mean largest weight at `d_k = 64` without scaling in `answer_unscaled`, and with scaling in `answer_scaled` (read them from the table above, or compute them from the lists `unscaled`, `scaled`, `dims`).
+mh = AttnClassifier(10, mode="hard")
+xb = one_hot_batch(get_data(10)[0][:64]); yb = torch.as_tensor(get_data(10)[1][:64])
+F.cross_entropy(mh(xb), yb).backward()
+print("hard mode: gradient of the query is", mh.q.grad, "| gradient of the output layer has norm", round(mh.out.weight.grad.norm().item(), 3))
+EPH = 4 if QUICK else 60
+mh, hist_h, acc_h = run_attn(10, mode="hard", epochs=EPH)
+print(f"hard, length 10: loss {hist_h['loss'][0]:.3f} -> {hist_h['loss'][-1]:.3f} | final test {acc_h['final']:.3f}")
 
 # %%
-answer_unscaled = None  # YOUR CODE HERE
-answer_scaled = None    # YOUR CODE HERE
+ste = {}
+for L in (10, 20, 40):
+    _, hist_s, ste[L] = run_attn(L, mode="ste", epochs=EPH)
+    print(f"straight-through, length {L:2d}: loss {hist_s['loss'][0]:.3f} -> {hist_s['loss'][-1]:.3f} | final test {ste[L]['final']:.3f} | train {ste[L]['train']:.3f}")
+RESULTS["p6_hard"] = {"hard_10": round(acc_h["final"], 3), "ste": {L: round(ste[L]["final"], 3) for L in ste}}
+
+# %% [markdown]
+# **What you should see.**
+#
+# In hard mode the query's gradient is None, as predicted: no learning signal reaches the part of the model that chooses. The loss moves from 2.098 to 2.059 (the starting value is about ln 8 = 2.079, the loss of a model that guesses) and the test accuracy is 0.107, near chance. The only parts that can change are the ones after the choice, and they cannot repair a choice that is random. With the straight-through trick, the model *can* learn at length 10 (test accuracy 0.757) but it is clearly less successful than soft attention (1.000), and the pattern is erratic: at length 20 it is 0.163 and at length 40 it is 0.890. We did not try other seeds, but a result that goes up and down with the length is what an unreliable gradient looks like. The backward pass pretends that the weights were soft, so the gradient tells the query to move towards positions that the hard forward pass does not use. Such tricks can work, with care and more budget, but they are an approximation, and plain soft attention solves the problem easily. That is the practical reason the Transformer uses soft attention.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 6.6 - Summarise the contrast
+#
+# Fill in `summary`, a dictionary with the final test accuracies of the length-10 runs (rounded to two decimals): `"soft"` from `ACC["attn"][10]`, `"hard"` from `acc_h`, `"ste"` from `ste[10]`. Then say in `lesson` (one sentence, at least 12 words) why soft attention is trainable and hard attention is not. Why it matters: Three numbers and one sentence: that is the answer you would give in an exam.
+
+# %%
+summary = {"soft": None, "hard": None, "ste": None}   # YOUR CODE: replace each None by the rounded accuracy
+lesson = ""                                              # YOUR ANSWER: one sentence
 
 # %%
 # Check
-if answer_unscaled is None or answer_scaled is None:
-    print("Fill in your answer above, then run this cell again.")
+if None in summary.values() or len(lesson.split()) < 12:
+    print("Fill in the three numbers and write the sentence above (at least 12 words), then run this cell again.")
 else:
-    i = dims.index(64)
-    check("unscaled value at d_k=64", abs(answer_unscaled - unscaled[i]) < 0.02, "Read the row d_k=   64.")
-    check("scaled value at d_k=64", abs(answer_scaled - scaled[i]) < 0.02, "Read the row d_k=   64.")
-    check("unscaled is clearly more peaky", answer_unscaled > answer_scaled + 0.2, "Unscaled should be much larger.")
+    check("soft", abs(summary["soft"] - ACC["attn"][10]["final"]) < 0.006, "ACC['attn'][10]['final']")
+    check("hard", abs(summary["hard"] - acc_h["final"]) < 0.006, "acc_h['final']")
+    check("straight-through", abs(summary["ste"] - ste[10]["final"]) < 0.006, "ste[10]['final']")
 
 # %% [markdown]
 # <details><summary>Show a possible answer</summary>
 #
 # ```python
-# i = dims.index(64)
-# answer_unscaled = unscaled[i]   # about 0.93
-# answer_scaled = scaled[i]       # about 0.60
+# summary = {"soft": round(ACC["attn"][10]["final"], 2), "hard": round(acc_h["final"], 2), "ste": round(ste[10]["final"], 2)}
+# lesson = "Soft attention is a smooth function of the scores, so the loss has a gradient with respect to the query, while the argmax of hard attention has a zero gradient almost everywhere."
 # ```
-#
-# At `d_k = 64` the unscaled softmax already gives one key about 93% of the weight on average, so it behaves almost like hard attention (and its gradients are tiny). The scaled version still blends the keys.
-#
+# Every number comes from a variable that the earlier cells created. The three accuracies are {'soft': 1.0, 'hard': 0.11, 'ste': 0.76}. A good sentence says that soft attention is a smooth (differentiable) function of the scores, so the loss has a gradient to the query, while the hard argmax is piecewise constant: its gradient is zero almost everywhere and undefined where it jumps.
 # </details>
 
 # %% [markdown]
-# ### C2. Hard (`argmax`) versus soft (`softmax`) on the tied example
+# ## Part 7. A self-attention layer, design and reflect (15 min)
 #
-# In our example keys 1 and 3 have exactly the same score. What does hard attention do with a tie? What does soft attention do? We also nudge the score of key 3 by a tiny amount to see how each output reacts.
-
-# %%
-def hard_attention(query, key, value):
-    scores = query @ key.T / (key.shape[-1] ** 0.5)
-    idx = scores.argmax(dim=-1)          # pick one key only
-    return value[idx], idx
-
-
-h_out, h_idx = hard_attention(q, K, V)
-print("hard: picks key", int(h_idx) + 1, "-> output", h_out.numpy().round(4))
-print("soft: weights", w.numpy().round(4), "-> output", out.numpy().round(4))
-
-# Nudge key 3 slightly: make it a tiny bit more similar to the query
-K_nudged = K.clone()
-K_nudged[2, 0] = 1.001
-h2, i2 = hard_attention(q, K_nudged, V)
-s2, _ = scaled_dot_product_attention(q, K_nudged, V)
-print("after a 0.001 nudge -> hard picks key", int(i2) + 1, "output", h2.numpy().round(4))
-print("after a 0.001 nudge -> soft output", s2.numpy().round(4))
-
-assert int(h_idx) == 0            # argmax returns the first maximal index in PyTorch
-assert int(i2) == 2               # a tiny change flips the hard choice
-assert float((s2 - out).abs().max()) < 0.01   # the soft output barely moves
+# *Lesson sections: "Attention" and "Self-attention".* So far the query was one learned vector. In a **self-attention** layer *every* position produces its own query, key and value from the same input, by three learned matrices `W_Q`, `W_K` and `W_V`, and every position attends to every other. The output has the same length as the input: a new vector for each position that already mixes in information from the others. This is the layer Week 8 builds the Transformer block from. In this last part you write it as a PyTorch module, count its parameters and compare it with an LSTM layer, use it on the memory task and put all four models in one table, and then step back: you choose a model for a real sequence problem and answer four reflection questions. ==Write the layer once, understand it fully, and you will recognise it in every Transformer you meet.==
+#
+# This part defines its own module, helpers and data function, so it runs after the Setup cells alone. The comparison table shows a dash for any model you did not train in Parts 4 and 6.
 
 # %% [markdown]
-# With a tie, `argmax` quietly picks key 1 (the first one), which is arbitrary. A 0.001 nudge makes it jump to key 3 and the output jumps from `[1, 0]` to `[2, 2]`. The soft output moves by a tiny amount, because it splits the weight equally between tied keys and changes smoothly. That smoothness is what gradient descent needs.
+# ### Step 7.1. Write the SelfAttention module
 #
-# ### ✏️ Your turn: what does hard attention return?
-#
-# Without running anything new, which value vector does `hard_attention(q, K, V)` return for the original tied example? Store the vector as a list in `answer`.
+# The layer takes `X` of shape `(batch, n, d_model)`. Three linear layers make `Q`, `K` and `V` of shape `(batch, n, d_k)`. The scores are `Q @ K^T / sqrt(d_k)`, shape `(batch, n, n)`; the weights are the softmax along the last axis; the output is `weights @ V`, shape `(batch, n, d_k)`. The module returns both the output and the weights, so that we can draw them. We test the shapes with a random batch, and count the parameters by formula (each linear layer has `d_model * d_k` weights and `d_k` biases) and by PyTorch, and compare with an `nn.LSTM` layer of the same width.
 
 # %%
-answer = None  # YOUR ANSWER HERE, for example [x, y]
+class SelfAttention(nn.Module):
+    """Single-head self-attention: every position makes a query, a key and a value from the same input."""
+    def __init__(self, d_model, d_k):
+        super().__init__()
+        self.W_Q, self.W_K, self.W_V = nn.Linear(d_model, d_k), nn.Linear(d_model, d_k), nn.Linear(d_model, d_k)
+        self.d_k = d_k
+    def forward(self, X):                                        # X: (batch, n, d_model)
+        Q, K, V = self.W_Q(X), self.W_K(X), self.W_V(X)          # each (batch, n, d_k)
+        scores = Q @ K.transpose(-1, -2) / math.sqrt(self.d_k)   # (batch, n, n)
+        weights = torch.softmax(scores, dim=-1)
+        return weights @ V, weights                              # (batch, n, d_k) and (batch, n, n)
+
+sa = SelfAttention(16, 16)
+Xr = torch.randn(4, 10, 16)
+o_sa, w_sa = sa(Xr)
+print("input", tuple(Xr.shape), "-> output", tuple(o_sa.shape), "| weights", tuple(w_sa.shape))
+assert o_sa.shape == (4, 10, 16) and w_sa.shape == (4, 10, 10)
+assert torch.allclose(w_sa.sum(-1), torch.ones(4, 10), atol=1e-5)
+n_sa = sum(p.numel() for p in sa.parameters())
+n_formula = 3 * (16 * 16 + 16)
+n_lstm_layer = sum(p.numel() for p in nn.LSTM(16, 16).parameters())
+print("SelfAttention(16, 16): parameters", n_sa, "| by formula 3*(d_model*d_k + d_k) =", n_formula)
+print("nn.LSTM(16, 16) layer: parameters", n_lstm_layer, "| ratio LSTM / self-attention =", round(n_lstm_layer / n_sa, 2))
+
+# %% [markdown]
+# **What you should see.**
+#
+# The output has the same shape as the input in `batch` and `n`: (4, 10, 16); the weights are an `n` by `n` matrix for each sequence. The module has 816 parameters, equal to the formula, against 2176 for an LSTM layer of the same width: the LSTM has 2.7 times as many. Self-attention has no recurrent matrix and no gates, only three projections. Two things to notice for later: the number of parameters does *not* depend on the length `n` (the same three matrices serve every position, like a CNN kernel), but the work does (`n` by `n` scores, Step 5.6).
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 7.1 - Count for a bigger layer
+#
+# For `d_model = d_k = 64`, compute by formula the parameters of `SelfAttention(64, 64)` (`n_sa64`) and of `nn.LSTM(64, 64)` as PyTorch counts them, with two bias vectors (`n_lstm64`). Check them with real modules. Why it matters: In real models the layer is wide, and the cost in parameters matters. You can now calculate it without running anything.
+
+# %%
+n_sa64 = None      # YOUR CODE: parameters of SelfAttention(64, 64)
+n_lstm64 = None    # YOUR CODE: parameters of nn.LSTM(64, 64)
 
 # %%
 # Check
-if answer is None:
-    print("Fill in your answer above, then run this cell again.")
+if n_sa64 is None or n_lstm64 is None:
+    print("Fill in your two numbers above, then run this cell again.")
 else:
-    check("hard attention returns value 1", bool(np.allclose(answer, [1.0, 0.0])),
-          "argmax picks the first of the tied maximum scores, which is key 1, so it returns v1.")
+    check("SelfAttention(64, 64)", n_sa64 == sum(p.numel() for p in SelfAttention(64, 64).parameters()), "3 * (64*64 + 64)")
+    check("nn.LSTM(64, 64)", n_lstm64 == sum(p.numel() for p in nn.LSTM(64, 64).parameters()), "4 * (64*64 + 64*64 + 64 + 64)")
 
 # %% [markdown]
 # <details><summary>Show a possible answer</summary>
 #
 # ```python
-# answer = V[0].tolist()   # [1.0, 0.0]
+# n_sa64 = 3 * (64 * 64 + 64)
+# n_lstm64 = 4 * (64 * 64 + 64 * 64 + 64 + 64)
 # ```
-#
-# The scores are 0.7071, 0, 0.7071. `argmax` returns the first index with the maximum, key 1, so the output is `v1 = [1, 0]`. Soft attention gives `[1.2033, 1.0]` instead, which uses all three values.
-#
+# The LSTM has four blocks of two weight matrices and two bias vectors; self-attention has three blocks of one weight matrix and one bias. 12,480 against 33,280: the LSTM layer is 2.7 times larger. (A real Transformer block adds an output projection, a feed-forward network and more in Week 8, so the whole block is larger than this one layer.)
 # </details>
+
+# %% [markdown]
+# ### Step 7.2. Self-attention on the memory task, and one table for everything
+#
+# We use the module in a classifier: symbol embedding plus position embedding (as in Part 6), then the `SelfAttention` layer, then we read the output at the **last** position (which has attended to the whole sequence) and send it through a linear layer to the 8 classes. We train it at lengths 10, 40 and 80 with the same data as before and print one table with all four models. The last position's attention weights show which position it used.
+
+# %%
+class SelfAttnClassifier(nn.Module):
+    """Embedding + position embedding + self-attention; the output at the LAST position goes to a linear layer."""
+    def __init__(self, length, d=16):
+        super().__init__()
+        self.emb, self.pos = nn.Linear(N_SYMBOLS, d, bias=False), nn.Embedding(length, d)
+        self.att, self.out = SelfAttention(d, d), nn.Linear(d, N_SYMBOLS)
+        self.last_weights = None
+    def forward(self, x):
+        h = self.emb(x) + self.pos(torch.arange(x.shape[1]))
+        o, w = self.att(h)
+        self.last_weights = w.detach()                  # (batch, n, n)
+        return self.out(o[:, -1])
+
+def get_data(L):
+    """1,000 training and 300 test sequences of length L (fixed seeds): the same data as Parts 4 and 6."""
+    return (*make_memory_task(1000, L, seed=1), *make_memory_task(300, L, seed=2))
+
+if "ACC" not in globals():
+    ACC = {"rnn": {}, "lstm": {}, "attn": {}}
+ACC["self"], SMODELS = {}, {}
+EPOCHS_S = 5 if QUICK else 60
+for L in (10, 40, 80):
+    torch.manual_seed(SEED)
+    SMODELS[L] = SelfAttnClassifier(L)
+    hist = train_seq_model(SMODELS[L], *get_data(L), epochs=EPOCHS_S, lr=0.01, seed=SEED)
+    te = hist["test_acc"]
+    ACC["self"][L] = {"final": te[-1], "train": hist["train_acc"][-1], "epochs_to_90": next((e + 1 for e, a in enumerate(te) if a >= 0.9), None)}
+    print(f"self-attention, length {L:2d}: final test {te[-1]:.3f} | train {hist['train_acc'][-1]:.3f} | first epoch with test >= 0.9: {ACC['self'][L]['epochs_to_90']}")
+
+# %%
+dash = lambda kind, L: f"{ACC[kind][L]['final']:.3f}" if L in ACC.get(kind, {}) else "-"
+print(f"{'length':>6} {'RNN':>7} {'LSTM':>7} {'query attention':>16} {'self-attention':>15}")
+for L in (10, 40, 80):
+    print(f"{L:6d} {dash('rnn', L):>7} {dash('lstm', L):>7} {dash('attn', L):>16} {dash('self', L):>15}")
+with torch.no_grad():
+    SMODELS[40](one_hot_batch(get_data(40)[2]))
+wl = SMODELS[40].last_weights[:, -1, :].numpy()          # the weights of the last position, (300, 40)
+mean_on_first = float(wl[:, 0].mean())
+print(f"length 40: the last position puts on average {mean_on_first:.3f} of its attention on position 1")
+RESULTS["p7_self_final"] = {L: round(ACC["self"][L]["final"], 3) for L in ACC["self"]}
+if not QUICK:
+    assert all(ACC["self"][L]["final"] > 0.95 for L in ACC["self"]), "self-attention with positions should solve these lengths"
+
+# %% [markdown]
+# **What you should see.**
+#
+# Self-attention reaches 1.000, 1.000 and 1.000 at lengths 10, 40 and 80. In the table, the RNN gets 1.000, 1.000 and 0.113 at lengths 10, 40 and 80, the LSTM gets 1.000, 1.000 and 0.143 (both reach length 40 with these settings and both fail at 80), and both attention models solve all three lengths. The last position puts on average 1.000 of its attention on position 1, which is the position that holds the answer: the layer found, by itself, which key to look at (the query comes from the last position, the key from the first, and the learned matrices and position embeddings made them match). Notice what we compare: all models are small, the training set is small (1,000 sequences) and the task is easy for attention because the answer sits at a fixed position. Real language is harder and the margin is not always this large, but the pattern (a path of length one from the answer to the output) is real.
+
+# %% [markdown]
+# Tips and common mistakes:
+#
+# - Reading the last position is our design choice. You could also average the output over all positions; in a test run outside this lab that worked as well. Every position sees all positions here (there is no mask), so any position could in principle be read.
+# - Do not read the table as a verdict on RNNs and LSTMs in general. It says what happens with *these* sizes, *this* data and *this* budget.
+
+# %% [markdown]
+# ### ✏️ Your turn: Exercise 7.2 - Which models solve length 80?
+#
+# From `ACC`, build the list `solved_80` of the model names (`"rnn"`, `"lstm"`, `"attn"`, `"self"`) whose final test accuracy at length 80 is at least 0.9 (skip a model that is not in `ACC` for length 80). Then in `why` write one sentence (at least 15 words) that explains the result with the length of the path from the first symbol to the output. Why it matters: The explanation, not the table, is what you have learned.
+
+# %%
+solved_80 = None    # YOUR CODE: a list of model names
+why = ""            # YOUR ANSWER: one sentence
+
+# %%
+# Check
+if solved_80 is None or len(why.split()) < 15:
+    print("Fill in the list and a sentence of at least 15 words above, then run this cell again.")
+elif QUICK:
+    print("(Quick test mode: the short training does not give the real numbers; skipping the check.)")
+else:
+    truth = [k for k in ("rnn", "lstm", "attn", "self") if 80 in ACC.get(k, {}) and ACC[k][80]["final"] >= 0.9]
+    check("models that solve length 80", sorted(solved_80) == sorted(truth), "loop over the four names and test ACC[name][80]['final'] >= 0.9")
+
+# %% [markdown]
+# <details><summary>Show a possible answer</summary>
+#
+# ```python
+# solved_80 = [k for k in ("rnn", "lstm", "attn", "self") if 80 in ACC.get(k, {}) and ACC[k][80]["final"] >= 0.9]
+# why = "In an RNN or an LSTM the first symbol reaches the output through 79 steps, each of which can shrink or overwrite it, while in attention the output position reads the first position directly, one step away, however long the sequence is."
+# ```
+# A loop with `in ACC.get(k, {})` skips models that were not trained. The models that reach 0.9 at length 80 are ['attn', 'self']. The path is the explanation: 79 recurrent steps for the RNN and the LSTM (each one a chance to lose the signal), one attention step for the other two.
+# </details>
+
+# %% [markdown]
+# ### Step 7.3. Imagination design: choose a model for a real sequence problem
+#
+# Pick **one** real sequence problem from this list or invent your own: summarising a long homework message; the chat history of a school chatbot; a stream of typhoon-warning texts; a jeepney route log. Decide whether a plain RNN, an LSTM or an attention-based model (the Transformer family) is the best fit, and fill the design card below with your reasons. Use what you measured: how long is the typical input (in tokens)? How much of it must be remembered? Can the work be done in parallel on a GPU? What does the cost of `n` squared mean for your problem? There is no single right answer; a good card gives reasons that refer to numbers from this lab.
+
+# %%
+design = {
+    "problem": "",             # e.g. "answer a student's question using the last 20 messages of a school chatbot chat"
+    "typical_length": None,    # your estimate of the input length in tokens (a number)
+    "must_remember": "",       # what has to be remembered, and from how far back
+    "model": "",               # "rnn", "lstm" or "attention"
+    "reason_length": "",       # why, referring to the length and to Parts 3 to 6
+    "reason_cost": "",         # what the choice costs: parallelism, memory, n squared
+    "risk": "",                # what could go wrong, and how you would test it
+}
+missing = [k for k, v in design.items() if v in ("", None)]
+if missing:
+    print("Fill in these fields, then run this cell again:", ", ".join(missing))
+else:
+    check("model is one of the three", design["model"] in ("rnn", "lstm", "attention"), "write rnn, lstm or attention")
+    print("=" * 60); print(" DESIGN CARD"); print("=" * 60)
+    for k, v in design.items(): print(f" {k:16s} {v}")
+    print("=" * 60)
+RESULTS["p7_design"] = design
+
+# %% [markdown]
+# **What a good card contains.** A concrete problem and an honest length (a chatbot history of 20 short messages is about 400 tokens; a long homework message may be 1,000 tokens or more). The model is chosen for reasons: for a few hundred tokens, attention is affordable (400 squared is only 160,000 scores) and it reaches any earlier message in one step; an LSTM is cheaper in memory for a very long stream (a typhoon-warning feed that never ends and must be processed token by token on a small device) but forgets old details; a plain RNN is rarely the right choice beyond about ten steps, as Part 4 showed. A good risk line says how you would find out whether the choice fails: for example, test on inputs where the key fact sits at the very beginning, as in the memory task.
+
+# %% [markdown]
+# ### Step 7.4. Your results, together
+#
+# Everything you stored in `RESULTS` during Parts 4 to 7 is printed below. This is the summary to submit with your notebook or files. If a key is missing, you skipped the step that creates it.
+
+# %%
+for key in sorted(RESULTS):
+    print(f"{key:32s} {RESULTS[key]}")
+print("\nkeys stored:", len(RESULTS))
+
+# %% [markdown]
+# **What you should see.**
+#
+# You should see one line per stored result. Keys that start with `p4_` come from Part 4 (gradient ratio, the RNN and LSTM accuracies, the memory unit), `p5_` from Part 5 (variances, saturation, timings, your pronoun answer), `p6_` from Part 6 (temperature, attention accuracies, the weight on position 1, the hard-attention experiment) and `p7_` from this part. Check the numbers against your tables above and against the lesson.
+
+# %% [markdown]
+# ### Step 7.5. Four reflection questions
+#
+# Answer in your own words, in at least 25 words each, using at least one number or example from this lab in each answer. There are no trick questions: the goal is to say clearly what you understood. If you cannot answer one, go back to the step named in brackets.
+
+# %%
+reflection = {
+    "1_rnn_forgets": "",        # Why does an RNN forget the start of a long sequence? (Parts 2 to 4)
+    "2_lstm_gates": "",         # What do the gates and the cell state of an LSTM add, and where does it still fall short? (Part 4)
+    "3_attention_reach": "",    # Why can attention reach any position in one step, and what does it cost? (Parts 5 to 7)
+    "4_soft_hard": "",          # Why is soft attention trainable and hard attention not? (Part 6)
+}
+short = [k for k, v in reflection.items() if len(v.split()) < 25]
+if len(short) == len(reflection):
+    print("Write your four answers in `reflection` above (at least 25 words each), then run this cell again.")
+else:
+    check("all four answers have at least 25 words", not short, "still short: " + ", ".join(short))
+RESULTS["p7_reflection"] = reflection
+
+# %% [markdown]
+# **What a good answer contains.**
+#
+# - *Why an RNN forgets:* the information about symbol 1 passes through one multiplication by the recurrent weight and one tanh at every step; the gradient is a product of factors below 1 (about 8.7e-14 at 30 steps in Part 4), so learning from the first symbol is slow and erratic: with the same settings the RNN learned lengths 10 and 40, wobbled at 20, and failed at 60 and 80.
+# - *What the LSTM adds:* a cell state with a forget gate near 1 that carries information almost untouched (the highway: 0.95 to the power 29 is 0.226); the gates are learned (a few units in Step 4.5 kept part of the first symbol); it still reads step by step, has a fixed-size state, and in this budget it reached no further than the RNN (length 40 solved, 60 and 80 failed).
+# - *Attention's reach and cost:* every position computes scores against every other, so the first position is one step from the output at any length (the model solved length 80); the price is the n by n score matrix (262,144 scores for n = 512; 64 times more for 8 times the length).
+# - *Soft against hard:* the softmax is a smooth function of the scores, so the loss has a gradient to the query; the argmax is piecewise constant, so the gradient is zero (no learning signal in Step 6.6); a straight-through trick is an approximation that only partly worked.
+
+# %% [markdown]
+# ### Step 7.6. Go further
+#
+# If you want to see this week's attention inside a full model, read the first sections of the UvA Deep Learning tutorial *Transformers and Multi-Head Attention* (Tutorial 6, University of Amsterdam, by Phillip Lippe): `https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial6/Transformers_and_MHAttention.html`. Its first sections recap the scaled dot-product attention you wrote in Part 5; the multi-head part and the full Transformer are next week's topic, so you may stop there for now. Read it as a second explanation of the same idea, and see whether the shapes in its code match the shapes in your `SelfAttention`.
 
 # %% [markdown]
 # ## Wrap-up
 #
-# - Attention scores each key against the query, turns the scores into weights with softmax, and returns a weighted sum of the values: `softmax(QKᵀ/√d_k)V`.
-# - Dividing by √d_k stops the softmax from saturating when `d_k` is large. Soft attention is smooth, so it can be trained with gradients; hard attention is not.
-# - You can verify a formula by computing a tiny case by hand and then confirming it in code.
+# What you learned this week:
 #
-# **Reflection.** Double-click here to write two sentences: (a) what surprised you, and (b) one thing attention can do that a plain RNN cannot.
+# - **A recurrent network keeps its memory in one state vector, and it forgets.** The gradient from step 30 back to step 1 was about 8.7e-14 for a scalar RNN. With the same settings the RNN of Part 4 learned the memory task at lengths 10 and 40, wobbled at 20 and failed at 60 and 80. The LSTM added a cell state and gates: a forget gate near 1 keeps 0.226 of the signal over 29 steps, a few of its units kept part of the first symbol, and it solved lengths 10, 20 and 40, but with the same budget it reached no further than the RNN (it failed at 60 and 80).
+# - **Attention is three matrix products and a softmax.** Scores `Q @ K.T`, weights `softmax(scores / sqrt(d_k))`, output `weights @ V`. The scaling keeps the variance of the scores at 1 (it grows like `d_k` otherwise) so the softmax does not saturate, and the price is the n by n score matrix: 262,144 scores at n = 512.
+# - **Soft attention can be trained; hard attention cannot, directly.** Soft weights have gradients, a temperature slides between soft and hard and the gradient disappears at the hard end, and a small attention model with position embeddings (and a self-attention layer) solved the memory task at every length from 10 to 80 where the RNN and the LSTM had failed.
 #
-# Files in `/content` disappear when the Colab session ends, so download anything you want to keep (File → Download). Submit your work the way your instructor asks; dates and weights are announced by your instructor.
+# **Looking ahead.** Week 8 builds the **Transformer block** from the pieces you wrote: several attention heads in parallel (multi-head attention), position information that does not depend on a table (sinusoidal positions), a feed-forward network, residual connections and layer normalisation, and the causal mask that lets a language model read only the past. Re-read the lesson sections on self-attention before the next lesson.
 #
-# **Go further.** Tutorial 6, *Transformers and Multi-Head Attention*, by Phillip Lippe, University of Amsterdam (UvA Deep Learning Tutorials, MIT licence): [Transformers and Multi-Head Attention](https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial6/Transformers_and_MHAttention.html). Its first sections cover attention as a weighted average and scaled dot-product attention. Read those sections now; the rest is next week's topic.
+# **Before you finish.** Files in `/content` vanish when the Colab session ends. Download anything you want to keep, and use **File → Save a copy in Drive** (or download the notebook with its outputs) so your answers survive. Submit it the way your instructor asks. The lesson for Week 7 is your reference for the ideas behind each step.
+#
+# **Reflect:** double-click this cell and write two sentences: which result of this lab surprised you most (for example, the LSTM reaching no further than the RNN), and what is the first thing you would test before using attention on a very long input?

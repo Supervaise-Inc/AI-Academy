@@ -131,7 +131,7 @@ function check(file) {
         if ((s.steps || []).length < 3) at('needs ≥3 steps');
         (s.steps || []).forEach((st, k) => { if (!isStr(st.title) || !isStr(st.body, 30)) at(`step ${k + 1} needs title and body`); (st.active || []).forEach((a) => !ids.includes(a) && at(`step ${k + 1} activates unknown node "${a}"`)); if (!(st.active || []).length) at(`step ${k + 1} needs an active list`); });
       },
-      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split or ngram_space'); },
+      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space or attn_cost'); },
       network: () => {
         const L = s.layers;
         if (!Array.isArray(L) || L.length < 3 || L.some((n) => !(n >= 1 && n <= 5))) return at('layers must be ≥3 numbers, each 1..5');
@@ -230,6 +230,31 @@ function check(file) {
           const r = M.cosineSim(a.v, b.v);
           if (c.cos != null && Math.abs(r.cos - c.cos) > 0.005) at(`check ${k + 1}: cosine(${c.a}, ${c.b}) expected ${c.cos}, computed ${r.cos.toFixed(3)}`);
           if (c.dot != null && Math.abs(r.dot - c.dot) > 0.005) at(`check ${k + 1}: dot(${c.a}, ${c.b}) expected ${c.dot}, computed ${r.dot.toFixed(3)}`);
+        });
+      },
+      seqmemory: () => {
+        (s.checks || []).forEach((c, k) => {
+          const r = M.rnnInfluence({ T: c.length, w: c.w, seed: s.seed || 3 }).influence[0];
+          if (c.rnnFirstMax != null && r > c.rnnFirstMax) at(`check ${k + 1}: RNN influence of step 1 is ${r.toExponential(2)} > ${c.rnnFirstMax}`);
+          if (c.rnnFirstMin != null && r < c.rnnFirstMin) at(`check ${k + 1}: RNN influence of step 1 is ${r.toExponential(2)} < ${c.rnnFirstMin}`);
+          if (c.forget != null) { const l = M.lstmInfluence(c.length, c.forget)[0]; if (Math.abs(l - c.lstmFirst) > Math.max(1e-4, c.lstmFirst * 0.02)) at(`check ${k + 1}: LSTM influence is ${l.toExponential(3)}, not ${c.lstmFirst}`); }
+        });
+      },
+      lstmcell: () => {
+        const p = s.params;
+        if (!p || ['f', 'i', 'g', 'o'].some((q) => !Array.isArray(p[q]) || p[q].length !== 3)) return at('params need f, i, g, o, each [w_x, w_h, bias]');
+        (s.checks || []).forEach((c, k) => {
+          const r = M.lstmStep(p, c.x, c.hPrev, c.cPrev);
+          ['f', 'i', 'o', 'g', 'c', 'h'].forEach((q) => { if (c[q] != null && Math.abs(r[q] - c[q]) > 0.002) at(`check ${k + 1}: ${q} expected ${c[q]}, computed ${r[q].toFixed(4)}`); });
+        });
+      },
+      hardsoft: () => {
+        if (!Array.isArray(s.scores) || s.scores.length < 3 || !Array.isArray(s.labels) || s.labels.length !== s.scores.length || !Array.isArray(s.values) || s.values.length !== s.scores.length || s.values.some((v) => !Array.isArray(v) || v.length !== s.values[0].length)) return at('scores, labels and values need the same length (≥3); values are equal-length vectors');
+        (s.checks || []).forEach((c, k) => {
+          const r = M.softHard(s.scores, s.values, c.temperature || 1);
+          (c.soft || []).forEach((q, i) => { if (Math.abs(r.soft[i] - q) > 0.002) at(`check ${k + 1}: soft weight ${i + 1} expected ${q}, computed ${r.soft[i].toFixed(4)}`); });
+          (c.softOut || []).forEach((q, i) => { if (Math.abs(r.softOut[i] - q) > 0.002) at(`check ${k + 1}: soft output ${i + 1} expected ${q}, computed ${r.softOut[i].toFixed(4)}`); });
+          (c.hardOut || []).forEach((q, i) => { if (Math.abs(r.hardOut[i] - q) > 0.002) at(`check ${k + 1}: hard output ${i + 1} expected ${q}, computed ${r.hardOut[i].toFixed(4)}`); });
         });
       },
       mlp: () => { if (!Array.isArray(s.layers) || s.layers.length < 3 || s.layers.some((n) => !(n >= 1))) at('layers must be ≥3 positive numbers'); },

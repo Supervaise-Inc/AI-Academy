@@ -233,6 +233,18 @@ Use it whenever a lesson introduces a formula: every symbol is a `{t, id}` term 
 ### `calc` kind `ngram_space`
 `{ "type": "calc", "kind": "ngram_space", "title": "…" }`: sliders for vocabulary size V, n and the size of the training text; shows V^n possible n-grams against the number of words, and the share that can ever appear (the sparsity problem).
 
+### `seqmemory` (how much of step t still reaches the end: RNN, LSTM, attention)
+`{ "type": "seqmemory", "title": "…", "intro": "…", "length": 20, "w": 0.9, "forget": 0.95, "seed": 3, "note": "…", "checks": [ { "length": 30, "w": 0.9, "rnnFirstMax": 1e-9, "forget": 0.95, "lstmFirst": 0.2259 } ] }`. Sliders set the sequence length T, the RNN recurrent weight w and the LSTM forget gate f; a log-scale chart shows d(final state)/d(state at step t) for a one-unit tanh RNN on a fixed ±1 input (product of w·(1 − h²)), for an LSTM cell state (f^(T−t)) and for attention (a direct path, 1). Measured: T = 30, w = 0.9 gives about 3.6e-11 for step 1; T = 10 gives 7.8e-5; LSTM at f = 0.95, T = 30 gives 0.226 and at f = 0.99 gives 0.747. `checks` with `rnnFirstMax`/`rnnFirstMin` (bounds on step 1's RNN influence) and `forget` + `lstmFirst` are recomputed by the validator.
+
+### `lstmcell` (one LSTM step with its four gates)
+`{ "type": "lstmcell", "title": "…", "intro": "…", "x": 1, "h": 0, "c": 0.5, "params": { "f": [0.5, 0.5, 1.0], "i": [1.0, 0.5, 0], "g": [1.0, 0.5, 0], "o": [0.5, 0.5, 0] }, "note": "…", "checks": [ { "x": 1, "hPrev": 0, "cPrev": 0.5, "f": 0.8176, "c": 0.9656 } ] }`. A scalar LSTM cell: each gate is `[w_x, w_h, bias]` and f, i, o use the sigmoid, g uses tanh; c_t = f·c_(t−1) + i·g, h_t = o·tanh(c_t). Sliders set x, h_(t−1) and c_(t−1). `checks` entries give the inputs `x`, `hPrev`, `cPrev` plus any of the outputs `f, i, g, o, c, h` (their expected values) and are recomputed (±0.002).
+
+### `hardsoft` (hard attention picks one position, soft attention blends)
+`{ "type": "hardsoft", "title": "…", "intro": "…", "labels": ["the","cat","sat"], "scores": [0.5, 2, 0.3], "values": [[1,0],[0,1],[1,1]], "temperature": 1, "note": "…", "checks": [ { "temperature": 1, "soft": [0.1, 0.8, 0.1], "softOut": [0.5, 0.5], "hardOut": [0, 1] } ] }`. Tabs switch between soft attention (softmax weights) and hard attention (a one-hot at the arg max); sliders change the scores (and the temperature in soft mode); the figure also shows how much the output moves when one score is nudged by 0.1 (smoothly for soft, in jumps or not at all for hard). `checks` are recomputed.
+
+### `calc` kind `attn_cost`
+`{ "type": "calc", "kind": "attn_cost", "title": "…" }`: sliders for sequence length n and head size d; shows the n × n score table, about 4·n²·d multiply-adds, and "1 step vs n steps" against an RNN.
+
 ### `calc` kind `split`
 `{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`

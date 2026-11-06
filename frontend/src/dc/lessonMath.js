@@ -466,3 +466,39 @@ export function cosineSim(a, b) {
   const na = Math.sqrt(a.reduce((s, x) => s + x * x, 0)), nb = Math.sqrt(b.reduce((s, x) => s + x * x, 0));
   return { dot, na, nb, cos: na && nb ? dot / (na * nb) : 0 };
 }
+
+// ---- Week 7: sequences, LSTM and attention
+// One-unit RNN h_t = tanh(w*h_(t-1) + u*x_t) on a fixed pseudo-random input. influence[t-1] = d h_T / d h_t = product over k = t+1..T of w*(1 - h_k^2):
+// how much a change at step t still matters at the last step T. influence[T-1] = 1.
+export function rnnInfluence({ T = 20, w = 0.9, u = 0.8, seed = 3 }) {
+  const r = mulberry32(seed);
+  let h = 0;
+  const hs = [];
+  for (let t = 0; t < T; t++) { const x = r() < 0.5 ? -1 : 1; h = Math.tanh(w * h + u * x); hs.push(h); }
+  const infl = Array(T).fill(1);
+  for (let t = T - 2; t >= 0; t--) infl[t] = infl[t + 1] * w * (1 - hs[t + 1] * hs[t + 1]);
+  return { influence: infl, states: hs };
+}
+// LSTM cell state path: c_t = f_t * c_(t-1) + ...  so d c_T / d c_t = product of the forget gates (constant f here).
+export const lstmInfluence = (T, f) => Array.from({ length: T }, (_, t) => Math.pow(f, T - 1 - t));
+// Scalar LSTM cell. p = { f:[wx,wh,b], i:[…], g:[…], o:[…] }
+export function lstmStep(p, x, hPrev, cPrev) {
+  const sig = (z) => 1 / (1 + Math.exp(-z));
+  const lin = (q) => q[0] * x + q[1] * hPrev + q[2];
+  const f = sig(lin(p.f)), i = sig(lin(p.i)), g = Math.tanh(lin(p.g)), o = sig(lin(p.o));
+  const c = f * cPrev + i * g;
+  const h = o * Math.tanh(c);
+  return { f, i, g, o, c, h };
+}
+// Soft attention over scores: weights = softmax(scores / T); output = weighted sum of values. Hard attention: one-hot at the arg max.
+export function softHard(scores, values, temp = 1) {
+  const z = scores.map((s) => s / temp);
+  const m = Math.max(...z);
+  const e = z.map((q) => Math.exp(q - m));
+  const s = e.reduce((a, b) => a + b, 0);
+  const soft = e.map((q) => q / s);
+  const arg = scores.indexOf(Math.max(...scores));
+  const hard = scores.map((_, i) => (i === arg ? 1 : 0));
+  const mix = (w) => values[0].map((_, d) => w.reduce((a, wi, i) => a + wi * values[i][d], 0));
+  return { soft, hard, softOut: mix(soft), hardOut: mix(hard), arg };
+}

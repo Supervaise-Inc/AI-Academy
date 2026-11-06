@@ -401,3 +401,7 @@
   /* Week 6 figures */
   .wp-prose .vz-wpiece{display:inline-flex;gap:2px;margin:0 8px 6px 0;padding:3px 4px;border-radius:8px;border:1px dashed var(--divider)}
   .wp-prose .vz-vbar{display:inline-block;height:8px;border-radius:4px;margin-right:6px;vertical-align:middle}
+
+  /* Week 7 figures */
+  .wp-prose .vz-hsrow{display:grid;grid-template-columns:minmax(0,1fr) 110px 48px;gap:10px;align-items:center}
+  @media (max-width:560px){.wp-prose .vz-hsrow{grid-template-columns:1fr 70px 44px}}

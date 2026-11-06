@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -85,8 +85,8 @@ function Slider({ label, min, max, step, value, onChange, show }) {
 }
 
 function Calc({ spec, fig }) {
-  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : 24);
-  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : 0);
+  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : 24);
+  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : 0);
   const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : 15);
   let body = null;
   if (spec.kind === 'fc_vs_conv') {
@@ -140,6 +140,22 @@ function Calc({ spec, fig }) {
           </li>
         </ul>
         <p className="wg-note">Weights only: parameters × bytes per parameter (GB = 10⁹ bytes). “Training, Adam” uses the common mixed-precision estimate of 16 bytes per parameter (weights, gradients, FP32 master copy and two Adam moments). Activations, the KV cache and framework overhead come on top.</p>
+      </>
+    );
+  } else if (spec.kind === 'attn_cost') {
+    const n = a, d = b;
+    const scores = n * n;
+    const flops = 2 * n * n * d * 2;
+    body = (
+      <>
+        <Slider label="Sequence length n (tokens)" min={16} max={32768} step={16} value={a} onChange={setA} show={(q) => q.toLocaleString()} />
+        <Slider label="Head size d" min={16} max={256} step={16} value={b} onChange={setB} />
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Attention scores (n × n)</span><span className="vz-big">{scores >= 1e6 ? (scores / 1e6).toFixed(1) + ' M' : scores.toLocaleString()}</span><span className="wg-note">one number for every pair of tokens</span></div>
+          <div><span className="wg-k">Multiply-adds for QKᵀ and weights × V</span><span className="vz-big">{flops >= 1e9 ? (flops / 1e9).toFixed(2) + ' G' : (flops / 1e6).toFixed(1) + ' M'}</span><span className="wg-note">about 4 · n² · d</span></div>
+          <div className="out"><span className="wg-k">Steps that must run one after another</span><span className="vz-big">1 vs {n.toLocaleString()}</span><span className="wg-note">attention (all pairs at once) vs an RNN (one step per token)</span></div>
+        </div>
+        <p className="wg-note">Double the length and the score table gets four times bigger: attention trades the RNN's long chain of steps for a quadratic table. {spec.note || ''}</p>
       </>
     );
   } else if (spec.kind === 'ngram_space') {
@@ -1554,4 +1570,111 @@ function VecSim({ spec, fig }) {
   );
 }
 
-export const VIZ = { vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- seqmemory (how much of step t survives to the end: RNN, LSTM, attention)
+function SeqMemory({ spec, fig }) {
+  const [T, setT] = useState(spec.length ?? 20);
+  const [w, setW] = useState(spec.w ?? 0.9);
+  const [f, setF] = useState(spec.forget ?? 0.95);
+  const rnn = useMemo(() => rnnInfluence({ T, w, seed: spec.seed || 3 }).influence, [T, w, spec]);
+  const lstm = useMemo(() => lstmInfluence(T, f), [T, f]);
+  const lo = -12, hi = 1;
+  const yy = (x) => 150 - ((Math.max(lo, Math.min(hi, Math.log10(Math.max(x, 1e-30)))) - lo) / (hi - lo)) * 140;
+  const W_ = 600;
+  const line = (arr, col) => <path d={arr.map((q, i) => `${i ? 'L' : 'M'}${30 + (i / (T - 1)) * (W_ - 40)} ${yy(q)}`).join(' ')} fill="none" stroke={col} strokeWidth="2.4" />;
+  const fmt = (x) => (x >= 0.01 ? x.toFixed(2) : x.toExponential(1));
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Sequence length T" min={5} max={80} step={1} value={T} onChange={setT} />
+      <Slider label="RNN recurrent weight w" min={0.2} max={1.6} step={0.05} value={w} onChange={setW} show={(q) => q.toFixed(2)} />
+      <Slider label="LSTM forget gate f" min={0.5} max={1} step={0.01} value={f} onChange={setF} show={(q) => q.toFixed(2)} />
+      <svg viewBox={`0 0 ${W_} 175`} className="vz-plot" role="img" aria-label={`How much of each step still reaches the last step. After ${T} steps the first step keeps ${fmt(rnn[0])} in the RNN, ${fmt(lstm[0])} in the LSTM and 1 with attention.`}>
+        {[-10, -8, -6, -4, -2, 0].map((e) => <g key={e}><line x1="30" x2={W_ - 10} y1={yy(10 ** e)} y2={yy(10 ** e)} className="vz-grid" /><text x="26" y={yy(10 ** e) + 4} textAnchor="end" className="vz-tick">1e{e}</text></g>)}
+        {line(rnn, 'var(--red)')}
+        {line(lstm, 'var(--accent)')}
+        <line x1="30" x2={W_ - 10} y1={yy(1)} y2={yy(1)} stroke="var(--cyan)" strokeWidth="2.4" strokeDasharray="6 4" />
+        <text x="30" y="170" className="vz-tick">first step</text>
+        <text x={W_ - 10} y="170" textAnchor="end" className="vz-tick">last step</text>
+      </svg>
+      <div className="wg-row vz-legend">
+        <span className="vz-key"><i style={{ background: 'var(--red)' }} />RNN (red): {fmt(rnn[0])} left from step 1</span>
+        <span className="vz-key"><i style={{ background: 'var(--accent)' }} />LSTM (green): {fmt(lstm[0])}</span>
+        <span className="vz-key"><i style={{ background: 'var(--cyan)' }} />attention (blue, dashed): 1, a direct path</span>
+      </div>
+      <p className="wg-note">The curves show d(final state) ÷ d(state at step t): the gradient signal that travels from the end back to step t, on a log scale. The RNN is a one-unit tanh network on a fixed ±1 input; the LSTM line is the product of constant forget gates; attention links the last position straight to every earlier one. {spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- lstmcell (one LSTM step with its four gates)
+function LstmCell({ spec, fig }) {
+  const [x, setX] = useState(spec.x ?? 1);
+  const [h, setH] = useState(spec.h ?? 0);
+  const [c, setC] = useState(spec.c ?? 0.5);
+  const r = useMemo(() => lstmStep(spec.params, x, h, c), [spec, x, h, c]);
+  const f2_ = (q) => Number(q.toFixed(3)).toString();
+  const Bar = ({ name, v, lo = 0, hi = 1, hint }) => (
+    <li style={{ gridTemplateColumns: '150px minmax(0,1fr) 60px' }}>
+      <span className="wg-bar-l" style={{ fontFamily: 'inherit' }}>{name}</span>
+      <span className="wg-bar-track"><span className="wg-bar-fill" style={{ width: `${((v - lo) / (hi - lo)) * 100}%` }} /></span>
+      <span className="wg-bar-p">{f2_(v)}</span>
+    </li>
+  );
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="vz-two">
+        <div>
+          <Slider label="Input x_t" min={-2} max={2} step={0.1} value={x} onChange={setX} show={(q) => q.toFixed(1)} />
+          <Slider label="Previous hidden state h_(t−1)" min={-1} max={1} step={0.1} value={h} onChange={setH} show={(q) => q.toFixed(1)} />
+          <Slider label="Previous cell state c_(t−1)" min={-2} max={2} step={0.1} value={c} onChange={setC} show={(q) => q.toFixed(1)} />
+        </div>
+        <ul className="wg-bars" style={{ margin: 0 }}>
+          <Bar name="forget gate f (keep old memory)" v={r.f} />
+          <Bar name="input gate i (let new in)" v={r.i} />
+          <Bar name="output gate o (reveal memory)" v={r.o} />
+          <Bar name="candidate g (new content)" v={(r.g + 1) / 2} />
+        </ul>
+      </div>
+      <p className="vz-calc">c_t = f × c_(t−1) + i × g = {f2_(r.f)} × {f2_(c)} + {f2_(r.i)} × {f2_(r.g)} = <strong>{f2_(r.c)}</strong>{'\n'}h_t = o × tanh(c_t) = {f2_(r.o)} × {f2_(Math.tanh(r.c))} = <strong>{f2_(r.h)}</strong></p>
+      <p className="wg-note">The old memory is only multiplied by f, not squashed through a weight matrix and a tanh, so with f near 1 the memory (and its gradient) survives many steps. {spec.note || 'The gate weights are authored for teaching, not learned.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- hardsoft (hard attention picks one, soft attention blends)
+function HardSoft({ spec, fig }) {
+  const [scores, setScores] = useState(spec.scores.slice());
+  const [temp, setTemp] = useState(spec.temperature ?? 1);
+  const [mode, setMode] = useState('soft');
+  const r = useMemo(() => softHard(scores, spec.values, temp), [scores, spec, temp]);
+  const bump = useMemo(() => { const s2 = scores.map((q, i) => (i === r.arg ? q : q)); s2[(r.arg + 1) % scores.length] += 0.1; return softHard(s2, spec.values, temp); }, [scores, spec, temp, r.arg]);
+  const w = mode === 'soft' ? r.soft : r.hard;
+  const out = mode === 'soft' ? r.softOut : r.hardOut;
+  const outB = mode === 'soft' ? bump.softOut : bump.hardOut;
+  const d = out.map((q, k) => outB[k] - q);
+  const fmt = (q) => Number(q.toFixed(3)).toString();
+  const nb = (r.arg + 1) % scores.length;
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-tabs" role="tablist">{['soft', 'hard'].map((k) => <button key={k} type="button" role="tab" aria-selected={mode === k} className={'wg-tab' + (mode === k ? ' on' : '')} onClick={() => setMode(k)}>{k === 'soft' ? 'Soft attention' : 'Hard attention'}</button>)}</div>
+      {scores.map((s, i) => (
+        <div key={i} className="vz-hsrow">
+          <Slider label={`score for “${spec.labels[i]}”`} min={-3} max={5} step={0.1} value={s} onChange={(q) => setScores((a) => a.map((o, k) => (k === i ? q : o)))} show={(q) => q.toFixed(1)} />
+          <span className="wg-bar-track" aria-label={`weight ${fmt(w[i])}`}><span className={'wg-bar-fill' + (mode === 'hard' ? ' warn' : '')} style={{ width: `${w[i] * 100}%` }} /></span>
+          <span className="wg-bar-p">{fmt(w[i])}</span>
+        </div>
+      ))}
+      {mode === 'soft' ? <Slider label="Temperature T (small T sharpens towards hard)" min={0.1} max={3} step={0.1} value={temp} onChange={setTemp} show={(q) => q.toFixed(1)} /> : null}
+      <p className="vz-calc">output = Σ weight × value = ({fmt(out[0])}{out.length > 1 ? `, ${fmt(out[1])}` : ''})</p>
+      <p className="wg-p" aria-live="polite" style={{ margin: '6px 0 0' }}><strong>Sensitivity.</strong> Nudge the score of “{spec.labels[nb]}” up by 0.1: the output changes by ({fmt(d[0])}{d.length > 1 ? `, ${fmt(d[1])}` : ''}). {mode === 'soft' ? 'Every score moves the output a little, so gradients can flow back to every score.' : (d.every((q) => Math.abs(q) < 1e-9) ? 'The output does not move at all, so there is no gradient to learn from: hard attention is a jump, not a slope.' : 'The output jumped because a different position became the maximum: hard attention changes in jumps, so it has no useful slope.')}</p>
+      <p className="wg-note">{spec.note || 'Scores and values are made up for the demonstration.'}</p>
+    </div>
+  );
+}
+
+export const VIZ = { seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
