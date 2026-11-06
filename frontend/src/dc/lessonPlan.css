@@ -418,3 +418,15 @@
   .wp-prose .vz-maskgrid b{font-size:11.5px;font-weight:600;color:var(--text3);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .wp-prose .vz-maskgrid i{display:block;height:26px;border-radius:5px;background:var(--surface2);border:1px solid var(--surface2-border)}
   .wp-prose .vz-maskgrid i.on{background:var(--accent-soft-bg);border-color:var(--accent)}
+
+  /* Week 11 figures */
+  .wp-prose .vz-sp-grid{display:grid;gap:3px;max-width:300px;margin-top:6px}
+  .wp-prose .vz-sp-tile{position:relative;display:block;border:1px solid var(--divider);border-radius:4px;overflow:hidden;background:#fff}
+  .wp-prose .vz-sp-tile .vz-px{display:grid;gap:0;aspect-ratio:1}
+  .wp-prose .vz-sp-tile .vz-px i{display:block}
+  .wp-prose .vz-sp-tile b{position:absolute;right:1px;bottom:0;font-size:9px;line-height:1.2;color:var(--accent);background:rgba(255,255,255,.8);padding:0 2px;border-radius:3px}
+  .wp-prose .vz-fusion{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+  .wp-prose .vz-fchip{padding:8px 12px;border-radius:10px;border:1px solid var(--surface2-border);background:var(--surface2);font-size:13.5px;font-weight:700}
+  .wp-prose .vz-fchip.in{background:var(--cyan-soft-bg);border-color:var(--cyan)}
+  .wp-prose .vz-fchip.out{background:var(--accent-soft-bg);border-color:var(--accent)}
+  .wp-prose .vz-farrow{color:var(--text3);font-size:18px}

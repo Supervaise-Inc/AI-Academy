@@ -132,7 +132,7 @@ function check(file) {
         if ((s.steps || []).length < 3) at('needs ≥3 steps');
         (s.steps || []).forEach((st, k) => { if (!isStr(st.title) || !isStr(st.body, 30)) at(`step ${k + 1} needs title and body`); (st.active || []).forEach((a) => !ids.includes(a) && at(`step ${k + 1} activates unknown node "${a}"`)); if (!(st.active || []).length) at(`step ${k + 1} needs an active list`); });
       },
-      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space or attn_cost'); },
+      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost or vit_tokens'); },
       network: () => {
         const L = s.layers;
         if (!Array.isArray(L) || L.length < 3 || L.some((n) => !(n >= 1 && n <= 5))) return at('layers must be ≥3 numbers, each 1..5');
@@ -314,6 +314,25 @@ function check(file) {
           if (c.p != null && Math.abs(r.p - c.p) > 0.005) at(`check ${k + 1}: p expected ${c.p}, computed ${r.p.toFixed(3)}`);
           if (c.em != null && Math.abs(r.em - c.em) > 0.005) at(`check ${k + 1}: exact match expected ${c.em}, computed ${r.em.toFixed(3)}`);
         });
+      },
+      clipsim: () => {
+        const ok = (a) => Array.isArray(a) && a.length >= 2 && a.every((x) => isStr(x.label) && Array.isArray(x.v) && x.v.length >= 2 && x.v.length === a[0].v.length);
+        if (!ok(s.images) || !ok(s.texts) || s.images[0].v.length !== s.texts[0].v.length) return at('images and texts need ≥2 {label, v[]} entries with vectors of one common length');
+        (s.checks || []).forEach((c, k) => {
+          const R = M.clipMatrix(s.images.map((x) => x.v), s.texts.map((x) => x.v), c.scale ?? s.scale ?? 10);
+          if (c.cos) c.cos.forEach(([i, j, q]) => { if (Math.abs(R.cos[i][j] - q) > 0.005) at(`check ${k + 1}: cosine(image ${i}, text ${j}) expected ${q}, computed ${R.cos[i][j].toFixed(4)}`); });
+          if (c.prob) c.prob.forEach(([i, j, q]) => { if (Math.abs(R.rows[i][j] - q) > 0.005) at(`check ${k + 1}: probability(image ${i}, text ${j}) expected ${q}, computed ${R.rows[i][j].toFixed(4)}`); });
+          if (c.loss != null && Math.abs(R.loss - c.loss) > 0.005) at(`check ${k + 1}: loss expected ${c.loss}, computed ${R.loss.toFixed(4)}`);
+        });
+      },
+      patchshuffle: () => {
+        const n = (s.image || []).length;
+        if (n < 8 || s.image.some((r) => !Array.isArray(r) || r.length !== n)) return at('image must be a square matrix of integers 0–9, at least 8×8');
+        if (n % (s.patch ?? 4)) at('patch must divide the image side');
+      },
+      fusion: () => {
+        if (!Array.isArray(s.patterns) || s.patterns.length < 2) return at('patterns needs ≥2 entries');
+        s.patterns.forEach((p, k) => { if (!isStr(p.name) || !Array.isArray(p.inputs) || !Array.isArray(p.stages) || !isStr(p.output) || !isStr(p.how) || !isStr(p.examples) || !isStr(p.good) || !isStr(p.bad)) at(`pattern ${k + 1} needs name, inputs[], stages[], output, how, examples, good, bad`); });
       },
       mlp: () => { if (!Array.isArray(s.layers) || s.layers.length < 3 || s.layers.some((n) => !(n >= 1))) at('layers must be ≥3 positive numbers'); },
       curve: () => {

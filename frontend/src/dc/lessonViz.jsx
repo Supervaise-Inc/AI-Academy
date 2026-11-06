@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -85,9 +85,9 @@ function Slider({ label, min, max, step, value, onChange, show }) {
 }
 
 function Calc({ spec, fig }) {
-  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : 24);
-  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : 0);
-  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : 15);
+  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : 24);
+  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : 0);
+  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : 15);
   let body = null;
   if (spec.kind === 'fc_vs_conv') {
     const cin = spec.channels || 1;
@@ -140,6 +140,27 @@ function Calc({ spec, fig }) {
           </li>
         </ul>
         <p className="wg-note">Weights only: parameters × bytes per parameter (GB = 10⁹ bytes). “Training, Adam” uses the common mixed-precision estimate of 16 bytes per parameter (weights, gradients, FP32 master copy and two Adam moments). Activations, the KV cache and framework overhead come on top.</p>
+      </>
+    );
+  } else if (spec.kind === 'vit_tokens') {
+    const sizes = [8, 14, 16, 32];
+    const t = vitTokens({ img: a, patch: b, c: c3, d: spec.d || 768 });
+    const fmtN = (x) => (x >= 1e9 ? (x / 1e9).toFixed(2) + ' billion' : x >= 1e6 ? (x / 1e6).toFixed(2) + ' million' : x.toLocaleString());
+    body = (
+      <>
+        <Slider label="Image side (pixels)" min={32} max={512} step={32} value={a} onChange={setA} show={(q) => `${q} × ${q}`} />
+        <div className="wg-row" style={{ gap: 8, margin: '6px 0 10px' }}>{sizes.map((q) => <button key={q} type="button" className={'wg-chip' + (b === q ? ' on' : '')} aria-pressed={b === q} onClick={() => setB(q)}>patch {q}×{q}</button>)}<button type="button" className={'wg-chip' + (c3 === 3 ? ' on' : '')} aria-pressed={c3 === 3} onClick={() => setC3(c3 === 3 ? 1 : 3)}>{c3 === 3 ? 'colour (3 channels)' : 'greyscale (1 channel)'}</button></div>
+        {!t.exact ? <p className="wg-why bad" role="alert">{a} is not divisible by {b}: a ViT needs the patches to tile the image exactly (it would be resized or cropped).</p> : null}
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Patches (tokens)</span><span className="vz-big">{t.side} × {t.side} = {t.patches.toLocaleString()}</span><span className="wg-note">+ 1 CLS token = a sequence of {t.seq.toLocaleString()}</span></div>
+          <div><span className="wg-k">Numbers in one flattened patch</span><span className="vz-big">{t.patchDim.toLocaleString()}</span><span className="wg-note">{b} × {b} × {c3}</span></div>
+          <div className="out"><span className="wg-k">Patch-embedding parameters (d = {spec.d || 768})</span><span className="vz-big">{t.projParams.toLocaleString()}</span><span className="wg-note">patch numbers × d + d biases</span></div>
+        </div>
+        <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: 'repeat(2,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Attention scores with patch tokens</span><span className="vz-big">{fmtN(t.attn)}</span><span className="wg-note">one table of {t.seq} × {t.seq} per head</span></div>
+          <div><span className="wg-k">If every pixel were a token</span><span className="vz-big">{fmtN(t.pixelAttn)}</span><span className="wg-note">{t.pixelSeq.toLocaleString()} tokens: {(t.pixelAttn / t.attn).toFixed(0)}× more scores</span></div>
+        </div>
+        <p className="wg-note">Patching is what makes self-attention affordable on images: n² grows with the number of tokens (Week 7). {spec.note || ''}</p>
       </>
     );
   } else if (spec.kind === 'attn_cost') {
@@ -1960,4 +1981,114 @@ function Emergent({ spec, fig }) {
   );
 }
 
-export const VIZ = { llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+// ---------------------------------------------------------------- clipsim (a similarity matrix between images and texts)
+function ClipSim({ spec, fig }) {
+  const [scale, setScale] = useState(spec.scale ?? 10);
+  const [sel, setSel] = useState(0);
+  const R = useMemo(() => clipMatrix(spec.images.map((x) => x.v), spec.texts.map((x) => x.v), scale), [spec, scale]);
+  const f = (q) => Number(q.toFixed(2)).toString();
+  const row = R.rows[sel];
+  const best = row.indexOf(Math.max(...row));
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Logit scale (1 ÷ temperature)" min={1} max={50} step={1} value={scale} onChange={setScale} />
+      <div className="vz-scroll">
+        <table className="vz-mlp vz-attn" aria-label="Cosine similarity of every image with every text">
+          <thead><tr><th>image ↓ text →</th>{spec.texts.map((t, j) => <th key={j}>{t.label}</th>)}</tr></thead>
+          <tbody>
+            {spec.images.map((im, i) => (
+              <tr key={i} className={i === sel ? 'sel' : ''} onClick={() => setSel(i)} style={{ cursor: 'pointer' }}>
+                <td><button type="button" className="vz-link" onClick={() => setSel(i)}>{im.label}</button></td>
+                {R.cos[i].map((q, j) => <td key={j} style={{ background: `color-mix(in srgb, ${i === j ? 'var(--accent)' : 'var(--cyan)'} ${Math.round(Math.max(0, q) * 55)}%, var(--surface2))`, fontWeight: i === j ? 800 : 500 }}>{f(q)}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="wg-note" style={{ margin: '4px 0 8px' }}>Cosine similarity; the diagonal (bold, green) holds the true pairs. Select an image to see its zero-shot probabilities.</p>
+      <p className="wg-p" aria-live="polite" style={{ margin: '0 0 6px' }}><strong>Zero-shot for “{spec.images[sel].label}”</strong>: softmax(scale × cosine) over the texts →</p>
+      <ul className="wg-bars">
+        {row.map((p, j) => <li key={j} style={{ gridTemplateColumns: '170px minmax(0,1fr) 56px' }}><span className="wg-bar-l" style={{ fontFamily: 'inherit' }}>{spec.texts[j].label}</span><span className="wg-bar-track"><span className={'wg-bar-fill' + (j === best ? '' : ' warn')} style={{ width: `${p * 100}%` }} /></span><span className="wg-bar-p">{f(p)}</span></li>)}
+      </ul>
+      <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Image → text loss</span><span className="vz-big">{f(R.lossImage)}</span><span className="wg-note">mean −ln p(true text)</span></div>
+        <div><span className="wg-k">Text → image loss</span><span className="vz-big">{f(R.lossText)}</span><span className="wg-note">the same, down the columns</span></div>
+        <div className="out"><span className="wg-k">Contrastive loss (average)</span><span className="vz-big">{f(R.loss)}</span><span className="wg-note">training pushes this down</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'Illustrative vectors written for teaching; CLIP learns its vectors from hundreds of millions of image–text pairs.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- patchshuffle (a bag of patches has no layout: why position embeddings are needed)
+function PatchShuffle({ spec, fig }) {
+  const img = spec.image;
+  const n = img.length;
+  const ps = spec.patch ?? 4;
+  const g = n / ps;
+  const [shuffled, setShuffled] = useState(false);
+  const [withPos, setWithPos] = useState(false);
+  const perm = useMemo(() => patchPermutation(g, spec.seed ?? 4), [g, spec]);
+  const order = shuffled ? perm : Array.from({ length: g * g }, (_, i) => i);
+  const moved = order.filter((q, i) => q !== i).length;
+  const patchCells = (k) => Array.from({ length: ps * ps }, (_, q) => { const r = Math.floor(k / g), c = k % g; const v = img[r * ps + Math.floor(q / ps)][c * ps + (q % ps)]; return <i key={q} style={{ background: `rgb(${255 - v * 28},${255 - v * 28},${255 - v * 28})` }} />; });
+  const Tile = ({ k, pos }) => (
+    <span className="vz-sp-tile" title={`patch ${k + 1}${withPos ? `, position ${pos + 1}` : ''}`}>
+      <span className="vz-px" style={{ gridTemplateColumns: `repeat(${ps}, 1fr)` }}>{patchCells(k)}</span>
+      {withPos ? <b>+p{pos + 1}</b> : null}
+    </span>
+  );
+  const sameBag = true;
+  const seqDiff = moved;
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-row" style={{ marginBottom: 10 }}>
+        <button type="button" className={'wg-chip' + (!shuffled ? ' on' : '')} aria-pressed={!shuffled} onClick={() => setShuffled(false)}>original picture</button>
+        <button type="button" className={'wg-chip' + (shuffled ? ' on' : '')} aria-pressed={shuffled} onClick={() => setShuffled(true)}>patches shuffled</button>
+        <button type="button" className={'wg-chip' + (withPos ? ' on' : '')} aria-pressed={withPos} onClick={() => setWithPos(!withPos)}>add position embeddings</button>
+      </div>
+      <div className="vz-two">
+        <div>
+          <span className="wg-k">The picture the model is given</span>
+          <div className="vz-sp-grid" style={{ gridTemplateColumns: `repeat(${g}, 1fr)` }}>{order.map((k, i) => <Tile key={i} k={k} pos={i} />)}</div>
+        </div>
+        <div>
+          <p className="wg-p" style={{ margin: '0 0 6px' }}><strong>As a set of tokens:</strong> {sameBag ? 'the same patches, just in another order.' : ''} Reading them in the order shown, {shuffled ? `${moved} of ${g * g}` : `0 of ${g * g}`} patches are not where they started.</p>
+          {withPos ? <p className="wg-p" style={{ margin: '0 0 6px' }}><strong>With position embeddings</strong> each token is “patch content + p<sub>position</sub>”. After the shuffle {seqDiff} of the {g * g} tokens are different vectors from the original, so the model can tell the two pictures apart.</p> : <p className="wg-p" style={{ margin: '0 0 6px' }}><strong>Without position embeddings</strong> attention treats the tokens as a bag: it gives the same set of outputs for the original and for the shuffle (just reordered). The model cannot tell where anything was.</p>}
+          <p className="wg-note">Switch “add position embeddings” on and compare the two pictures.</p>
+        </div>
+      </div>
+      <p className="wg-note">{spec.note || ''}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- fusion (how a model can combine modalities)
+function Fusion({ spec, fig }) {
+  const [i, setI] = useState(0);
+  const f = spec.patterns[i];
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-tabs" role="tablist">{spec.patterns.map((p, k) => <button key={k} type="button" role="tab" aria-selected={i === k} className={'wg-tab' + (i === k ? ' on' : '')} onClick={() => setI(k)}>{p.name}</button>)}</div>
+      <div className="vz-fusion" style={{ marginTop: 10 }}>
+        {f.inputs.map((x, k) => <span key={'i' + k} className="vz-fchip in">{x}</span>)}
+        <span className="vz-farrow" aria-hidden="true">→</span>
+        {f.stages.map((x, k) => <React.Fragment key={'s' + k}><span className="vz-fchip st">{x}</span>{k < f.stages.length - 1 ? <span className="vz-farrow" aria-hidden="true">→</span> : null}</React.Fragment>)}
+        <span className="vz-farrow" aria-hidden="true">→</span>
+        <span className="vz-fchip out">{f.output}</span>
+      </div>
+      <p className="wg-p" style={{ margin: '10px 0 4px' }}>{f.how}</p>
+      <p className="wg-p" style={{ margin: '4px 0' }}><strong>Examples:</strong> {f.examples}</p>
+      <p className="wg-p" style={{ margin: '4px 0' }}><strong>Good at:</strong> {f.good} <strong>Watch out:</strong> {f.bad}</p>
+      <p className="wg-note">{spec.note || ''}</p>
+    </div>
+  );
+}
+
+export const VIZ = { clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

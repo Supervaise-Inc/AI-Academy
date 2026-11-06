@@ -561,3 +561,33 @@ export function emergence({ pMin = 0.3, pMax = 0.99, mid = 9.5, width = 0.9 }, l
   const p = pMin + (pMax - pMin) / (1 + Math.exp(-(logN - mid) / width));
   return { p, em: Math.pow(p, L) };
 }
+
+// ---- Week 11: multimodal models, Vision Transformers and contrastive learning
+// A square image of side `img` with `c` channels cut into patch x patch squares: the token counts and sizes of a ViT.
+export function vitTokens({ img = 224, patch = 16, c = 3, d = 768, cls = true }) {
+  const side = Math.floor(img / patch);
+  const patches = side * side;
+  const patchDim = patch * patch * c;
+  const seq = patches + (cls ? 1 : 0);
+  return { side, patches, patchDim, seq, projParams: patchDim * d + d, attn: seq * seq, pixelSeq: img * img, pixelAttn: img * img * img * img, exact: img % patch === 0 };
+}
+// CLIP-style similarity: logits S_ij = scale * cos(image_i, text_j); softmax over texts for each image (rows) and over images for each text (columns);
+// the symmetric contrastive loss is the mean of -ln(diagonal probabilities) over both directions.
+export function clipMatrix(images, texts, scale = 10) {
+  const cos = images.map((a) => texts.map((b) => cosineSim(a, b).cos));
+  const logits = cos.map((r) => r.map((q) => q * scale));
+  const sm = (row) => { const m = Math.max(...row); const e = row.map((q) => Math.exp(q - m)); const s = e.reduce((x, y) => x + y, 0); return e.map((q) => q / s); };
+  const rows = logits.map(sm);
+  const cols = texts.map((_, j) => sm(logits.map((r) => r[j]))); // cols[j][i]
+  const n = Math.min(images.length, texts.length);
+  let li = 0, lt = 0;
+  for (let i = 0; i < n; i++) { li -= Math.log(rows[i][i]); lt -= Math.log(cols[i][i]); }
+  return { cos, logits, rows, cols, lossImage: li / n, lossText: lt / n, loss: (li + lt) / (2 * n) };
+}
+// A fixed pseudo-random permutation of the patches of a g x g grid (Fisher-Yates with mulberry32).
+export function patchPermutation(g, seed = 4) {
+  const r = mulberry32(seed);
+  const p = Array.from({ length: g * g }, (_, i) => i);
+  for (let i = p.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [p[i], p[j]] = [p[j], p[i]]; }
+  return p;
+}

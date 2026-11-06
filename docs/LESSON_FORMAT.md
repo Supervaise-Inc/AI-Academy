@@ -266,6 +266,18 @@ Use it whenever a lesson introduces a formula: every symbol is a `{t, id}` term 
 ### `emergent` (a smooth skill can look like a sudden jump)
 `{ "type": "emergent", "title": "…", "intro": "…", "length": 8, "curve": { "pMin": 0.3, "pMax": 0.99, "mid": 9.5, "width": 0.9 }, "note": "…", "checks": [ { "logN": 9.5, "length": 8, "p": 0.645, "em": 0.03 } ] }`. Per-token accuracy p rises as a logistic in log10(parameters); exact match on an answer of L tokens is p^L. A slider changes L: the longer the answer, the more the exact-match curve looks like a sudden jump while the partial-credit curve stays smooth. Always say in the `note` that the curves are illustrative. `checks` are recomputed.
 
+### `calc` kind `vit_tokens`
+`{ "type": "calc", "kind": "vit_tokens", "title": "…", "d": 768 }`: sliders for the image side and patch size (and a colour/greyscale toggle) show the patch grid, the sequence length with the CLS token, the numbers in one flattened patch, the patch-embedding parameters (`patch·patch·channels·d + d`) and the attention score count against a pixel-per-token alternative. Measured: 224 × 224 colour image, 16 × 16 patches, d = 768 → 14 × 14 = 196 patches, sequence 197, 768 numbers per patch, 590,592 parameters, 38,809 attention scores per head against 2,517,630,976 for 50,176 pixel tokens.
+
+### `clipsim` (a similarity matrix between images and texts; zero-shot and the contrastive loss)
+`{ "type": "clipsim", "title": "…", "intro": "…", "scale": 10, "images": [ { "label": "photo of a cat", "v": [0.9, 0.1, 0.2] }, … ≥2 ], "texts": [ { "label": "a photo of a cat", "v": [1, 0, 0.1] }, … ≥2, same length ], "note": "…", "checks": [ { "scale": 10, "cos": [[0,0,0.98]], "prob": [[0,0,0.99]], "loss": 0.0003 } ] }`. Image i and text i are a true pair. The table shows cosine similarities; selecting an image shows the zero-shot probabilities `softmax(scale · cosine)` over the texts; cards show the image→text, text→image and average contrastive loss (mean −ln of the diagonal probabilities). A slider sets the logit scale (1/temperature). Say in the `note` that the vectors are illustrative. `checks` entries `cos` and `prob` are lists of `[image, text, value]`; `loss` is the symmetric loss (±0.005).
+
+### `patchshuffle` (a bag of patches has no layout: why ViTs need position embeddings)
+`{ "type": "patchshuffle", "title": "…", "intro": "…", "image": [ [0,0,9,…], … square 8×8 or 16×16 integers 0–9 ], "patch": 4, "seed": 4, "note": "…" }`. Chips switch between the original and a fixed shuffle of the patches and toggle position embeddings on or off; the text states that without positions the model sees the same set of tokens (a bag) and with positions the token sequence changes.
+
+### `fusion` (how a model can combine modalities)
+`{ "type": "fusion", "title": "…", "intro": "…", "patterns": [ { "name": "Two encoders, one space (CLIP)", "inputs": ["image","text"], "stages": ["image encoder","text encoder","compare vectors"], "output": "similarity score", "how": "…", "examples": "…", "good": "…", "bad": "…" }, … ≥2 ], "note": "…" }`. Tabs show each pattern as a row of chips (inputs → stages → output) with an explanation, examples, strengths and weaknesses.
+
 ### `calc` kind `split`
 `{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`
