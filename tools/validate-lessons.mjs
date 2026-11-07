@@ -132,7 +132,7 @@ function check(file) {
         if ((s.steps || []).length < 3) at('needs ≥3 steps');
         (s.steps || []).forEach((st, k) => { if (!isStr(st.title) || !isStr(st.body, 30)) at(`step ${k + 1} needs title and body`); (st.active || []).forEach((a) => !ids.includes(a) && at(`step ${k + 1} activates unknown node "${a}"`)); if (!(st.active || []).length) at(`step ${k + 1} needs an active list`); });
       },
-      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens', 'gan_loss', 'ft_memory', 'rag_budget', 'index_size'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost, vit_tokens, gan_loss, ft_memory, rag_budget or index_size'); },
+      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens', 'gan_loss', 'ft_memory', 'rag_budget', 'index_size', 'agent_cost'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost, vit_tokens, gan_loss, ft_memory, rag_budget, index_size or agent_cost'); },
       network: () => {
         const L = s.layers;
         if (!Array.isArray(L) || L.length < 3 || L.some((n) => !(n >= 1 && n <= 5))) return at('layers must be ≥3 numbers, each 1..5');
@@ -374,6 +374,49 @@ function check(file) {
           const U = M.unetShapes({ size, inCh: s.inCh ?? 1, base: c.base ?? s.base ?? 16, levels: c.levels ?? L, timeDim: c.timeDim ?? s.timeDim ?? 32 });
           if (c.total != null && U.total !== c.total) at(`check ${k + 1}: total expected ${c.total}, computed ${U.total}`);
           if (c.layer && c.params != null) { const r = U.rows.find((q) => q.name.startsWith(c.layer)); if (!r) at(`check ${k + 1}: no layer starting "${c.layer}"`); else if (r.params !== c.params) at(`check ${k + 1}: ${c.layer} params expected ${c.params}, computed ${r.params}`); }
+        });
+      },
+      railstack: () => {
+        if (!Array.isArray(s.rails) || s.rails.length < 2 || s.rails.some((r) => !isStr(r.name) || typeof r.catch !== 'number' || r.catch < 0 || r.catch >= 1)) return at('rails needs ≥2 {name, where, catch in [0,1)} entries');
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "pass": 0.045 }] (the share that gets through with the initial catch rates)');
+        (s.checks || []).forEach((c, k) => {
+          const catches = c.catches ?? s.rails.map((r) => r.catch);
+          const p = M.railPassThrough(catches);
+          if (c.pass != null && Math.abs(p - c.pass) > 0.002) at(`check ${k + 1}: pass-through expected ${c.pass}, computed ${p.toFixed(4)}`);
+        });
+      },
+      fgsm: () => {
+        const w = s.w;
+        if (!Array.isArray(w) || w.length < 4 || w.some((r) => !Array.isArray(r) || r.length !== w.length)) return at('w must be a square matrix of weights (4–12 rows)');
+        if (!Array.isArray(s.image) || s.image.length !== w.length || s.image.some((r) => typeof r !== 'string' || r.length !== w.length || /[^0-9]/.test(r))) return at('image must be an array of digit strings (0–9), one per row, same size as w');
+        if (typeof s.b !== 'number') return at('b (the bias) must be a number');
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "eps": 0.2, "score": -1.3, "flipped": true }]');
+        const x = s.image.map((row) => row.split('').map((d) => Number(d) / 9));
+        (s.checks || []).forEach((c, k) => {
+          const R = M.fgsmAttack({ w, b: s.b, x, eps: c.eps });
+          if (c.score != null && Math.abs(R.s1 - c.score) > 0.02) at(`check ${k + 1}: score after expected ${c.score}, computed ${R.s1.toFixed(3)}`);
+          if (c.flipped != null && R.flipped !== c.flipped) at(`check ${k + 1}: flipped expected ${c.flipped}, computed ${R.flipped}`);
+          if (c.before != null && Math.abs(R.s0 - c.before) > 0.02) at(`check ${k + 1}: score before expected ${c.before}, computed ${R.s0.toFixed(3)}`);
+        });
+      },
+      railthreshold: () => {
+        const ok = (d) => d && typeof d.mean === 'number' && d.sd > 0;
+        if (!ok(s.attack) || !ok(s.legit)) return at('attack and legit need {mean, sd > 0, label}');
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "t": 0.5, "tpr": 0.84, "fpr": 0.07 }]');
+        (s.checks || []).forEach((c, k) => {
+          const R = M.thresholdRates({ muA: s.attack.mean, sdA: s.attack.sd, muL: s.legit.mean, sdL: s.legit.sd, t: c.t, prevalence: s.prevalence ?? 0.1 });
+          for (const key of ['tpr', 'fpr', 'precision']) if (c[key] != null && Math.abs(R[key] - c[key]) > 0.005) at(`check ${k + 1}: ${key} expected ${c[key]}, computed ${R[key].toFixed(4)}`);
+        });
+      },
+      agenttrace: () => {
+        if (!isStr(s.goal) || !(s.C0 > 0) || !Array.isArray(s.steps) || s.steps.length < 3) return at('agenttrace needs goal, C0 (tokens) and ≥3 steps');
+        s.steps.forEach((st, i) => { if (typeof st.outTokens !== 'number' || (!st.answer && (!isStr(st.thought) || !isStr(st.action) || !isStr(st.observation)))) at(`step ${i + 1} needs outTokens and (thought, action, observation) or answer`); });
+        if (!s.steps[s.steps.length - 1].answer) at('the last step must have an "answer"');
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "upTo": 2, "context": 1000, "read": 1800 }]');
+        (s.checks || []).forEach((c, k) => {
+          const R = M.traceCost(s.C0, s.steps, c.upTo);
+          if (c.context != null && R.context !== c.context) at(`check ${k + 1}: context expected ${c.context}, computed ${R.context}`);
+          if (c.read != null && R.read !== c.read) at(`check ${k + 1}: read expected ${c.read}, computed ${R.read}`);
         });
       },
       chunker: () => {

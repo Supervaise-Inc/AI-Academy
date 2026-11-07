@@ -822,3 +822,41 @@ export function indexSize({ docs = 1e4, chunksPer = 20, dim = 384, bytes = 4 }) 
   const vectors = docs * chunksPer;
   return { vectors, bytes: vectors * dim * bytes, flops: vectors * dim };
 }
+
+// ---- Week 17: guardrail layers, an adversarial step, a detector threshold, the cost of an agent loop ----
+// Standard normal cumulative distribution (Abramowitz and Stegun 7.1.26, error below 1.5e-7).
+export function normCdf(z) {
+  const x = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * x);
+  const erf = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x);
+  return 0.5 * (1 + Math.sign(z || 1) * erf);
+}
+// Share of attacks that get past every layer if each layer misses independently: the product of (1 − catch rate).
+export function railPassThrough(catches) { return catches.reduce((p, c) => p * (1 - c), 1); }
+// One signed-gradient (FGSM) step against a linear scorer s = w·x + b: move every pixel by eps in the direction that lowers the score (or raises it if the score is negative), then clip to [0, 1].
+export function fgsmAttack({ w, b, x, eps }) {
+  const flat = (m) => m.flat();
+  const W = flat(w), X = flat(x);
+  const s0 = W.reduce((s, wi, i) => s + wi * X[i], b);
+  const dir = s0 >= 0 ? -1 : 1;
+  const Xa = X.map((xi, i) => Math.min(1, Math.max(0, xi + dir * eps * Math.sign(W[i]))));
+  const s1 = W.reduce((s, wi, i) => s + wi * Xa[i], b);
+  return { s0, s1, xAdv: Xa, l1: W.reduce((s, wi) => s + Math.abs(wi), 0), flipped: s0 * s1 < 0 };
+}
+// A detector flags a message when its score is at least t. Attack scores ~ N(muA, sdA), legitimate scores ~ N(muL, sdL).
+export function thresholdRates({ muA, sdA, muL, sdL, t, prevalence = 0.1 }) {
+  const tpr = 1 - normCdf((t - muA) / sdA);
+  const fpr = 1 - normCdf((t - muL) / sdL);
+  const flagged = tpr * prevalence + fpr * (1 - prevalence);
+  return { tpr, fpr, fnr: 1 - tpr, precision: flagged > 0 ? (tpr * prevalence) / flagged : 0 };
+}
+// An agent loop re-reads the whole context at every model call. Before call j (j = 1..n) the context holds C0 + (j − 1)·s tokens, so the total read is n·C0 + s·n(n − 1)/2 and the final context is C0 + n·s.
+export function agentCost({ C0 = 800, s = 200, n = 6 }) {
+  return { final: C0 + n * s, read: n * C0 + (s * n * (n - 1)) / 2 };
+}
+// Step-by-step version for a trace: steps are { outTokens, obsTokens }. Returns the context and the total read after `upTo` model calls (the call that produced step upTo included, its observation appended).
+export function traceCost(C0, steps, upTo) {
+  let ctx = C0, read = 0;
+  for (let i = 0; i < upTo; i++) { read += ctx; ctx += (steps[i].outTokens || 0) + (steps[i].obsTokens || 0); }
+  return { context: ctx, read };
+}

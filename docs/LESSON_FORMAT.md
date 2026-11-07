@@ -324,6 +324,21 @@ Layers may also be `{ "type": "reshape", "shape": [4,4,512] }` (a no-parameter r
 ### `calc` kind `index_size`
 `{ "type": "calc", "kind": "index_size", "title": "…" }`: sliders for documents (thousands) and chunks per document, buttons for 384/768/1536 numbers per vector; shows the number of vectors, the memory of a 32-bit index (vectors × dimension × 4 bytes) and the multiply-adds of one exact search.
 
+### `railstack` (layers of guardrails, each missing some attacks)
+`{ "type": "railstack", "title": "…", "intro": "…", "attacks": 1000, "rails": [ { "name": "Input rail", "where": "before the model", "catch": 0.7 }, { "name": "Dialog rail", "where": "steers the topic", "catch": 0.5 }, { "name": "Output rail", "where": "after the model", "catch": 0.6 } ], "note": "…", "checks": [ { "pass": 0.06 } ] }`. One slider per rail (share of attacks it catches); bars show what is left after each layer and the share that gets through every layer, the product of (1 − catch rate). `checks` (`pass`, optionally `catches`) are recomputed. Catch rates are authored: flag them as illustrative, and keep the independence caveat in `note`.
+
+### `fgsm` (a signed-gradient attack on a linear image classifier)
+`{ "type": "fgsm", "title": "…", "intro": "…", "labels": ["crack", "no crack"], "w": [ [8 numbers] × 8 rows ], "b": 0.2, "image": ["00000000", … 8 digit strings, 0–9 = darkness], "eps": 0.1, "note": "…", "checks": [ { "eps": 0.2, "before": 1.9, "score": -0.6, "flipped": true } ] }`. A made-up linear scorer s = w·x + b on a small square picture (score ≥ 0 is the first label). A slider sets ε; the figure shows the picture, the sign of the weights, the attacked picture x′ = clip(x ∓ ε·sign(w)), the score before and after, and the largest possible change ε·Σ|w|. `checks` (`eps`, with `before`, `score` and/or `flipped`) are recomputed.
+
+### `railthreshold` (a detector's threshold: missed attacks against false alarms)
+`{ "type": "railthreshold", "title": "…", "intro": "…", "attack": { "mean": 0.7, "sd": 0.15, "label": "attacks" }, "legit": { "mean": 0.3, "sd": 0.15, "label": "legitimate" }, "threshold": 0.5, "prevalence": 0.1, "note": "…", "checks": [ { "t": 0.5, "tpr": 0.909, "fpr": 0.091 } ] }`. Two bell curves of risk scores; a slider moves the threshold; the figure shows the share of attacks caught (`tpr`), missed, the share of legitimate messages blocked (`fpr`) and the precision when a share `prevalence` of messages are attacks. `checks` are recomputed (`tpr`, `fpr`, `precision`). Distributions are authored: flag them as illustrative.
+
+### `agenttrace` (the loop of an agent, step by step, with the context growing)
+`{ "type": "agenttrace", "title": "…", "intro": "…", "goal": "…", "tools": ["calculator", "lookup"], "C0": 600, "window": 4096, "steps": [ { "thought": "…", "action": "lookup[late fee]", "observation": "8 pesos", "outTokens": 30, "obsTokens": 6 }, … , { "answer": "…", "outTokens": 20 } ], "note": "…", "checks": [ { "upTo": 2, "context": 700, "read": 1250 } ] }`. Buttons step through the loop; the figure shows the thought, action and observation of each loop and the context the next call reads (C0 plus every earlier step) and the total tokens read (the sum of the context at each call). The last step must be the `answer`. `checks` (`upTo` model calls, with `context` and/or `read`) are recomputed.
+
+### `calc` kind `agent_cost`
+`{ "type": "calc", "kind": "agent_cost", "title": "…", "window": 8192 }`: sliders for the starting prompt, the number of loops and the tokens added per loop; shows the final context C0 + n·s, the total tokens read n·C0 + s·n(n − 1)/2, the ratio to a single call and whether it fits in `window`.
+
 ### `calc` kind `split`
 `{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`

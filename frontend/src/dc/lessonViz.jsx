@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT, schedule, diffSample1d, unetShapes, prefProb, prefLoss, klObjective, klOptimum, softmaxArr, svdSmall, lowRankApprox, ftMemory, chunkWords, nChunks, spanIntact, rankMetrics, ragBudget, indexSize } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT, schedule, diffSample1d, unetShapes, prefProb, prefLoss, klObjective, klOptimum, softmaxArr, svdSmall, lowRankApprox, ftMemory, chunkWords, nChunks, spanIntact, rankMetrics, ragBudget, indexSize, normCdf, railPassThrough, fgsmAttack, thresholdRates, agentCost, traceCost } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -85,9 +85,9 @@ function Slider({ label, min, max, step, value, onChange, show }) {
 }
 
 function Calc({ spec, fig }) {
-  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : spec.kind === 'gan_loss' ? -3 : spec.kind === 'ft_memory' ? 7 : spec.kind === 'rag_budget' ? 8192 : spec.kind === 'index_size' ? 10 : 24);
-  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : spec.kind === 'gan_loss' ? 3 : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 4 : spec.kind === 'index_size' ? 20 : 0);
-  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 300 : spec.kind === 'index_size' ? 384 : 15);
+  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : spec.kind === 'gan_loss' ? -3 : spec.kind === 'ft_memory' ? 7 : spec.kind === 'rag_budget' ? 8192 : spec.kind === 'index_size' ? 10 : spec.kind === 'agent_cost' ? 800 : 24);
+  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : spec.kind === 'gan_loss' ? 3 : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 4 : spec.kind === 'index_size' ? 20 : spec.kind === 'agent_cost' ? 6 : 0);
+  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 300 : spec.kind === 'index_size' ? 384 : spec.kind === 'agent_cost' ? 200 : 15);
   let body = null;
   if (spec.kind === 'fc_vs_conv') {
     const cin = spec.channels || 1;
@@ -195,6 +195,25 @@ function Calc({ spec, fig }) {
           <div><span className="wg-k">One exact search</span><span className="vz-big">{human(R.flops)}</span><span className="wg-note">multiply-adds: vectors × {c3}</span></div>
         </div>
         <p className="wg-note">Exact (brute-force) search compares the question with every vector. Large systems use approximate nearest-neighbour indexes to avoid that, and sometimes store 16-bit or 8-bit numbers. Typical embedding sizes: 384 (small models) to 1,536 (large ones).</p>
+      </>
+    );
+  } else if (spec.kind === 'agent_cost') {
+    const W = spec.window ?? 8192;
+    const R = agentCost({ C0: a, s: c3, n: b });
+    const single = a;
+    const fits = R.final <= W;
+    body = (
+      <>
+        <Slider label="Starting prompt: instructions, tool list, goal (tokens)" min={100} max={4000} step={100} value={a} onChange={setA} show={(q) => q.toLocaleString('en-US')} />
+        <Slider label="Loops of the agent (model calls)" min={1} max={30} step={1} value={b} onChange={setB} />
+        <Slider label="Tokens added per loop (thought + action + observation)" min={50} max={1000} step={50} value={c3} onChange={setC3} />
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Final context</span><span className="vz-big">{R.final.toLocaleString('en-US')}</span><span className="wg-note">{a} + {b} × {c3} tokens</span></div>
+          <div className="out"><span className="wg-k">Tokens read in total</span><span className="vz-big">{R.read.toLocaleString('en-US')}</span><span className="wg-note">{b}·{a} + {c3}·{b}({b} − 1)/2</span></div>
+          <div><span className="wg-k">Compared with one call</span><span className="vz-big">{f2(R.read / single, 1)}×</span><span className="wg-note">of the {single.toLocaleString('en-US')}-token prompt alone</span></div>
+          <div><span className="wg-k">Fits in {W.toLocaleString('en-US')} tokens?</span><span className="vz-big">{fits ? 'Yes' : 'No'}</span><span className="wg-note">{fits ? `${(W - R.final).toLocaleString('en-US')} tokens to spare` : 'the oldest steps would be cut or the run fails'}</span></div>
+        </div>
+        <p className="wg-note">Every loop sends the whole history to the model again, so the work grows with the square of the number of loops while the context grows in a straight line. The window size is {W.toLocaleString('en-US')} tokens (an assumption for the demonstration).</p>
       </>
     );
   } else if (spec.kind === 'gan_loss') {
@@ -2506,6 +2525,164 @@ function RankMetrics({ spec, fig }) {
   );
 }
 
+// ---------------------------------------------------------------- railstack (layers of guardrails, each missing some attacks)
+function RailStack({ spec, fig }) {
+  const [c, setC] = useState(spec.rails.map((r) => r.catch));
+  const pass = railPassThrough(c);
+  let rem = 1;
+  const stages = [{ name: 'Attack arrives', share: 1, where: '' }, ...spec.rails.map((r, i) => { rem *= 1 - c[i]; return { name: r.name, share: rem, where: r.where }; })];
+  const pct = (x) => (x * 100).toFixed(x < 0.1 ? 2 : 1) + ' %';
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      {spec.rails.map((r, i) => (
+        <Slider key={i} label={`${r.name}${r.where ? ' (' + r.where + ')' : ''}: share of attacks it catches`} min={0} max={0.99} step={0.01} value={c[i]} onChange={(q) => setC((x) => x.map((v, k) => (k === i ? q : v)))} show={(q) => `${Math.round(q * 100)} %`} />
+      ))}
+      <div className="vz-scroll">
+        {stages.map((st, i) => (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '170px 1fr 70px', gap: 8, alignItems: 'center', margin: '6px 0' }}>
+            <span className="wg-note" style={{ margin: 0 }}>{i === 0 ? st.name : `After ${st.name}`}</span>
+            <div className="wg-bar-track" style={{ height: 14 }}><span className="wg-bar-fill" style={{ width: `${Math.max(1, st.share * 100)}%`, background: i === 0 ? 'var(--amber)' : undefined }} /></div>
+            <strong style={{ textAlign: 'right' }}>{pct(st.share)}</strong>
+          </div>
+        ))}
+      </div>
+      <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(2,minmax(0,1fr))' }}>
+        <div className="out"><span className="wg-k">Attacks that get through every layer</span><span className="vz-big">{pct(pass)}</span><span className="wg-note">{c.map((q) => `(1 − ${f2(q, 2)})`).join(' × ')}</span></div>
+        <div><span className="wg-k">Attacks stopped</span><span className="vz-big">{pct(1 - pass)}</span><span className="wg-note">of {spec.attacks ?? 1000} attacks, about {Math.round((1 - pass) * (spec.attacks ?? 1000))} stopped</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'The product assumes the layers miss independently of each other. Real layers often miss the same cleverly worded attacks, so the true number is higher; the catch rates here are made up for the demonstration.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- fgsm (a tiny signed-gradient attack on a linear image classifier)
+function Fgsm({ spec, fig }) {
+  const [eps, setEps] = useState(spec.eps ?? 0.1);
+  const n = spec.w.length;
+  const x = spec.image.map((row) => row.split('').map((d) => Number(d) / 9));
+  const R = useMemo(() => fgsmAttack({ w: spec.w, b: spec.b, x, eps }), [spec, eps]);
+  const cell = 20;
+  const Grid = ({ vals, title, mode }) => (
+    <div>
+      <p className="wg-k" style={{ textTransform: 'none', margin: '0 0 4px' }}>{title}</p>
+      <svg viewBox={`0 0 ${n * cell} ${n * cell}`} width={n * cell} height={n * cell} role="img" aria-label={title}>
+        {vals.map((v, i) => {
+          const r = Math.floor(i / n), q = i % n;
+          const fill = mode === 'sign' ? (v > 0 ? 'var(--accent)' : v < 0 ? 'var(--amber)' : 'var(--surface2)') : `rgb(${Math.round(255 * (1 - v))},${Math.round(255 * (1 - v))},${Math.round(255 * (1 - v))})`;
+          return <rect key={i} x={q * cell} y={r * cell} width={cell - 1} height={cell - 1} fill={fill} fillOpacity={mode === 'sign' ? 0.75 : 1} stroke="var(--divider)" strokeWidth="0.5" />;
+        })}
+      </svg>
+    </div>
+  );
+  const sgn = spec.w.flat().map((v) => Math.sign(v));
+  const p0 = sigmoid(R.s0), p1 = sigmoid(R.s1);
+  const names = spec.labels || ['class A', 'class B'];
+  const cls = (sc) => (sc >= 0 ? names[0] : names[1]);
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Attack strength ε (how far each pixel may move, 0 to 1)" min={0} max={0.6} step={0.01} value={eps} onChange={setEps} show={(q) => q.toFixed(2)} />
+      <div className="wg-row" style={{ gap: 18, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <Grid vals={x.flat()} title="Original picture x" mode="img" />
+        <Grid vals={sgn} title="sign of the weights (the direction that matters)" mode="sign" />
+        <Grid vals={R.xAdv} title="Attacked picture x′" mode="img" />
+      </div>
+      <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Score before: s = w·x + b</span><span className="vz-big">{f2(R.s0, 2)}</span><span className="wg-note">{cls(R.s0)}, probability {f2(Math.max(p0, 1 - p0), 2)}</span></div>
+        <div className={R.flipped ? 'out' : ''}><span className="wg-k">Score after the attack</span><span className="vz-big">{f2(R.s1, 2)}</span><span className="wg-note">{cls(R.s1)}, probability {f2(Math.max(p1, 1 - p1), 2)}{R.flipped ? ' → the label flipped' : ''}</span></div>
+        <div><span className="wg-k">Largest possible change</span><span className="vz-big">{f2(eps * R.l1, 2)}</span><span className="wg-note">ε × Σ|w| = {f2(eps, 2)} × {f2(R.l1, 2)}</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'A made-up linear classifier on an 8 × 8 picture. Moving every pixel by ε in the direction of sign(w) changes the score by up to ε × Σ|w|; many tiny changes add up. The weights and the picture are illustrative.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- railthreshold (a detector's threshold trades missed attacks against false alarms)
+function RailThreshold({ spec, fig }) {
+  const [t, setT] = useState(spec.threshold ?? 0.5);
+  const A = spec.attack, L = spec.legit;
+  const R = thresholdRates({ muA: A.mean, sdA: A.sd, muL: L.mean, sdL: L.sd, t, prevalence: spec.prevalence ?? 0.1 });
+  const W = 560, H = 170, x0 = 20, x1 = W - 20;
+  const lo = Math.min(A.mean - 3.5 * A.sd, L.mean - 3.5 * L.sd), hi = Math.max(A.mean + 3.5 * A.sd, L.mean + 3.5 * L.sd);
+  const X = (v) => x0 + ((v - lo) / (hi - lo)) * (x1 - x0);
+  const dens = (v, m, sd) => Math.exp(-0.5 * ((v - m) / sd) ** 2) / (sd * Math.sqrt(2 * Math.PI));
+  const ymax = Math.max(dens(A.mean, A.mean, A.sd), dens(L.mean, L.mean, L.sd));
+  const Y = (d) => H - 24 - (d / ymax) * (H - 44);
+  const pts = (m, sd) => Array.from({ length: 121 }, (_, i) => { const v = lo + ((hi - lo) * i) / 120; return [X(v), Y(dens(v, m, sd))]; });
+  const line = (m, sd) => pts(m, sd).map(([a, b], i) => `${i ? 'L' : 'M'}${a.toFixed(1)} ${b.toFixed(1)}`).join(' ');
+  const tail = (m, sd) => { const p = pts(m, sd).filter(([a]) => a >= X(t)); return p.length ? `M${X(t)} ${H - 24} ` + p.map(([a, b]) => `L${a.toFixed(1)} ${b.toFixed(1)}`).join(' ') + ` L${p[p.length - 1][0]} ${H - 24} Z` : ''; };
+  const pc = (x) => (x * 100).toFixed(1) + ' %';
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Threshold: block a message when its risk score is at least" min={lo} max={hi} step={(hi - lo) / 100} value={t} onChange={setT} show={(q) => q.toFixed(2)} />
+      <div className="vz-hm-wrap">
+        <svg viewBox={`0 0 ${W} ${H}`} className="vz-att" role="img" aria-label="Two bell curves of risk scores, legitimate messages and attacks, with a threshold line">
+          <path d={tail(L.mean, L.sd)} fill="var(--amber)" fillOpacity="0.35" />
+          <path d={tail(A.mean, A.sd)} fill="var(--accent)" fillOpacity="0.30" />
+          <path d={line(L.mean, L.sd)} fill="none" stroke="var(--amber)" strokeWidth="2" />
+          <path d={line(A.mean, A.sd)} fill="none" stroke="var(--accent)" strokeWidth="2" />
+          <line x1={X(t)} x2={X(t)} y1="8" y2={H - 24} stroke="var(--text)" strokeWidth="1.5" strokeDasharray="5 4" />
+          <text x={x0} y={H - 6} className="vz-rl">{L.label || 'legitimate'} (amber)</text>
+          <text x={x1} y={H - 6} textAnchor="end" className="vz-rl">{A.label || 'attacks'} (green)</text>
+        </svg>
+      </div>
+      <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
+        <div className="out"><span className="wg-k">Attacks caught (recall)</span><span className="vz-big">{pc(R.tpr)}</span><span className="wg-note">green area right of the line</span></div>
+        <div><span className="wg-k">Attacks missed</span><span className="vz-big">{pc(R.fnr)}</span><span className="wg-note">1 − recall</span></div>
+        <div><span className="wg-k">Legitimate blocked (false alarms)</span><span className="vz-big">{pc(R.fpr)}</span><span className="wg-note">amber area right of the line</span></div>
+        <div><span className="wg-k">Blocked messages that were attacks</span><span className="vz-big">{pc(R.precision)}</span><span className="wg-note">when {Math.round((spec.prevalence ?? 0.1) * 100)} % of messages are attacks</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'The two bell curves are made up. Moving the threshold right lets fewer legitimate messages through the filter wrongly but misses more attacks; no setting removes both errors when the curves overlap.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- agenttrace (the loop of an agent, step by step, with the context growing)
+function AgentTrace({ spec, fig }) {
+  const [i, setI] = useState(0);
+  const steps = spec.steps;
+  const W = spec.window ?? 4096;
+  const C = traceCost(spec.C0, steps, i);
+  const shown = steps.slice(0, i);
+  const done = i >= steps.length;
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <p className="wg-p"><strong>Goal:</strong> {spec.goal}</p>
+      {spec.tools ? <p className="wg-note" style={{ margin: '0 0 8px' }}><strong>Tools:</strong> {spec.tools.join(' · ')}</p> : null}
+      <div className="wg-row" style={{ gap: 8, marginBottom: 8 }}>
+        <button type="button" className="wg-chip" disabled={i === 0} onClick={() => setI(i - 1)}>← Back</button>
+        <button type="button" className="wg-chip on" disabled={done} onClick={() => setI(i + 1)}>{done ? 'Finished' : i === 0 ? 'Start the loop' : 'Next loop →'}</button>
+        <button type="button" className="wg-chip" onClick={() => setI(0)}>Reset</button>
+        <span className="wg-note" style={{ margin: 0 }}>model call {Math.min(i, steps.length)} of {steps.length}</span>
+      </div>
+      <ol className="vz-rank">
+        {shown.map((st, k) => (
+          <li key={k} className={k === shown.length - 1 ? 'top' : ''}>
+            <div className="vz-rank-h"><strong>{st.answer ? 'Final answer' : `Loop ${k + 1}`}</strong><span>{(st.outTokens || 0) + (st.obsTokens || 0)} tokens added</span></div>
+            {st.thought ? <p className="wg-note" style={{ margin: '4px 0 0' }}><strong>Thought:</strong> {st.thought}</p> : null}
+            {st.action ? <p className="wg-note" style={{ margin: '2px 0 0' }}><strong>Action:</strong> <code>{st.action}</code></p> : null}
+            {st.observation ? <p className="wg-note" style={{ margin: '2px 0 0' }}><strong>Observation:</strong> {st.observation}</p> : null}
+            {st.answer ? <p className="wg-note" style={{ margin: '4px 0 0' }}>{st.answer}</p> : null}
+          </li>
+        ))}
+      </ol>
+      <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Context the next call reads</span><span className="vz-big">{C.context.toLocaleString('en-US')}</span><span className="wg-note">{spec.C0} (prompt) + the loops so far</span></div>
+        <div className="out"><span className="wg-k">Tokens read in total</span><span className="vz-big">{C.read.toLocaleString('en-US')}</span><span className="wg-note">the sum of the context at every call</span></div>
+        <div><span className="wg-k">Share of the window used</span><span className="vz-big">{Math.round((C.context / W) * 100)} %</span><span className="wg-note">window {W.toLocaleString('en-US')} tokens</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'A scripted example; the token counts are made up but add up exactly as shown. Each model call re-reads everything written so far.'}</p>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- klreward (reward versus staying close to the original model)
 function KlReward({ spec, fig }) {
   const ref = spec.answers.map((a) => a.ref);
@@ -2587,4 +2764,4 @@ function LowRank({ spec, fig }) {
   );
 }
 
-export const VIZ = { chunker: Chunker, rankmetrics: RankMetrics, prefpair: PrefPair, klreward: KlReward, lowrank: LowRank, schedule: Schedule, sampler1d: Sampler1d, unet: Unet, ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+export const VIZ = { railstack: RailStack, fgsm: Fgsm, railthreshold: RailThreshold, agenttrace: AgentTrace, chunker: Chunker, rankmetrics: RankMetrics, prefpair: PrefPair, klreward: KlReward, lowrank: LowRank, schedule: Schedule, sampler1d: Sampler1d, unet: Unet, ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
