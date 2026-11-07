@@ -45,7 +45,7 @@ function check(file) {
   if (!/^\{lede\} /m.test(src)) err('use {lede} at the start of the main-idea paragraph of the first concept section');
   if ((src.match(/\{lede\}/g) || []).length < 2) warn('use {lede} in more than one section');
   // prose only: fenced blocks (JSON figures, code) may legitimately contain [[ or ==
-  const prose = src.replace(/^```[\s\S]*?^```/gm, '');
+  const prose = src.replace(/^[ \t]*```[\s\S]*?^[ \t]*```/gm, '');
   const marks = (prose.match(/==[^=\n]+==/g) || []).length;
   if (marks < 8) err(`only ${marks} ==highlights==; use at least 8 on key ideas`);
   if ((prose.match(/==/g) || []).length % 2) err('unbalanced == highlight markers');
@@ -132,7 +132,7 @@ function check(file) {
         if ((s.steps || []).length < 3) at('needs ≥3 steps');
         (s.steps || []).forEach((st, k) => { if (!isStr(st.title) || !isStr(st.body, 30)) at(`step ${k + 1} needs title and body`); (st.active || []).forEach((a) => !ids.includes(a) && at(`step ${k + 1} activates unknown node "${a}"`)); if (!(st.active || []).length) at(`step ${k + 1} needs an active list`); });
       },
-      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens', 'gan_loss', 'ft_memory', 'rag_budget', 'index_size', 'agent_cost', 'dp_scaling', 'decode_speed', 'kv_cache'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost, vit_tokens, gan_loss, ft_memory, rag_budget, index_size, agent_cost, dp_scaling, decode_speed or kv_cache'); },
+      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens', 'gan_loss', 'ft_memory', 'rag_budget', 'index_size', 'agent_cost', 'dp_scaling', 'decode_speed', 'kv_cache', 'exam_plan'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost, vit_tokens, gan_loss, ft_memory, rag_budget, index_size, agent_cost, dp_scaling, decode_speed, kv_cache or exam_plan'); },
       network: () => {
         const L = s.layers;
         if (!Array.isArray(L) || L.length < 3 || L.some((n) => !(n >= 1 && n <= 5))) return at('layers must be ≥3 numbers, each 1..5');
@@ -374,6 +374,28 @@ function check(file) {
           const U = M.unetShapes({ size, inCh: s.inCh ?? 1, base: c.base ?? s.base ?? 16, levels: c.levels ?? L, timeDim: c.timeDim ?? s.timeDim ?? 32 });
           if (c.total != null && U.total !== c.total) at(`check ${k + 1}: total expected ${c.total}, computed ${U.total}`);
           if (c.layer && c.params != null) { const r = U.rows.find((q) => q.name.startsWith(c.layer)); if (!r) at(`check ${k + 1}: no layer starting "${c.layer}"`); else if (r.params !== c.params) at(`check ${k + 1}: ${c.layer} params expected ${c.params}, computed ${r.params}`); }
+        });
+      },
+      confmatrix: () => {
+        const M0 = s.matrix;
+        if (!Array.isArray(s.classes) || s.classes.length < 2 || !Array.isArray(M0) || M0.length !== s.classes.length || M0.some((r) => !Array.isArray(r) || r.length !== s.classes.length || r.some((v) => !Number.isInteger(v) || v < 0))) return at('classes (≥2 names) and a square matrix of non-negative integers of the same size are required');
+        if (s.costs && (s.costs.length !== M0.length || s.costs.some((r) => r.length !== M0.length))) at('costs must have the same shape as matrix');
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "accuracy": 0.9, "macroF1": 0.89, "recall": [0.9, …], "precision": [0.9, …] }]');
+        (s.checks || []).forEach((c, k) => {
+          const R = M.confStats(M0);
+          if (c.accuracy != null && Math.abs(R.accuracy - c.accuracy) > 0.002) at(`check ${k + 1}: accuracy expected ${c.accuracy}, computed ${R.accuracy.toFixed(4)}`);
+          if (c.macroF1 != null && Math.abs(R.macroF1 - c.macroF1) > 0.002) at(`check ${k + 1}: macroF1 expected ${c.macroF1}, computed ${R.macroF1.toFixed(4)}`);
+          (c.recall || []).forEach((q, i) => { if (Math.abs(R.classes[i].recall - q) > 0.002) at(`check ${k + 1}: recall ${i + 1} expected ${q}, computed ${R.classes[i].recall.toFixed(4)}`); });
+          (c.precision || []).forEach((q, i) => { if (Math.abs(R.classes[i].precision - q) > 0.002) at(`check ${k + 1}: precision ${i + 1} expected ${q}, computed ${R.classes[i].precision.toFixed(4)}`); });
+          if (c.cost != null && s.costs && Math.abs(M.confCost(M0, s.costs) - c.cost) > 0.005) at(`check ${k + 1}: cost expected ${c.cost}, computed ${M.confCost(M0, s.costs).toFixed(4)}`);
+        });
+      },
+      triage: () => {
+        if (!Array.isArray(s.items) || s.items.length < 30 || s.items.some((x) => !Array.isArray(x) || !(x[0] >= 0 && x[0] <= 1) || (x[1] !== 0 && x[1] !== 1))) return at('items needs ≥30 pairs [confidence 0–1, correct 0 or 1]');
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "t": 0.8, "coverage": 0.7, "accuracy": 0.95, "cost": 1.4 }]');
+        (s.checks || []).forEach((c, k) => {
+          const R = M.triageStats(s.items, c.t, { costWrong: c.costWrong ?? s.costWrong ?? 20, costDefer: s.costDefer ?? 1 });
+          for (const key of ['coverage', 'accuracy', 'cost']) if (c[key] != null && Math.abs(R[key] - c[key]) > 0.005) at(`check ${k + 1}: ${key} expected ${c[key]}, computed ${R[key].toFixed(4)}`);
         });
       },
       pipesched: () => {

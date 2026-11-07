@@ -944,3 +944,33 @@ export function decodeSpeed({ paramsB, bits, bwGBs }) {
 }
 // Key-value cache: 2 (keys and values) × layers × tokens × d_model × bytes × batch.
 export function kvCache({ layers, d, n, batch, bytes }) { return 2 * layers * n * d * bytes * batch; }
+
+// ---- Week 19: confusion matrices, triage by confidence, exam planning ----
+// Rows are the true class, columns the predicted class. Returns per-class precision, recall and F1, the accuracy and the macro-averaged F1.
+export function confStats(M) {
+  const n = M.length;
+  const total = M.flat().reduce((a, b) => a + b, 0);
+  const classes = M.map((row, i) => {
+    const tp = row[i];
+    const rowSum = row.reduce((a, b) => a + b, 0);
+    const colSum = M.reduce((a, r) => a + r[i], 0);
+    const precision = colSum ? tp / colSum : 0, recall = rowSum ? tp / rowSum : 0;
+    return { tp, support: rowSum, precision, recall, f1: precision + recall ? (2 * precision * recall) / (precision + recall) : 0 };
+  });
+  const correct = M.reduce((a, r, i) => a + r[i], 0);
+  return { classes, accuracy: total ? correct / total : 0, macroF1: classes.reduce((a, c) => a + c.f1, 0) / n, total };
+}
+// Expected cost per photo of a cost matrix C (same shape as M): sum of M[i][j]·C[i][j] divided by the total.
+export function confCost(M, C) { const t = M.flat().reduce((a, b) => a + b, 0); return M.reduce((a, r, i) => a + r.reduce((s, v, j) => s + v * C[i][j], 0), 0) / (t || 1); }
+// Selective prediction: the model answers only when its confidence is at least t; the rest go to the engineer. items = [[confidence, correct (1 or 0)], …].
+export function triageStats(items, t, { costWrong = 20, costDefer = 1 } = {}) {
+  const acc = items.filter((x) => x[0] >= t);
+  const wrong = acc.filter((x) => !x[1]).length;
+  const n = items.length;
+  return { accepted: acc.length, deferred: n - acc.length, wrong, coverage: acc.length / n, accuracy: acc.length ? (acc.length - wrong) / acc.length : 1, cost: (wrong * costWrong + (n - acc.length) * costDefer) / n };
+}
+// Exam planning: seconds per question, the number of correct answers needed to reach passPct percent, and the number of mistakes you can afford.
+export function examPlan({ questions, minutes, passPct }) {
+  const need = Math.ceil((passPct / 100) * questions - 1e-9);
+  return { secPerQ: (minutes * 60) / questions, need, maxWrong: questions - need };
+}

@@ -357,6 +357,15 @@ Layers may also be `{ "type": "reshape", "shape": [4,4,512] }` (a no-parameter r
 ### `calc` kinds `dp_scaling`, `decode_speed`, `kv_cache`
 `{ "type": "calc", "kind": "dp_scaling", "title": "…", "computeMs": 400, "bytesPerGrad": 2 }`: sliders for the model size, the number of GPUs and the link speed; shows the gradient bytes, the all-reduce traffic per GPU 2(N − 1)/N × gradients, the communication time and the efficiency compute ÷ (compute + communication). `{ "kind": "decode_speed" }`: model size, 16/8/4-bit buttons and memory bandwidth; shows the weight bytes and the upper bound tokens per second = bandwidth ÷ model bytes. `{ "kind": "kv_cache", "layers": 32, "d": 4096, "paramsB": 7 }`: tokens per sequence, batch size and 16/8-bit cache; shows the cache per token 2 × layers × d × bytes, for the batch, and as a multiple of the 16-bit weights.
 
+### `confmatrix` (a confusion matrix and everything computed from it)
+`{ "type": "confmatrix", "title": "…", "intro": "…", "classes": ["crack", "spalling", "corrosion", "none"], "matrix": [[…4 integers] × 4 rows, rows = true class, columns = predicted], "costs": [[0,1,1,5], …], "note": "…", "checks": [ { "accuracy": 0.85, "macroF1": 0.84, "recall": [0.9, …], "precision": [0.88, …], "cost": 0.4 } ] }`. A coloured table with − and + buttons on every count; shows per-class recall (row), precision (column) and F1, the accuracy, the macro F1, the worst recall and, when `costs` (same shape, cost of predicting column j when the truth is row i) is given, the expected cost per photo. `checks` (with `accuracy`, `macroF1`, `recall`, `precision`, `cost`) are recomputed from the initial matrix. Counts are authored: flag them as made up.
+
+### `triage` (answer only when confident; send the rest for review)
+`{ "type": "triage", "title": "…", "intro": "…", "items": [[0.98,1],[0.55,0], … ≥30 pairs of [confidence, correct 1 or 0]], "threshold": 0.7, "costWrong": 20, "costDefer": 1, "note": "…", "checks": [ { "t": 0.8, "coverage": 0.7, "accuracy": 0.95, "cost": 1.4 } ] }`. Two sliders (confidence threshold, cost of an unflagged wrong answer); shows the share answered (coverage), the accuracy of those answers, the number deferred, the expected cost per photo `(wrong × costWrong + deferred × costDefer) ÷ n` and a curve of the cost against the threshold (cheapest marked). `checks` (`t`, optionally `costWrong`, with `coverage`, `accuracy`, `cost`) are recomputed. Confidences and outcomes are authored: flag them as made up.
+
+### `calc` kind `exam_plan`
+`{ "type": "calc", "kind": "exam_plan", "title": "…" }`: sliders for the number of questions, the minutes and the pass mark; shows the seconds per question, the correct answers needed (rounded up), the mistakes you can afford and a first-pass pace (75 % of the time per question).
+
 ### `calc` kind `split`
 `{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`

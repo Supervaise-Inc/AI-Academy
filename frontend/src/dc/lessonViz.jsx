@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT, schedule, diffSample1d, unetShapes, prefProb, prefLoss, klObjective, klOptimum, softmaxArr, svdSmall, lowRankApprox, ftMemory, chunkWords, nChunks, spanIntact, rankMetrics, ragBudget, indexSize, normCdf, railPassThrough, fgsmAttack, thresholdRates, agentCost, traceCost, pipeSchedule, bubbleFraction, tensorSplit, fmtInfo, roundToFormat, quantizeSym, batchStats, dpScaling, decodeSpeed, kvCache } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT, schedule, diffSample1d, unetShapes, prefProb, prefLoss, klObjective, klOptimum, softmaxArr, svdSmall, lowRankApprox, ftMemory, chunkWords, nChunks, spanIntact, rankMetrics, ragBudget, indexSize, normCdf, railPassThrough, fgsmAttack, thresholdRates, agentCost, traceCost, pipeSchedule, bubbleFraction, tensorSplit, fmtInfo, roundToFormat, quantizeSym, batchStats, dpScaling, decodeSpeed, kvCache, confStats, confCost, triageStats, examPlan } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -85,9 +85,9 @@ function Slider({ label, min, max, step, value, onChange, show }) {
 }
 
 function Calc({ spec, fig }) {
-  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : spec.kind === 'gan_loss' ? -3 : spec.kind === 'ft_memory' ? 7 : spec.kind === 'rag_budget' ? 8192 : spec.kind === 'index_size' ? 10 : spec.kind === 'agent_cost' ? 800 : spec.kind === 'dp_scaling' ? 7 : spec.kind === 'decode_speed' ? 7 : spec.kind === 'kv_cache' ? 4096 : 24);
-  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : spec.kind === 'gan_loss' ? 3 : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 4 : spec.kind === 'index_size' ? 20 : spec.kind === 'agent_cost' ? 6 : spec.kind === 'dp_scaling' ? 8 : spec.kind === 'decode_speed' ? 16 : spec.kind === 'kv_cache' ? 8 : 0);
-  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 300 : spec.kind === 'index_size' ? 384 : spec.kind === 'agent_cost' ? 200 : spec.kind === 'dp_scaling' ? 100 : spec.kind === 'decode_speed' ? 200 : spec.kind === 'kv_cache' ? 2 : 15);
+  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : spec.kind === 'gan_loss' ? -3 : spec.kind === 'ft_memory' ? 7 : spec.kind === 'rag_budget' ? 8192 : spec.kind === 'index_size' ? 10 : spec.kind === 'agent_cost' ? 800 : spec.kind === 'dp_scaling' ? 7 : spec.kind === 'decode_speed' ? 7 : spec.kind === 'kv_cache' ? 4096 : spec.kind === 'exam_plan' ? 50 : 24);
+  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : spec.kind === 'gan_loss' ? 3 : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 4 : spec.kind === 'index_size' ? 20 : spec.kind === 'agent_cost' ? 6 : spec.kind === 'dp_scaling' ? 8 : spec.kind === 'decode_speed' ? 16 : spec.kind === 'kv_cache' ? 8 : spec.kind === 'exam_plan' ? 60 : 0);
+  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 300 : spec.kind === 'index_size' ? 384 : spec.kind === 'agent_cost' ? 200 : spec.kind === 'dp_scaling' ? 100 : spec.kind === 'decode_speed' ? 200 : spec.kind === 'kv_cache' ? 2 : spec.kind === 'exam_plan' ? 70 : 15);
   let body = null;
   if (spec.kind === 'fc_vs_conv') {
     const cin = spec.channels || 1;
@@ -263,6 +263,23 @@ function Calc({ spec, fig }) {
           <div><span className="wg-k">Compared with the 16-bit weights</span><span className="vz-big">{f2(kv / weights, 2)}×</span><span className="wg-note">weights {f2(weights / 1e9, 0)} GB ({wB} B parameters)</span></div>
         </div>
         <p className="wg-note">A model with {L} layers and a width of {d} (about the size of a 7-billion-parameter model; assumed for the demonstration, and models that share keys and values between heads need less). Long prompts and large batches can use more memory for the cache than for the weights.</p>
+      </>
+    );
+  } else if (spec.kind === 'exam_plan') {
+    const R = examPlan({ questions: a, minutes: b, passPct: c3 });
+    const first = Math.round(R.secPerQ * 0.75);
+    body = (
+      <>
+        <Slider label="Number of questions" min={10} max={100} step={5} value={a} onChange={setA} />
+        <Slider label="Time allowed (minutes)" min={15} max={180} step={5} value={b} onChange={setB} show={(q) => `${q} min`} />
+        <Slider label="Pass mark (% of the questions)" min={50} max={90} step={5} value={c3} onChange={setC3} show={(q) => `${q} %`} />
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
+          <div className="out"><span className="wg-k">Time per question</span><span className="vz-big">{f2(R.secPerQ, 0)} s</span><span className="wg-note">{b} × 60 ÷ {a}</span></div>
+          <div><span className="wg-k">Correct answers needed</span><span className="vz-big">{R.need}</span><span className="wg-note">{c3} % of {a}, rounded up</span></div>
+          <div><span className="wg-k">Mistakes you can afford</span><span className="vz-big">{R.maxWrong}</span><span className="wg-note">{a} − {R.need}</span></div>
+          <div><span className="wg-k">A first-pass pace</span><span className="vz-big">{first} s</span><span className="wg-note">about 75 % of the time per question, leaving a quarter of the time to return to flagged questions</span></div>
+        </div>
+        <p className="wg-note">An unanswered question counts as wrong, so guess when you must. The first-pass pace is a suggestion for the demonstration, not a rule of any exam.</p>
       </>
     );
   } else if (spec.kind === 'gan_loss') {
@@ -2926,6 +2943,90 @@ function Batching({ spec, fig }) {
   );
 }
 
+// ---------------------------------------------------------------- confmatrix (a confusion matrix and everything computed from it)
+function ConfMatrix({ spec, fig }) {
+  const [M, setM] = useState(spec.matrix.map((r) => [...r]));
+  const names = spec.classes;
+  const S = confStats(M);
+  const f = (x) => Number(x.toFixed(3)).toString();
+  const cost = spec.costs ? confCost(M, spec.costs) : null;
+  const bump = (i, j, d) => setM((m) => m.map((r, a) => r.map((v, b) => (a === i && b === j ? Math.max(0, v + d) : v))));
+  const maxV = Math.max(...M.flat(), 1);
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="vz-scroll">
+        <table className="vz-mlp" aria-label="Confusion matrix: rows are the true class, columns the predicted class">
+          <thead><tr><th>true ↓ / predicted →</th>{names.map((n) => <th key={n}>{n}</th>)}<th>Recall</th></tr></thead>
+          <tbody>
+            {M.map((row, i) => (
+              <tr key={i}>
+                <th>{names[i]}</th>
+                {row.map((v, j) => (
+                  <td key={j} style={{ background: `rgba(${i === j ? '110,160,40' : '224,160,64'},${0.08 + 0.7 * (v / maxV)})`, textAlign: 'center', minWidth: 78 }}>
+                    <button type="button" aria-label={`decrease ${names[i]} predicted as ${names[j]}`} className="wg-chip" style={{ padding: '0 6px', marginRight: 4 }} onClick={() => bump(i, j, -1)}>−</button>
+                    <strong>{v}</strong>
+                    <button type="button" aria-label={`increase ${names[i]} predicted as ${names[j]}`} className="wg-chip" style={{ padding: '0 6px', marginLeft: 4 }} onClick={() => bump(i, j, 1)}>+</button>
+                  </td>
+                ))}
+                <td><strong>{f(S.classes[i].recall)}</strong></td>
+              </tr>
+            ))}
+            <tr><th>Precision</th>{S.classes.map((c, i) => <td key={i}><strong>{f(c.precision)}</strong></td>)}<td /></tr>
+            <tr><th>F1</th>{S.classes.map((c, i) => <td key={i}>{f(c.f1)}</td>)}<td /></tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: `repeat(${cost == null ? 3 : 4},minmax(0,1fr))` }}>
+        <div className="out"><span className="wg-k">Accuracy</span><span className="vz-big">{f(S.accuracy)}</span><span className="wg-note">{M.reduce((a, r, i) => a + r[i], 0)} of {S.total} on the diagonal</span></div>
+        <div><span className="wg-k">Macro F1</span><span className="vz-big">{f(S.macroF1)}</span><span className="wg-note">the average of the class F1 scores</span></div>
+        <div><span className="wg-k">Worst recall</span><span className="vz-big">{f(Math.min(...S.classes.map((c) => c.recall)))}</span><span className="wg-note">{names[S.classes.map((c) => c.recall).indexOf(Math.min(...S.classes.map((c) => c.recall)))]}</span></div>
+        {cost != null ? <div><span className="wg-k">Expected cost per photo</span><span className="vz-big">{f(cost)}</span><span className="wg-note">each mistake weighted by the cost matrix</span></div> : null}
+      </div>
+      <p className="wg-note">{spec.note || 'Use − and + to change the counts. Precision = diagonal ÷ column total; recall = diagonal ÷ row total; F1 = 2·P·R ÷ (P + R). The counts are made up for the demonstration.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- triage (answer only when confident; send the rest to the engineer)
+function Triage({ spec, fig }) {
+  const [t, setT] = useState(spec.threshold ?? 0.7);
+  const [cw, setCw] = useState(spec.costWrong ?? 20);
+  const items = spec.items;
+  const S = triageStats(items, t, { costWrong: cw, costDefer: spec.costDefer ?? 1 });
+  const curve = Array.from({ length: 41 }, (_, i) => { const th = 0.5 + i * 0.0125; return { th, ...triageStats(items, th, { costWrong: cw, costDefer: spec.costDefer ?? 1 }) }; });
+  const best = curve.reduce((a, r) => (r.cost < a.cost ? r : a));
+  const W = 560, H = 170, X = (v) => 30 + ((v - 0.5) / 0.5) * (W - 50), cmax = Math.max(...curve.map((r) => r.cost), 1e-9);
+  const Y = (v) => H - 26 - (v / cmax) * (H - 44);
+  const pc = (x) => (x * 100).toFixed(0) + ' %';
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Confidence needed before the model's label is passed on as its own answer" min={0.5} max={1} step={0.0125} value={t} onChange={setT} show={(q) => q.toFixed(3)} />
+      <Slider label={`Cost of a wrong answer that is not flagged (a deferral costs ${spec.costDefer ?? 1})`} min={1} max={100} step={1} value={cw} onChange={setCw} />
+      <div className="vz-hm-wrap">
+        <svg viewBox={`0 0 ${W} ${H}`} className="vz-att" role="img" aria-label="Expected cost per photo against the confidence threshold">
+          <line x1="30" x2={W - 20} y1={H - 26} y2={H - 26} stroke="var(--divider)" /><line x1="30" x2="30" y1="8" y2={H - 26} stroke="var(--divider)" />
+          <path d={curve.map((r, i) => `${i ? 'L' : 'M'}${X(r.th).toFixed(1)} ${Y(r.cost).toFixed(1)}`).join(' ')} fill="none" stroke="var(--accent)" strokeWidth="2.5" />
+          <circle cx={X(best.th)} cy={Y(best.cost)} r="5" fill="var(--amber)" />
+          <circle cx={X(t)} cy={Y(S.cost)} r="6" fill="none" stroke="var(--text)" strokeWidth="2" />
+          <text x="30" y={H - 8} className="vz-rl" style={{ fontSize: 10 }}>threshold 0.5</text><text x={W - 20} y={H - 8} textAnchor="end" className="vz-rl" style={{ fontSize: 10 }}>1.0</text>
+          <text x="34" y="14" className="vz-rl" style={{ fontSize: 10 }}>expected cost per photo: amber dot = cheapest threshold, circle = yours</text>
+        </svg>
+      </div>
+      <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Answered by the model</span><span className="vz-big">{pc(S.coverage)}</span><span className="wg-note">{S.accepted} of {items.length} photos (coverage)</span></div>
+        <div><span className="wg-k">Accuracy of those answers</span><span className="vz-big">{pc(S.accuracy)}</span><span className="wg-note">{S.wrong} wrong among them</span></div>
+        <div><span className="wg-k">Sent for extra review</span><span className="vz-big">{S.deferred}</span><span className="wg-note">confidence below {t.toFixed(3)}</span></div>
+        <div className="out"><span className="wg-k">Expected cost per photo</span><span className="vz-big">{S.cost.toFixed(2)}</span><span className="wg-note">cheapest: {best.cost.toFixed(2)} at {best.th.toFixed(3)}</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'In this course the engineer reviews every photo anyway, so "deferred" means "flagged as uncertain and put first in the queue". The confidences and outcomes are made up for the demonstration; measure your own model on photos it has never seen.'}</p>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- klreward (reward versus staying close to the original model)
 function KlReward({ spec, fig }) {
   const ref = spec.answers.map((a) => a.ref);
@@ -3007,4 +3108,4 @@ function LowRank({ spec, fig }) {
   );
 }
 
-export const VIZ = { pipesched: PipeSched, tensorsplit: TensorSplit, numfmt: NumFmt, quant: Quant, batching: Batching, railstack: RailStack, fgsm: Fgsm, railthreshold: RailThreshold, agenttrace: AgentTrace, chunker: Chunker, rankmetrics: RankMetrics, prefpair: PrefPair, klreward: KlReward, lowrank: LowRank, schedule: Schedule, sampler1d: Sampler1d, unet: Unet, ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+export const VIZ = { confmatrix: ConfMatrix, triage: Triage, pipesched: PipeSched, tensorsplit: TensorSplit, numfmt: NumFmt, quant: Quant, batching: Batching, railstack: RailStack, fgsm: Fgsm, railthreshold: RailThreshold, agenttrace: AgentTrace, chunker: Chunker, rankmetrics: RankMetrics, prefpair: PrefPair, klreward: KlReward, lowrank: LowRank, schedule: Schedule, sampler1d: Sampler1d, unet: Unet, ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

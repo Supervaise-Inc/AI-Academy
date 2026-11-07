@@ -3735,7 +3735,7 @@ print("ready:", len(p5_ids), "passages;", len(QA), "plain,", len(HARD_QA), "hard
    print(ex4_reply)
    ```
 
-   The reply of the model with this template is `UNKNOWN`, one word, as asked. A short and strict format also helps the program that reads the reply: `reply.strip() == "UNKNOWN"` is a safer test than a regular expression for "I do not know" in many wordings. One question does not tell you whether the template is reliable: you would run it on all 5 unanswerable and all 12 answerable questions, and count both the missed abstentions and the false abstentions.
+   The reply of the model with this template is `UNKNOWN`, one word, as asked. A short and strict format also helps the program that reads the reply: checking that `reply.strip()` is exactly `UNKNOWN` is a safer test than a regular expression for "I do not know" in many wordings. One question does not tell you whether the template is reliable: you would run it on all 5 unanswerable and all 12 answerable questions, and count both the missed abstentions and the false abstentions.
 
 8. **Step 5.8. Summary table.** One table with everything we measured in this part.
 
