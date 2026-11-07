@@ -16,12 +16,12 @@ const fullDate = (d) => `${DAYS[d.getUTCDay()]}, ${longDate(d)}`;
 
 // lab: null means no laboratory that week. kc: number of knowledge-check questions.
 const WEEKS = [
-  { week: 1, term: 'Prelim', title: 'Course orientation & Intro to Generative AI', short: 'Introduction to generative AI', lab: 'GA Lab 1', kc: 19 },
-  { week: 2, term: 'Prelim', title: 'Machine Learning & Neural Networks', short: 'Machine learning and neural networks', lab: 'DL Lab 1', kc: 20 },
-  { week: 3, term: 'Prelim', title: 'Deep Learning & Backpropagation', short: 'Deep learning and backpropagation', lab: 'DL Lab 2B', kc: 20 },
-  { week: 4, term: 'Prelim', title: 'Convolutional Neural Networks', short: 'Convolutional neural networks', lab: 'DL Lab 4B, Part 1', kc: 20 },
+  { week: 1, term: 'Prelim', title: 'Course orientation & Intro to Generative AI', short: 'Introduction to generative AI', lab: 'GA Lab 1', kc: 15 },
+  { week: 2, term: 'Prelim', title: 'Machine Learning & Neural Networks', short: 'Machine learning and neural networks', lab: 'DL Lab 1', kc: 15 },
+  { week: 3, term: 'Prelim', title: 'Deep Learning & Backpropagation', short: 'Deep learning and backpropagation', lab: 'DL Lab 2B', kc: 15 },
+  { week: 4, term: 'Prelim', title: 'Convolutional Neural Networks', short: 'Convolutional neural networks', lab: 'DL Lab 4B, Part 1', kc: 15 },
   { week: 5, term: 'Prelim', title: 'Prelim examination', short: 'Prelim examination', exam: true, covers: 'Weeks 1 to 4' },
-  { week: 6, term: 'Midterm', title: 'NLP: Tokens & Word Embeddings', short: 'Tokens and word embeddings', lab: 'GA Lab 2', kc: 60 },
+  { week: 6, term: 'Midterm', title: 'NLP: Tokens & Word Embeddings', short: 'Tokens and word embeddings', lab: 'GA Lab 2', kc: 15 },
   {
     week: 7,
     term: 'Midterm',
@@ -31,7 +31,7 @@ const WEEKS = [
     labTitle: 'scaled dot-product attention',
     lessonTitle: 'Why attention replaced sequence models',
     lessonNote: 'Queries, keys and values',
-    kc: 20,
+    kc: 15,
     weight: '10% of final grade',
     extras: [{ title: 'Attention Explorer visualisation', note: 'Guided exercise · Self-attention weights' }],
     sessions: [
@@ -40,18 +40,18 @@ const WEEKS = [
       { time: '14:00', title: 'Consultation hours', note: 'By appointment · Faculty Room 5' },
     ],
   },
-  { week: 8, term: 'Midterm', title: 'The Transformer & Autoregressive Training', short: 'The Transformer', lab: 'GA Lab 3, Part 2', kc: 40 },
-  { week: 9, term: 'Midterm', title: 'LLM Families, Scaling Laws & Prompt Engineering', short: 'LLM families and prompt engineering', lab: 'GA Lab 4', kc: 60 },
+  { week: 8, term: 'Midterm', title: 'The Transformer & Autoregressive Training', short: 'The Transformer', lab: 'GA Lab 3, Part 2', kc: 15 },
+  { week: 9, term: 'Midterm', title: 'LLM Families, Scaling Laws & Prompt Engineering', short: 'LLM families and prompt engineering', lab: 'GA Lab 4', kc: 15 },
   { week: 10, term: 'Midterm', title: 'Midterm examination', short: 'Midterm examination', exam: true, covers: 'Weeks 6 to 9' },
-  { week: 11, term: 'Pre-final', title: 'Multimodal AI', short: 'Multimodal AI', lab: 'GA Demo 6.1', kc: 25 },
-  { week: 12, term: 'Pre-final', title: 'Image Generation & GANs', short: 'Image generation and GANs', lab: 'GA Lab 6', kc: 50 },
-  { week: 13, term: 'Pre-final', title: 'Diffusion Models', short: 'Diffusion models', lab: 'GA Lab 7', kc: 60 },
-  { week: 14, term: 'Pre-final', title: 'Training LLMs: Fine-tuning, RLHF, PEFT', short: 'Fine-tuning, RLHF and PEFT', lab: null, kc: 0 },
+  { week: 11, term: 'Pre-final', title: 'Multimodal AI', short: 'Multimodal AI', lab: 'GA Demo 6.1', kc: 15 },
+  { week: 12, term: 'Pre-final', title: 'Image Generation & GANs', short: 'Image generation and GANs', lab: 'GA Lab 6', kc: 15 },
+  { week: 13, term: 'Pre-final', title: 'Diffusion Models', short: 'Diffusion models', lab: 'GA Lab 7', kc: 15 },
+  { week: 14, term: 'Pre-final', title: 'Training LLMs: Fine-tuning, RLHF, PEFT', short: 'Fine-tuning, RLHF and PEFT', lab: 'Laboratory 14', labTitle: 'fine-tuning, RLHF and LoRA', kc: 15 },
   { week: 15, term: 'Pre-final', title: 'Pre-final examination and capstone proposal', short: 'Pre-final examination', exam: true, covers: 'Weeks 11 to 14' },
-  { week: 16, term: 'Final', title: 'LLM Components & RAG', short: 'LLM components and RAG', lab: 'GA Lab 8, Part 1', kc: 50 },
-  { week: 17, term: 'Final', title: 'AI Agents, Guardrails & Trustworthy AI', short: 'AI agents and guardrails', lab: 'GA Lab 8, Part 2', kc: 25 },
-  { week: 18, term: 'Final', title: 'Scaling & Deploying AI', short: 'Scaling and deploying AI', lab: 'GA Lab 9', kc: 58 },
-  { week: 19, term: 'Final', title: 'Capstone Build Week + Mock NCA-GENL Exam', short: 'Capstone build and mock exam', lab: null, kc: 0, capstone: true },
+  { week: 16, term: 'Final', title: 'LLM Components & RAG', short: 'LLM components and RAG', lab: 'GA Lab 8, Part 1', kc: 15 },
+  { week: 17, term: 'Final', title: 'AI Agents, Guardrails & Trustworthy AI', short: 'AI agents and guardrails', lab: 'GA Lab 8, Part 2', kc: 15 },
+  { week: 18, term: 'Final', title: 'Scaling & Deploying AI', short: 'Scaling and deploying AI', lab: 'GA Lab 9', kc: 15 },
+  { week: 19, term: 'Final', title: 'Capstone Build Week + Mock NCA-GENL Exam', short: 'Capstone build and mock exam', lab: 'Capstone Lab', labTitle: 'build the Structural Inspection Assistant', kc: 50, kcTitle: 'Mock NCA-GENL exam', capstone: true },
   { week: 20, term: 'Final', title: 'Final examination and Demo Day', short: 'Final examination and Demo Day', exam: true, covers: 'Weeks 16 to 19' },
 ];
 
@@ -84,7 +84,7 @@ function build(w) {
     activities.push({ title: `Lesson ${n}.1: ${lessonTitle}`, note: `Lecture and reading · ${w.lessonNote || w.short}` });
     (w.extras || []).forEach((e) => activities.push(e));
     if (w.lab) activities.push({ title: `${w.lab}${w.labTitle ? ': ' + w.labTitle : ''}`, note: `Laboratory · Report due ${due}` });
-    if (w.kc) activities.push({ title: `Knowledge check ${n}.1: ${w.kc} questions`, note: 'Formative · Unweighted, unlimited attempts' });
+    if (w.kc) activities.push({ title: `${w.kcTitle || 'Knowledge check ' + n + '.1'}: ${w.kc} questions`, note: 'Formative · Unweighted, unlimited attempts' });
     if (w.capstone) activities.push({ title: 'Capstone build', note: 'Project work · Mock NCA-GENL exam this week' });
 
     sessions.push(...(w.sessions || []));

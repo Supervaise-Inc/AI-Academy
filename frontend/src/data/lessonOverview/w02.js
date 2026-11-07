@@ -1,40 +1,47 @@
-// Week 2 · Machine Learning & Neural Networks (backend/content/week-02.md)
+// Week 2 · Supervised Learning and Neural Networks (backend/content/week-02.md)
 export default {
   week: 2,
-  tagline: 'A neuron guesses, a loss measures the mistake, and gradient descent fixes it.',
-  time: 'About 30 minutes of reading, then a 3-hour lab',
+  tagline: 'A neuron guesses, a loss measures the mistake, and training nudges the weights.',
+  time: 'About 60 minutes of reading, then a 3-hour lab',
   ideas: [
-    'Supervised learning trains on labelled examples and is judged on unseen data.',
-    'One neuron draws one straight line, so it cannot solve XOR.',
-    'Training is gradient descent: step each parameter against its gradient.',
+    'Supervised learning: labelled examples, a model, a loss, then training.',
+    'A neuron is a = φ(Σwx + b); a layer is φ(Wx + b); a hidden layer solves XOR.',
+    'Training is w ← w − η × gradient; then test on data the model has not seen.',
   ],
   outcomes: [
-    'Explain supervised learning, loss, and the training, validation and test sets.',
-    'Compute a neuron output and a mean squared error by hand.',
-    'Train a two-layer network in PyTorch that solves a noisy XOR problem.',
+    'Explain supervised learning and split data into training, validation and test sets.',
+    'Compute a neuron and a layer by hand, and count the parameters of a network.',
+    'Explain why hidden layers and non-linearity are needed, and spot overfitting.',
   ],
   terms: [
-    { t: 'Feature and label', d: 'The input the model is given, and the correct answer for it.' },
-    { t: 'Loss function', d: 'A number that measures how far the predictions are from the labels.' },
-    { t: 'Overfitting', d: 'Fitting the training examples so closely that new data does worse.' },
-    { t: 'Bias', d: 'A number added to the weighted sum that shifts when the neuron switches on.' },
-    { t: 'Learning rate', d: 'How big a step gradient descent takes.' },
+    { t: 'Label', d: 'The correct answer attached to each training example.' },
+    { t: 'Loss', d: 'One number for how wrong the model is; MSE for numbers, −ln p for classes.' },
+    { t: 'Activation', d: 'The non-linear gate a neuron applies to its weighted sum.' },
+    { t: 'Learning rate', d: 'The small number η that sets the size of each weight update.' },
+    { t: 'Overfitting', d: 'Doing well on training data but badly on data it has not seen.' },
+    { t: 'Test set', d: 'Data kept aside and used only once, to judge the final model.' },
   ],
   path: [
-    { label: 'Read', min: 30 },
-    { label: 'Lab: neuron', min: 35 },
-    { label: 'Lab: training', min: 70 },
-    { label: 'Lab: tuning', min: 75 },
+    { label: 'Read', min: 60 },
+    { label: 'Lab 1 to 3', min: 80 },
+    { label: 'Lab 4 and 5', min: 60 },
+    { label: 'Lab 6 and 7', min: 50 },
   ],
   graphic: {
-    type: 'cycle',
-    steps: [
-      { label: 'Predict' },
-      { label: 'Loss' },
-      { label: 'Zero grads' },
-      { label: 'Backward' },
-      { label: 'Update' },
+    type: 'curve',
+    xLabel: 'Training step',
+    yLabel: 'Weight w',
+    series: [
+      {
+        label: 'w, ideal is 2',
+        points: [
+          [0, 0.5],
+          [1, 1.7],
+          [2, 1.94],
+          [3, 1.988],
+        ],
+      },
     ],
-    caption: 'The five-step training loop you write in the lab, repeated every epoch.',
+    caption: 'w ← w − 0.1 × gradient: the loss falls from 9 to 0.36 in one step.',
   },
 };
