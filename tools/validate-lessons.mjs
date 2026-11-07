@@ -132,7 +132,7 @@ function check(file) {
         if ((s.steps || []).length < 3) at('needs ≥3 steps');
         (s.steps || []).forEach((st, k) => { if (!isStr(st.title) || !isStr(st.body, 30)) at(`step ${k + 1} needs title and body`); (st.active || []).forEach((a) => !ids.includes(a) && at(`step ${k + 1} activates unknown node "${a}"`)); if (!(st.active || []).length) at(`step ${k + 1} needs an active list`); });
       },
-      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens', 'gan_loss', 'ft_memory', 'rag_budget', 'index_size', 'agent_cost'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost, vit_tokens, gan_loss, ft_memory, rag_budget, index_size or agent_cost'); },
+      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens', 'gan_loss', 'ft_memory', 'rag_budget', 'index_size', 'agent_cost', 'dp_scaling', 'decode_speed', 'kv_cache'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost, vit_tokens, gan_loss, ft_memory, rag_budget, index_size, agent_cost, dp_scaling, decode_speed or kv_cache'); },
       network: () => {
         const L = s.layers;
         if (!Array.isArray(L) || L.length < 3 || L.some((n) => !(n >= 1 && n <= 5))) return at('layers must be ≥3 numbers, each 1..5');
@@ -374,6 +374,53 @@ function check(file) {
           const U = M.unetShapes({ size, inCh: s.inCh ?? 1, base: c.base ?? s.base ?? 16, levels: c.levels ?? L, timeDim: c.timeDim ?? s.timeDim ?? 32 });
           if (c.total != null && U.total !== c.total) at(`check ${k + 1}: total expected ${c.total}, computed ${U.total}`);
           if (c.layer && c.params != null) { const r = U.rows.find((q) => q.name.startsWith(c.layer)); if (!r) at(`check ${k + 1}: no layer starting "${c.layer}"`); else if (r.params !== c.params) at(`check ${k + 1}: ${c.layer} params expected ${c.params}, computed ${r.params}`); }
+        });
+      },
+      pipesched: () => {
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "p": 4, "m": 8, "backward": true, "total": 22, "bubble": 0.2727 }]');
+        (s.checks || []).forEach((c, k) => {
+          const R = M.pipeSchedule({ p: c.p, m: c.m, backward: c.backward !== false });
+          if (c.total != null && R.total !== c.total) at(`check ${k + 1}: total steps expected ${c.total}, computed ${R.total}`);
+          if (c.bubble != null && Math.abs(R.bubble - c.bubble) > 0.002) at(`check ${k + 1}: bubble expected ${c.bubble}, computed ${R.bubble.toFixed(4)}`);
+        });
+      },
+      tensorsplit: () => {
+        const ok = (A) => Array.isArray(A) && A.length >= 1 && A.every((r) => Array.isArray(r) && r.length === A[0].length && r.every((v) => typeof v === 'number'));
+        if (!ok(s.X) || !ok(s.W) || s.X[0].length !== s.W.length) return at('X (rows × k) and W (k × cols) must be numeric matrices with matching sizes');
+        if (s.W.length % 4 || s.W[0].length % 4) return at('W must have a number of rows and of columns divisible by 4 (the figure offers 2 and 4 devices)');
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "mode": "row", "n": 2, "Y": [[…]] }]');
+        (s.checks || []).forEach((c, k) => {
+          const R = M.tensorSplit({ X: s.X, W: s.W, mode: c.mode, n: c.n });
+          if (c.Y && JSON.stringify(R.Y.map((r) => r.map((v) => Math.round(v * 1e6) / 1e6))) !== JSON.stringify(c.Y.map((r) => r.map((v) => Math.round(v * 1e6) / 1e6)))) at(`check ${k + 1}: Y expected ${JSON.stringify(c.Y)}, computed ${JSON.stringify(R.Y)}`);
+        });
+      },
+      numfmt: () => {
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "x": 0.1, "fmt": "FP16", "stored": 0.0999755859375 }] (fmt: FP32, TF32, BF16 or FP16; "stored": "inf" for overflow)');
+        const T = { FP32: [8, 23], TF32: [8, 10], BF16: [8, 7], FP16: [5, 10] };
+        (s.checks || []).forEach((c, k) => {
+          const f = T[c.fmt]; if (!f) return at(`check ${k + 1}: unknown format ${c.fmt}`);
+          const r = M.roundToFormat(c.x, f[0], f[1]);
+          const want = c.stored === 'inf' ? Infinity : c.stored;
+          if (want === Infinity ? r !== Infinity : Math.abs(r - want) > Math.abs(want) * 1e-9 + 1e-300) at(`check ${k + 1}: ${c.x} in ${c.fmt} expected ${c.stored}, computed ${r}`);
+        });
+      },
+      quant: () => {
+        if (!Array.isArray(s.sets) || s.sets.length < 2 || s.sets.some((x) => !isStr(x.name) || !Array.isArray(x.w) || x.w.length < 8 || x.w.length > 32 || x.w.some((v) => typeof v !== 'number'))) return at('sets needs ≥2 {name, w: 8–32 numbers}');
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "set": 0, "bits": 8, "group": 0, "mse": 3.7e-6 }]');
+        (s.checks || []).forEach((c, k) => {
+          const w = s.sets[c.set]?.w; if (!w) return at(`check ${k + 1}: no set ${c.set}`);
+          const R = M.quantizeSym(w, c.bits, c.group || 0);
+          if (c.mse != null && Math.abs(R.mse - c.mse) > Math.abs(c.mse) * 0.02 + 1e-12) at(`check ${k + 1}: mse expected ${c.mse}, computed ${R.mse.toExponential(3)}`);
+          if (c.q && JSON.stringify(R.q) !== JSON.stringify(c.q)) at(`check ${k + 1}: integers expected ${JSON.stringify(c.q)}, computed ${JSON.stringify(R.q)}`);
+        });
+      },
+      batching: () => {
+        if (!(s.t0 > 0) || !(s.c > 0)) return at('t0 (fixed milliseconds) and c (milliseconds per request) must be > 0');
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "b": 8, "lambda": 50, "latency": 150, "capacity": 100 }]');
+        (s.checks || []).forEach((c, k) => {
+          const R = M.batchStats({ t0: s.t0, c: s.c, lambda: c.lambda ?? s.lambda ?? 50, b: c.b });
+          if (c.latency != null && Math.abs(R.latency - c.latency) > 0.5) at(`check ${k + 1}: latency expected ${c.latency}, computed ${R.latency.toFixed(2)}`);
+          if (c.capacity != null && Math.abs(R.capacity - c.capacity) > 0.5) at(`check ${k + 1}: capacity expected ${c.capacity}, computed ${R.capacity.toFixed(2)}`);
         });
       },
       railstack: () => {

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT, schedule, diffSample1d, unetShapes, prefProb, prefLoss, klObjective, klOptimum, softmaxArr, svdSmall, lowRankApprox, ftMemory, chunkWords, nChunks, spanIntact, rankMetrics, ragBudget, indexSize, normCdf, railPassThrough, fgsmAttack, thresholdRates, agentCost, traceCost } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT, schedule, diffSample1d, unetShapes, prefProb, prefLoss, klObjective, klOptimum, softmaxArr, svdSmall, lowRankApprox, ftMemory, chunkWords, nChunks, spanIntact, rankMetrics, ragBudget, indexSize, normCdf, railPassThrough, fgsmAttack, thresholdRates, agentCost, traceCost, pipeSchedule, bubbleFraction, tensorSplit, fmtInfo, roundToFormat, quantizeSym, batchStats, dpScaling, decodeSpeed, kvCache } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -85,9 +85,9 @@ function Slider({ label, min, max, step, value, onChange, show }) {
 }
 
 function Calc({ spec, fig }) {
-  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : spec.kind === 'gan_loss' ? -3 : spec.kind === 'ft_memory' ? 7 : spec.kind === 'rag_budget' ? 8192 : spec.kind === 'index_size' ? 10 : spec.kind === 'agent_cost' ? 800 : 24);
-  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : spec.kind === 'gan_loss' ? 3 : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 4 : spec.kind === 'index_size' ? 20 : spec.kind === 'agent_cost' ? 6 : 0);
-  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 300 : spec.kind === 'index_size' ? 384 : spec.kind === 'agent_cost' ? 200 : 15);
+  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : spec.kind === 'gan_loss' ? -3 : spec.kind === 'ft_memory' ? 7 : spec.kind === 'rag_budget' ? 8192 : spec.kind === 'index_size' ? 10 : spec.kind === 'agent_cost' ? 800 : spec.kind === 'dp_scaling' ? 7 : spec.kind === 'decode_speed' ? 7 : spec.kind === 'kv_cache' ? 4096 : 24);
+  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : spec.kind === 'gan_loss' ? 3 : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 4 : spec.kind === 'index_size' ? 20 : spec.kind === 'agent_cost' ? 6 : spec.kind === 'dp_scaling' ? 8 : spec.kind === 'decode_speed' ? 16 : spec.kind === 'kv_cache' ? 8 : 0);
+  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 300 : spec.kind === 'index_size' ? 384 : spec.kind === 'agent_cost' ? 200 : spec.kind === 'dp_scaling' ? 100 : spec.kind === 'decode_speed' ? 200 : spec.kind === 'kv_cache' ? 2 : 15);
   let body = null;
   if (spec.kind === 'fc_vs_conv') {
     const cin = spec.channels || 1;
@@ -214,6 +214,55 @@ function Calc({ spec, fig }) {
           <div><span className="wg-k">Fits in {W.toLocaleString('en-US')} tokens?</span><span className="vz-big">{fits ? 'Yes' : 'No'}</span><span className="wg-note">{fits ? `${(W - R.final).toLocaleString('en-US')} tokens to spare` : 'the oldest steps would be cut or the run fails'}</span></div>
         </div>
         <p className="wg-note">Every loop sends the whole history to the model again, so the work grows with the square of the number of loops while the context grows in a straight line. The window size is {W.toLocaleString('en-US')} tokens (an assumption for the demonstration).</p>
+      </>
+    );
+  } else if (spec.kind === 'dp_scaling') {
+    const compute = spec.computeMs ?? 400;
+    const R = dpScaling({ paramsB: a, bytesPerGrad: spec.bytesPerGrad ?? 2, n: b, linkGBs: c3, computeMs: compute });
+    body = (
+      <>
+        <Slider label="Model size (billions of parameters)" min={0.1} max={70} step={0.1} value={a} onChange={setA} show={(q) => `${q.toFixed(1)} B`} />
+        <Slider label="GPUs doing data parallelism (N)" min={1} max={64} step={1} value={b} onChange={setB} />
+        <Slider label="Link speed between GPUs (GB/s)" min={10} max={900} step={10} value={c3} onChange={setC3} show={(q) => `${q} GB/s`} />
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Gradients per GPU</span><span className="vz-big">{f2(R.S / 1e9, 1)} GB</span><span className="wg-note">{a} B × {spec.bytesPerGrad ?? 2} bytes</span></div>
+          <div><span className="wg-k">Sent per GPU (all-reduce)</span><span className="vz-big">{f2(R.traffic / 1e9, 1)} GB</span><span className="wg-note">2(N − 1)/N × gradients</span></div>
+          <div><span className="wg-k">Communication time</span><span className="vz-big">{f2(R.commMs, 0)} ms</span><span className="wg-note">against {compute} ms of compute per step</span></div>
+          <div className="out"><span className="wg-k">Speed-up on {b} GPU{b === 1 ? '' : 's'}</span><span className="vz-big">{f2(R.speedup, 1)}×</span><span className="wg-note">efficiency {Math.round(R.eff * 100)} % = compute ÷ (compute + communication)</span></div>
+        </div>
+        <p className="wg-note">Assumes no overlap of communication and computation and a fixed compute time per step per GPU (each GPU keeps its own share of the batch). Real systems overlap the two, which raises the efficiency; the compute time and link speeds here are assumptions for the demonstration.</p>
+      </>
+    );
+  } else if (spec.kind === 'decode_speed') {
+    const R = decodeSpeed({ paramsB: a, bits: b, bwGBs: c3 });
+    body = (
+      <>
+        <Slider label="Model size (billions of parameters)" min={0.5} max={180} step={0.5} value={a} onChange={setA} show={(q) => `${q.toFixed(1)} B`} />
+        <div className="wg-row" style={{ gap: 8, margin: '6px 0 10px' }}>{[16, 8, 4].map((x) => <button key={x} type="button" className={'wg-chip' + (b === x ? ' on' : '')} aria-pressed={b === x} onClick={() => setB(x)}>{x}-bit weights</button>)}</div>
+        <Slider label="Memory bandwidth (GB/s)" min={50} max={4000} step={50} value={c3} onChange={setC3} show={(q) => `${q} GB/s`} />
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Weights to read for one token</span><span className="vz-big">{f2(R.gb, 1)} GB</span><span className="wg-note">{a} B × {b} ÷ 8 bytes</span></div>
+          <div className="out"><span className="wg-k">Fastest possible decoding</span><span className="vz-big">{f2(R.tps, 1)} tokens/s</span><span className="wg-note">bandwidth ÷ model bytes</span></div>
+          <div><span className="wg-k">Time per token</span><span className="vz-big">{f2(1000 / R.tps, 0)} ms</span><span className="wg-note">at best, batch size 1</span></div>
+        </div>
+        <p className="wg-note">An upper bound for one request at a time on a memory-bound machine: each new token needs every weight to be read once. Real speed is lower (the key-value cache and other work also use bandwidth); the bandwidth values here are assumptions, not the specification of any particular GPU.</p>
+      </>
+    );
+  } else if (spec.kind === 'kv_cache') {
+    const L = spec.layers ?? 32, d = spec.d ?? 4096, wB = spec.paramsB ?? 7;
+    const kv = kvCache({ layers: L, d, n: a, batch: b, bytes: c3 });
+    const weights = wB * 1e9 * 2;
+    body = (
+      <>
+        <Slider label="Tokens in each sequence (prompt + reply)" min={128} max={32768} step={128} value={a} onChange={setA} show={(q) => q.toLocaleString('en-US')} />
+        <Slider label="Requests served at the same time (batch)" min={1} max={64} step={1} value={b} onChange={setB} />
+        <div className="wg-row" style={{ gap: 8, margin: '6px 0 10px' }}>{[2, 1].map((x) => <button key={x} type="button" className={'wg-chip' + (c3 === x ? ' on' : '')} aria-pressed={c3 === x} onClick={() => setC3(x)}>{x === 2 ? '16-bit cache (2 bytes)' : '8-bit cache (1 byte)'}</button>)}</div>
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Cache per token</span><span className="vz-big">{f2((2 * L * d * c3) / 1e6, 2)} MB</span><span className="wg-note">2 × {L} layers × {d} × {c3} bytes</span></div>
+          <div className="out"><span className="wg-k">Cache for the whole batch</span><span className="vz-big">{f2(kv / 1e9, 1)} GB</span><span className="wg-note">per token × {a.toLocaleString('en-US')} × {b}</span></div>
+          <div><span className="wg-k">Compared with the 16-bit weights</span><span className="vz-big">{f2(kv / weights, 2)}×</span><span className="wg-note">weights {f2(weights / 1e9, 0)} GB ({wB} B parameters)</span></div>
+        </div>
+        <p className="wg-note">A model with {L} layers and a width of {d} (about the size of a 7-billion-parameter model; assumed for the demonstration, and models that share keys and values between heads need less). Long prompts and large batches can use more memory for the cache than for the weights.</p>
       </>
     );
   } else if (spec.kind === 'gan_loss') {
@@ -2683,6 +2732,200 @@ function AgentTrace({ spec, fig }) {
   );
 }
 
+// ---------------------------------------------------------------- pipesched (a pipeline schedule and its idle bubbles)
+function PipeSched({ spec, fig }) {
+  const [p, setP] = useState(spec.p ?? 4);
+  const [m, setM] = useState(spec.m ?? 4);
+  const [bw, setBw] = useState(spec.backward !== false);
+  const S = useMemo(() => pipeSchedule({ p, m, backward: bw }), [p, m, bw]);
+  const cw = Math.max(10, Math.min(34, Math.floor(600 / S.total))), ch = 26, W = S.total * cw + 44, H = p * ch + 26;
+  const hue = (i) => `hsl(${(i * 47) % 360} 55% 62%)`;
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Pipeline stages (GPUs, p)" min={2} max={8} step={1} value={p} onChange={setP} />
+      <Slider label="Micro-batches per batch (m)" min={1} max={16} step={1} value={m} onChange={setM} />
+      <label className="vz-check"><input type="checkbox" checked={bw} onChange={(e) => setBw(e.target.checked)} /> include the backward pass (training)</label>
+      <div className="vz-hm-wrap">
+        <svg viewBox={`0 0 ${W} ${H}`} className="vz-att" role="img" aria-label={`Schedule of ${m} micro-batches on ${p} pipeline stages: ${S.total} time steps, bubble ${Math.round(S.bubble * 100)} percent`}>
+          {Array.from({ length: p }, (_, s) => (
+            <g key={s}>
+              <text x="2" y={s * ch + 17} className="vz-rl" style={{ fontSize: 10 }}>GPU {s + 1}</text>
+              {Array.from({ length: S.total }, (_, t) => <rect key={t} x={38 + t * cw} y={s * ch + 2} width={cw - 1} height={ch - 3} rx="3" fill="var(--surface2)" stroke="var(--divider)" strokeWidth="0.5" />)}
+            </g>
+          ))}
+          {S.cells.map((c, i) => (
+            <g key={i}>
+              <rect x={38 + c.t * cw} y={c.stage * ch + 2} width={cw - 1} height={ch - 3} rx="3" fill={hue(c.mb)} fillOpacity={c.kind === 'B' ? 0.95 : 0.7} stroke={c.kind === 'B' ? 'var(--text2)' : 'none'} strokeWidth="1" />
+              {cw >= 16 ? <text x={38 + c.t * cw + (cw - 1) / 2} y={c.stage * ch + 19} textAnchor="middle" className="vz-vn">{c.mb + 1}</text> : null}
+            </g>
+          ))}
+          <text x="34" y={H - 4} className="vz-rl" style={{ fontSize: 10 }}>time → (colour and number = micro-batch; outlined = backward; grey = idle)</text>
+        </svg>
+      </div>
+      <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Time steps in total</span><span className="vz-big">{S.total}</span><span className="wg-note">{bw ? '2' : '1'} × (m + p − 1) = {bw ? '2 × ' : ''}({m} + {p} − 1)</span></div>
+        <div className="out"><span className="wg-k">Idle share (the bubble)</span><span className="vz-big">{(S.bubble * 100).toFixed(1)} %</span><span className="wg-note">(p − 1) ÷ (m + p − 1) = {p - 1} ÷ {m + p - 1}</span></div>
+        <div><span className="wg-k">GPU busy share</span><span className="vz-big">{((1 - S.bubble) * 100).toFixed(1)} %</span><span className="wg-note">more micro-batches shrink the bubble</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'A simple schedule in which every stage takes one time step per micro-batch and a backward step takes as long as a forward step. Real schedules (for example one-forward-one-backward) change the order and the memory use, not this idle fraction.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- tensorsplit (one matrix product split over several devices)
+function TensorSplit({ spec, fig }) {
+  const [mode, setMode] = useState(spec.mode ?? 'column');
+  const [n, setN] = useState(spec.n ?? 2);
+  const R = useMemo(() => tensorSplit({ X: spec.X, W: spec.W, mode, n }), [spec, mode, n]);
+  const same = R.Y.every((r, i) => r.every((v, j) => Math.abs(v - R.full[i][j]) < 1e-9));
+  const Mx = ({ A, color }) => (
+    <table className="vz-mlp" style={{ margin: '2px 0' }}><tbody>{A.map((r, i) => <tr key={i}>{r.map((v, j) => <td key={j} style={{ background: color, textAlign: 'center', minWidth: 26 }}>{Number(v.toFixed(2))}</td>)}</tr>)}</tbody></table>
+  );
+  const cols = ['var(--accent-soft-bg)', 'var(--surface2)', 'rgba(224,160,64,0.22)', 'rgba(90,120,200,0.18)'];
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-row" style={{ gap: 8, margin: '4px 0 10px' }}>
+        {[['column', 'Split W by columns'], ['row', 'Split W by rows']].map(([k, t]) => <button key={k} type="button" className={'wg-chip' + (mode === k ? ' on' : '')} aria-pressed={mode === k} onClick={() => setMode(k)}>{t}</button>)}
+        {[2, 4].map((x) => <button key={x} type="button" className={'wg-chip' + (n === x ? ' on' : '')} aria-pressed={n === x} onClick={() => setN(x)}>{x} devices</button>)}
+      </div>
+      <p className="wg-note">Goal: Y = X · W. {mode === 'column' ? 'Every device gets all of X and a slice of the columns of W, so it computes a slice of the columns of Y. Joining the slices is a concatenation.' : 'Every device gets a slice of the rows of W and the matching columns of X, so it computes a partial Y of full size. Joining the partial results is a sum (an all-reduce).'}</p>
+      <div className="wg-row" style={{ gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        {R.parts.map((q, d) => (
+          <div key={d} className="vz-pref" style={{ flex: '1 1 150px', background: cols[d % 4] }}>
+            <span className="wg-k" style={{ textTransform: 'none' }}>Device {d + 1}</span>
+            <p className="wg-note" style={{ margin: '2px 0' }}>X{mode === 'row' ? ' (its columns)' : ''}</p><Mx A={q.X} color="transparent" />
+            <p className="wg-note" style={{ margin: '2px 0' }}>W (its {mode === 'column' ? 'columns' : 'rows'})</p><Mx A={q.W} color="transparent" />
+            <p className="wg-note" style={{ margin: '2px 0' }}>result</p><Mx A={q.Y} color="transparent" />
+          </div>
+        ))}
+      </div>
+      <p className="wg-p" style={{ margin: '10px 0 4px' }}><strong>Joined result Y</strong> ({mode === 'column' ? 'concatenate the columns' : 'add the partial results'}):</p>
+      <Mx A={R.Y} color="var(--accent-soft-bg)" />
+      <p className="vz-calc" aria-live="polite">{same ? '✓ The same as computing X · W on one device.' : '✗ Differs from X · W.'} Each device stores {mode === 'column' ? `1/${n} of the columns` : `1/${n} of the rows`} of W: {n}× less weight memory per device. {mode === 'row' ? 'The sum needs communication between devices.' : 'The next layer can often use the slices as they are.'}</p>
+      <p className="wg-note">{spec.note || 'Small made-up matrices. In a Transformer block the two big matrices of the feed-forward network are often split this way: the first by columns and the second by rows, so only one sum is needed for the pair.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- numfmt (floating-point formats: range, precision and rounding)
+const NUMFMTS = [['FP32', 8, 23], ['TF32', 8, 10], ['BF16', 8, 7], ['FP16', 5, 10]];
+function NumFmt({ spec, fig }) {
+  const [txt, setTxt] = useState(String(spec.value ?? 0.1));
+  const x = Number(txt);
+  const ok = txt.trim() !== '' && Number.isFinite(x);
+  const fmt = (v) => (v === Infinity ? 'overflow (∞)' : v === -Infinity ? 'overflow (−∞)' : v === 0 ? '0' : Math.abs(v) >= 1e6 || Math.abs(v) < 1e-4 ? v.toExponential(6) : String(Number(v.toPrecision(10))));
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <label className="vz-try"><span>Number to store:</span><input type="text" value={txt} onChange={(e) => setTxt(e.target.value)} aria-label="Number to store in each format" style={{ width: 160 }} /></label>
+      {spec.examples ? <div className="wg-row" style={{ margin: '8px 0' }}>{spec.examples.map((e) => <button key={e} type="button" className="wg-chip" onClick={() => setTxt(String(e))}>{e}</button>)}</div> : null}
+      <div className="vz-scroll">
+        <table className="vz-mlp" aria-label="Number formats">
+          <thead><tr><th>Format</th><th>Bits (sign · exponent · mantissa)</th><th>Largest</th><th>Smallest normal</th><th>Relative step</th><th>Stored value</th><th>Error</th></tr></thead>
+          <tbody>
+            {NUMFMTS.map(([name, e, m]) => {
+              const I = fmtInfo(e, m);
+              const r = ok ? roundToFormat(x, e, m) : NaN;
+              const err = ok && Number.isFinite(r) && x !== 0 ? Math.abs(r - x) / Math.abs(x) : NaN;
+              return (
+                <tr key={name}>
+                  <td><strong>{name}</strong></td>
+                  <td><span style={{ background: 'var(--amber)', padding: '0 4px', borderRadius: 3 }}>1</span> <span style={{ background: 'var(--accent-soft-bg)', padding: '0 4px', borderRadius: 3 }}>{e}</span> <span style={{ background: 'var(--surface2)', padding: '0 4px', borderRadius: 3 }}>{m}</span> = {1 + e + m}</td>
+                  <td>{I.max.toExponential(3)}</td><td>{I.minNormal.toExponential(2)}</td><td>2<sup>−{m}</sup> = {I.eps.toExponential(2)}</td>
+                  <td style={{ fontFamily: 'var(--mono, monospace)' }}>{ok ? fmt(r) : '–'}</td>
+                  <td>{ok && Number.isFinite(err) ? (err === 0 ? 'exact' : err.toExponential(2)) : ok && !Number.isFinite(r) ? 'lost' : '–'}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="wg-note">{spec.note || 'Numbers are rounded to the nearest value the format can hold (ties to even), with subnormal numbers near zero and overflow to infinity. TF32 is stored in 32 bits but computed with 10 mantissa bits. Try 70000 (FP16 overflows), 1e-8 (FP16 underflows to 0) and 1.0001 (the low-precision formats cannot tell it from 1).'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- quant (round weights to fewer bits)
+function Quant({ spec, fig }) {
+  const [si, setSi] = useState(0);
+  const [bits, setBits] = useState(spec.bits ?? 8);
+  const [group, setGroup] = useState(spec.group ?? 0);
+  const set = spec.sets[si];
+  const R = useMemo(() => quantizeSym(set.w, bits, group), [set, bits, group]);
+  const maxErr = Math.max(...set.w.map((v, i) => Math.abs(v - R.deq[i])), 1e-12);
+  const f = (v) => Number(v.toPrecision(3)).toString();
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-row" style={{ gap: 8, marginBottom: 6 }}>{spec.sets.map((x, i) => <button key={i} type="button" className={'wg-chip' + (i === si ? ' on' : '')} aria-pressed={i === si} onClick={() => setSi(i)}>{x.name}</button>)}</div>
+      <Slider label="Bits per weight" min={2} max={8} step={1} value={bits} onChange={setBits} show={(q) => `${q} bits (integers −${2 ** (q - 1) - 1} … ${2 ** (q - 1) - 1})`} />
+      <div className="wg-row" style={{ gap: 8, margin: '6px 0 10px' }}>{[[0, 'One scale for all'], [8, 'Scale per 8'], [4, 'Scale per 4'], [2, 'Scale per 2']].map(([g, t]) => <button key={g} type="button" className={'wg-chip' + (group === g ? ' on' : '')} aria-pressed={group === g} onClick={() => setGroup(g)}>{t}</button>)}</div>
+      <div className="vz-scroll">
+        <table className="vz-mlp" aria-label="Weights, integers, restored values and errors">
+          <thead><tr><th>Weight w</th>{set.w.map((v, i) => <td key={i}>{f(v)}</td>)}</tr></thead>
+          <tbody>
+            <tr><th>Integer q = round(w ÷ scale)</th>{R.q.map((v, i) => <td key={i}>{v}</td>)}</tr>
+            <tr><th>Restored q × scale</th>{R.deq.map((v, i) => <td key={i}>{f(v)}</td>)}</tr>
+            <tr><th>Error</th>{set.w.map((v, i) => { const e = Math.abs(v - R.deq[i]); return <td key={i} style={{ background: `rgba(224,160,64,${0.1 + 0.8 * (e / maxErr)})` }}>{f(e)}</td>; })}</tr>
+          </tbody>
+        </table>
+      </div>
+      <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Scale{R.scales.length > 1 ? 's' : ''} = max|w| ÷ {R.qmax}</span><span className="vz-big">{R.scales.length > 1 ? `${R.scales.length} scales` : f(R.scales[0])}</span><span className="wg-note">{R.scales.slice(0, 4).map(f).join(', ')}{R.scales.length > 4 ? ', …' : ''}</span></div>
+        <div className="out"><span className="wg-k">Mean squared error</span><span className="vz-big">{R.mse.toExponential(2)}</span><span className="wg-note">of the restored weights</span></div>
+        <div><span className="wg-k">Memory</span><span className="vz-big">{f((bits / 32) * 100)} %</span><span className="wg-note">of 32-bit, plus {R.scales.length} scale{R.scales.length === 1 ? '' : 's'}</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'Symmetric quantization: the largest weight in each group sets the scale. One very large weight stretches the scale and wastes the integers on everything else; a separate scale for each small group fixes that at the price of storing more scales. The weights are made up.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- batching (latency against throughput when requests are batched)
+function Batching({ spec, fig }) {
+  const [b, setB] = useState(spec.b ?? 8);
+  const [lam, setLam] = useState(spec.lambda ?? 50);
+  const t0 = spec.t0, c = spec.c;
+  const S = batchStats({ t0, c, lambda: lam, b });
+  const rows = Array.from({ length: 64 }, (_, i) => ({ b: i + 1, ...batchStats({ t0, c, lambda: lam, b: i + 1 }) }));
+  const stable = rows.filter((r) => r.rho < 1);
+  const best = stable.length ? stable.reduce((a, r) => (r.latency < a.latency ? r : a)) : null;
+  const W = 560, H = 180, X = (v) => 30 + ((v - 1) / 63) * (W - 50);
+  const ymax = Math.min(Math.max(...rows.filter((r) => r.rho < 1).map((r) => r.latency), 100), 1200);
+  const Y = (v) => H - 26 - (Math.min(v, ymax) / ymax) * (H - 44);
+  const path = rows.filter((r) => r.rho < 1).map((r, i) => `${i ? 'L' : 'M'}${X(r.b).toFixed(1)} ${Y(r.latency).toFixed(1)}`).join(' ');
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Batch size b (requests processed together)" min={1} max={64} step={1} value={b} onChange={setB} />
+      <Slider label="Requests arriving per second (λ)" min={5} max={400} step={5} value={lam} onChange={setLam} show={(q) => `${q} /s`} />
+      <div className="vz-hm-wrap">
+        <svg viewBox={`0 0 ${W} ${H}`} className="vz-att" role="img" aria-label="Average latency against batch size">
+          <line x1="30" x2={W - 20} y1={H - 26} y2={H - 26} stroke="var(--divider)" /><line x1="30" x2="30" y1="8" y2={H - 26} stroke="var(--divider)" />
+          <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2.5" />
+          {best ? <circle cx={X(best.b)} cy={Y(best.latency)} r="5" fill="var(--amber)" /> : null}
+          {S.rho < 1 ? <circle cx={X(b)} cy={Y(S.latency)} r="6" fill="none" stroke="var(--text)" strokeWidth="2" /> : null}
+          <text x="30" y={H - 8} className="vz-rl" style={{ fontSize: 10 }}>batch size 1</text><text x={W - 20} y={H - 8} textAnchor="end" className="vz-rl" style={{ fontSize: 10 }}>64</text>
+          <text x="34" y="14" className="vz-rl" style={{ fontSize: 10 }}>average latency (ms): green line; amber dot = lowest stable batch; circle = your batch size</text>
+        </svg>
+      </div>
+      <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Time to process a batch</span><span className="vz-big">{f2(S.service, 0)} ms</span><span className="wg-note">{t0} + {c} × {b}</span></div>
+        <div><span className="wg-k">Most it can serve</span><span className="vz-big">{f2(S.capacity, 0)} /s</span><span className="wg-note">1000 × b ÷ batch time</span></div>
+        <div><span className="wg-k">Busy share ρ = λ ÷ capacity</span><span className="vz-big">{S.rho >= 1 ? '≥ 100 %' : `${Math.round(S.rho * 100)} %`}</span><span className="wg-note">{S.rho >= 1 ? 'the queue grows without limit' : 'stable'}</span></div>
+        <div className="out"><span className="wg-k">Average latency</span><span className="vz-big">{S.rho >= 1 ? '∞' : `${f2(S.latency, 0)} ms`}</span><span className="wg-note">wait {f2(S.wait, 0)} ms + batch {f2(S.service, 0)} ms</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'A simple model with made-up timings: a batch costs a fixed start-up time plus a time for every request in it, and requests wait on average (b − 1) ÷ (2λ) seconds for the batch to fill. Small batches waste the fixed cost and cannot keep up; large batches make early requests wait. Real servers also use continuous batching and queueing delay, which this model ignores.'}</p>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- klreward (reward versus staying close to the original model)
 function KlReward({ spec, fig }) {
   const ref = spec.answers.map((a) => a.ref);
@@ -2764,4 +3007,4 @@ function LowRank({ spec, fig }) {
   );
 }
 
-export const VIZ = { railstack: RailStack, fgsm: Fgsm, railthreshold: RailThreshold, agenttrace: AgentTrace, chunker: Chunker, rankmetrics: RankMetrics, prefpair: PrefPair, klreward: KlReward, lowrank: LowRank, schedule: Schedule, sampler1d: Sampler1d, unet: Unet, ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+export const VIZ = { pipesched: PipeSched, tensorsplit: TensorSplit, numfmt: NumFmt, quant: Quant, batching: Batching, railstack: RailStack, fgsm: Fgsm, railthreshold: RailThreshold, agenttrace: AgentTrace, chunker: Chunker, rankmetrics: RankMetrics, prefpair: PrefPair, klreward: KlReward, lowrank: LowRank, schedule: Schedule, sampler1d: Sampler1d, unet: Unet, ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

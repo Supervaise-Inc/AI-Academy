@@ -860,3 +860,87 @@ export function traceCost(C0, steps, upTo) {
   for (let i = 0; i < upTo; i++) { read += ctx; ctx += (steps[i].outTokens || 0) + (steps[i].obsTokens || 0); }
   return { context: ctx, read };
 }
+
+// ---- Week 18: pipeline schedules, tensor splits, number formats, quantization, batching, serving numbers ----
+// GPipe-style schedule: p stages, m micro-batches, forward then backward. Time unit = one micro-batch on one stage (a backward step takes the same time as a forward step).
+export function pipeSchedule({ p, m, backward = true }) {
+  const cells = [];
+  const fwd = m + p - 1;
+  for (let s = 0; s < p; s++) for (let i = 0; i < m; i++) cells.push({ stage: s, mb: i, kind: 'F', t: s + i });
+  if (backward) for (let s = 0; s < p; s++) for (let i = 0; i < m; i++) cells.push({ stage: s, mb: i, kind: 'B', t: fwd + (p - 1 - s) + (m - 1 - i) });
+  const total = backward ? 2 * fwd : fwd;
+  const busy = cells.length;
+  return { cells, total, busy, bubble: 1 - busy / (p * total) };
+}
+export const bubbleFraction = (p, m) => (p - 1) / (m + p - 1);
+const _mm = (A, B) => A.map((r) => B[0].map((_, j) => r.reduce((s, a, k) => s + a * B[k][j], 0)));
+// Tensor parallelism for Y = X·W. 'column': each device holds some columns of W and computes some columns of Y (join by concatenation).
+// 'row': each device holds some rows of W and the matching columns of X and computes a partial Y (join by summing: an all-reduce).
+export function tensorSplit({ X, W, mode, n }) {
+  const parts = [];
+  if (mode === 'column') {
+    const w = W[0].length / n;
+    for (let d = 0; d < n; d++) { const Wd = W.map((r) => r.slice(d * w, (d + 1) * w)); parts.push({ W: Wd, X, Y: _mm(X, Wd) }); }
+    const Y = X.map((_, i) => parts.flatMap((q) => q.Y[i]));
+    return { parts, Y, full: _mm(X, W) };
+  }
+  const k = W.length / n;
+  for (let d = 0; d < n; d++) { const Wd = W.slice(d * k, (d + 1) * k); const Xd = X.map((r) => r.slice(d * k, (d + 1) * k)); parts.push({ W: Wd, X: Xd, Y: _mm(Xd, Wd) }); }
+  const Y = parts.map((q) => q.Y).reduce((a, b) => a.map((r, i) => r.map((v, j) => v + b[i][j])));
+  return { parts, Y, full: _mm(X, W) };
+}
+// Round x to a floating-point format with e exponent bits and m mantissa bits (IEEE-style: bias 2^(e-1) - 1, subnormals, overflow to Infinity). Round to nearest, ties to even.
+function _rne(v) { const f = Math.floor(v), d = v - f; return d < 0.5 ? f : d > 0.5 ? f + 1 : f % 2 === 0 ? f : f + 1; }
+export function fmtInfo(e, m) {
+  const bias = 2 ** (e - 1) - 1;
+  return { bias, max: (2 - 2 ** -m) * 2 ** bias, minNormal: 2 ** (1 - bias), minSub: 2 ** (1 - bias - m), eps: 2 ** -m };
+}
+export function roundToFormat(x, e, m) {
+  if (!Number.isFinite(x) || x === 0) return x;
+  const { bias, max } = fmtInfo(e, m);
+  const sign = x < 0 ? -1 : 1, ax = Math.abs(x);
+  if (ax >= (2 - 2 ** -(m + 1)) * 2 ** bias) return sign * Infinity;
+  let ex = Math.floor(Math.log2(ax));
+  if (2 ** ex > ax) ex -= 1;
+  if (2 ** (ex + 1) <= ax) ex += 1;
+  const minExp = 1 - bias;
+  const q = 2 ** (Math.max(ex, minExp) - m);
+  const r = _rne(ax / q) * q;
+  return sign * Math.min(r, ax > max ? max : r);
+}
+// Symmetric integer quantization of a list of numbers. group = 0 means one scale for the whole list; otherwise one scale per `group` consecutive numbers.
+export function quantizeSym(w, bits, group = 0) {
+  const qmax = 2 ** (bits - 1) - 1;
+  const g = group > 0 ? group : w.length;
+  const q = [], deq = [], scales = [];
+  for (let s = 0; s < w.length; s += g) {
+    const chunk = w.slice(s, s + g);
+    const sc = Math.max(...chunk.map(Math.abs)) / qmax || 1;
+    scales.push(sc);
+    chunk.forEach((v) => { const qi = Math.max(-qmax, Math.min(qmax, _rne(Math.abs(v) / sc) * Math.sign(v))); q.push(qi); deq.push(qi * sc); });
+  }
+  const mse = w.reduce((s, v, i) => s + (v - deq[i]) ** 2, 0) / w.length;
+  return { q, deq, scales, mse, qmax };
+}
+// Batching: a batch of b requests takes t0 + c·b milliseconds; requests arrive at lambda per second and wait for the batch to fill (b − 1)/(2·lambda) seconds on average.
+export function batchStats({ t0, c, lambda, b }) {
+  const service = t0 + c * b;
+  const capacity = (1000 * b) / service;
+  const wait = ((b - 1) / (2 * lambda)) * 1000;
+  return { service, capacity, rho: lambda / capacity, wait, latency: wait + service };
+}
+// Data-parallel step: all-reduce moves 2(N − 1)/N of the gradient bytes per GPU; efficiency = compute / (compute + communication) with no overlap.
+export function dpScaling({ paramsB, bytesPerGrad = 2, n, linkGBs, computeMs }) {
+  const S = paramsB * 1e9 * bytesPerGrad;
+  const traffic = n > 1 ? (2 * (n - 1) / n) * S : 0;
+  const commMs = (traffic / (linkGBs * 1e9)) * 1000;
+  const eff = computeMs / (computeMs + commMs);
+  return { S, traffic, commMs, eff, speedup: n * eff };
+}
+// Decoding one token reads every weight once, so on a memory-bound machine tokens per second ≤ bandwidth / model bytes.
+export function decodeSpeed({ paramsB, bits, bwGBs }) {
+  const gb = (paramsB * bits) / 8;
+  return { gb, tps: bwGBs / gb };
+}
+// Key-value cache: 2 (keys and values) × layers × tokens × d_model × bytes × batch.
+export function kvCache({ layers, d, n, batch, bytes }) { return 2 * layers * n * d * bytes * batch; }

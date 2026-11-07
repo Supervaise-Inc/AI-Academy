@@ -339,6 +339,24 @@ Layers may also be `{ "type": "reshape", "shape": [4,4,512] }` (a no-parameter r
 ### `calc` kind `agent_cost`
 `{ "type": "calc", "kind": "agent_cost", "title": "…", "window": 8192 }`: sliders for the starting prompt, the number of loops and the tokens added per loop; shows the final context C0 + n·s, the total tokens read n·C0 + s·n(n − 1)/2, the ratio to a single call and whether it fits in `window`.
 
+### `pipesched` (a pipeline schedule and its idle bubbles)
+`{ "type": "pipesched", "title": "…", "intro": "…", "p": 4, "m": 4, "backward": true, "note": "…", "checks": [ { "p": 4, "m": 8, "backward": true, "total": 22, "bubble": 0.2727 } ] }`. Sliders for the number of pipeline stages p (2–8) and micro-batches m (1–16) and a switch for the backward pass; the figure draws the GPipe-style schedule (one row per GPU, one column per time step, coloured by micro-batch, backward steps outlined, idle cells grey) and shows the total time steps and the idle share (p − 1)/(m + p − 1). `checks` (`p`, `m`, `backward`, with `total` and/or `bubble`) are recomputed.
+
+### `tensorsplit` (one matrix product split over several devices)
+`{ "type": "tensorsplit", "title": "…", "intro": "…", "X": [[1,2,3,4],[0,1,0,2]], "W": [[…4 numbers] × 4 rows], "mode": "row", "n": 2, "note": "…", "checks": [ { "mode": "column", "n": 2, "Y": [[11,9,8,12],[2,3,3,4]] } ] }`. Buttons choose column split or row split and 2 or 4 devices; each device card shows its slice of W (and of X for the row split) and its result; the figure joins them (concatenate for columns, add for rows) and confirms the result equals X · W. `W` needs a number of rows and columns divisible by 4. `checks` (`mode`, `n`, `Y`) are recomputed.
+
+### `numfmt` (floating-point formats: range, precision and rounding)
+`{ "type": "numfmt", "title": "…", "intro": "…", "value": 0.1, "examples": [0.1, 3.14159, 70000, 1e-8, 1.0001], "note": "…", "checks": [ { "x": 0.1, "fmt": "FP16", "stored": 0.0999755859375 } ] }`. A box for a number; a table of FP32, TF32, BF16 and FP16 with the bit layout (sign · exponent · mantissa), the largest value, the smallest normal value, the relative step 2^−m, the stored value and the error (overflow shows ∞; values below the smallest subnormal become 0). `checks` (`x`, `fmt` among FP32, TF32, BF16, FP16, and `stored`, or `"inf"`) are recomputed.
+
+### `quant` (round weights to fewer bits)
+`{ "type": "quant", "title": "…", "intro": "…", "bits": 8, "group": 0, "sets": [ { "name": "Smooth weights", "w": [8–32 numbers] }, { "name": "One outlier", "w": […] } ], "note": "…", "checks": [ { "set": 0, "bits": 8, "group": 0, "mse": 3.66e-6 } ] }`. Buttons choose a weight set and a group size (one scale for all, or one per 8, 4 or 2 weights), a slider chooses 2–8 bits; the figure shows the integers, the restored values, the per-weight error and the mean squared error for symmetric quantization (scale = max|w| ÷ (2^(bits−1) − 1)). `checks` (`set`, `bits`, `group`, with `mse` and/or `q`) are recomputed.
+
+### `batching` (latency against throughput when requests are batched)
+`{ "type": "batching", "title": "…", "intro": "…", "t0": 40, "c": 5, "lambda": 50, "b": 8, "note": "…", "checks": [ { "b": 8, "lambda": 50, "latency": 150, "capacity": 100 } ] }`. Sliders for the batch size b and the arrival rate λ; a batch takes t0 + c·b ms, capacity is 1000·b ÷ batch time, the average wait to fill a batch is (b − 1)/(2λ) seconds and the figure plots the average latency for b = 1…64 (the lowest point marked, unstable sizes omitted). `checks` (`b`, `lambda`, with `latency` and/or `capacity`) are recomputed. Timings are authored: flag them as made up.
+
+### `calc` kinds `dp_scaling`, `decode_speed`, `kv_cache`
+`{ "type": "calc", "kind": "dp_scaling", "title": "…", "computeMs": 400, "bytesPerGrad": 2 }`: sliders for the model size, the number of GPUs and the link speed; shows the gradient bytes, the all-reduce traffic per GPU 2(N − 1)/N × gradients, the communication time and the efficiency compute ÷ (compute + communication). `{ "kind": "decode_speed" }`: model size, 16/8/4-bit buttons and memory bandwidth; shows the weight bytes and the upper bound tokens per second = bandwidth ÷ model bytes. `{ "kind": "kv_cache", "layers": 32, "d": 4096, "paramsB": 7 }`: tokens per sequence, batch size and 16/8-bit cache; shows the cache per token 2 × layers × d × bytes, for the batch, and as a multiple of the 16-bit weights.
+
 ### `calc` kind `split`
 `{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`
