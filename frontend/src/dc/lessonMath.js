@@ -786,3 +786,39 @@ export function ftMemory({ N = 7, method = 'full', trainable = 0.01 }) {
   const T = trainable * P;
   return { weights: wb * P, grads: 2 * T, optimizer: 12 * T, total: wb * P + 14 * T };
 }
+
+// ---- Week 16: chunking, retrieval metrics, context budget, index size ----
+// Cut `words` into chunks of `size` words that share `overlap` words with the next one. Returns [[start, end), …].
+export function chunkWords(words, size, overlap) {
+  const L = words.length;
+  const step = Math.max(1, size - overlap);
+  const out = [];
+  for (let s = 0; ; s += step) {
+    const e = Math.min(L, s + size);
+    out.push([s, e]);
+    if (e >= L) break;
+  }
+  return out;
+}
+// Number of chunks: 1 if the text fits, else ceil((L − overlap) / (size − overlap)).
+export function nChunks(L, size, overlap) { return L <= size ? 1 : Math.ceil((L - overlap) / Math.max(1, size - overlap)); }
+// Is the span [a, b) of words inside one single chunk?
+export function spanIntact(chunks, a, b) { return chunks.some(([s, e]) => s <= a && e >= b); }
+// Precision@k, recall@k and the reciprocal rank of the first relevant result within the top k. `rels` is a ranked list of booleans.
+export function rankMetrics(rels, k, totalRelevant) {
+  const top = rels.slice(0, k);
+  const hits = top.filter(Boolean).length;
+  const first = top.findIndex(Boolean);
+  return { hits, precision: hits / k, recall: totalRelevant > 0 ? hits / totalRelevant : 0, rr: first < 0 ? 0 : 1 / (first + 1) };
+}
+// Tokens used by a RAG prompt: fixed overhead (instructions, question) + k chunks; what is left for the answer.
+export function ragBudget({ W = 4096, k = 4, chunk = 300, overhead = 150 }) {
+  const context = k * chunk;
+  const used = overhead + context;
+  return { context, used, left: W - used, fits: used < W };
+}
+// Memory and work of a vector index: vectors × dimension × bytes; one exact search costs vectors × dimension multiply-adds.
+export function indexSize({ docs = 1e4, chunksPer = 20, dim = 384, bytes = 4 }) {
+  const vectors = docs * chunksPer;
+  return { vectors, bytes: vectors * dim * bytes, flops: vectors * dim };
+}

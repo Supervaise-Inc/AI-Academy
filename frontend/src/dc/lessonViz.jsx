@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT, schedule, diffSample1d, unetShapes, prefProb, prefLoss, klObjective, klOptimum, softmaxArr, svdSmall, lowRankApprox, ftMemory } from './lessonMath.js';
+import { softmaxT, filterSampling, chainStats, mulberry32, gaussNoise, BYTES, convParams, loraParams, chinchilla, FN, LOSS, neuronAccuracy, convolve, transposeConv, learnBPE, applyBPE, bigrams, cosine, nearest, posEnc, alphaBar, tokens, tfidfRank, attend, ACT, forwardNet, countParams, polyFit, polyEval, polyMse, makeDataset, initNet, predictNet, netLossAcc, trainEpoch, DACT, backwardNet, gradNorms, outSize, convGrad, pool2d, convShapes, tokenStats, cosineSim, rnnInfluence, lstmInfluence, lstmStep, softHard, tfParams, maskedSoftmax, CHIN, chinLoss, chinOptimal, moeRoute, moeParams, emergence, vitTokens, clipMatrix, patchPermutation, ganInit, ganStep, sigmoid, upsampleNearest, upsampleBilinear, transposeConvPad, outSizeT, schedule, diffSample1d, unetShapes, prefProb, prefLoss, klObjective, klOptimum, softmaxArr, svdSmall, lowRankApprox, ftMemory, chunkWords, nChunks, spanIntact, rankMetrics, ragBudget, indexSize } from './lessonMath.js';
 export { convolve, gaussNoise };
 
 // Data-driven figures for lessons. Each takes the JSON from a ```viz block in a week-NN.md file and does a
@@ -85,9 +85,9 @@ function Slider({ label, min, max, step, value, onChange, show }) {
 }
 
 function Calc({ spec, fig }) {
-  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : spec.kind === 'gan_loss' ? -3 : spec.kind === 'ft_memory' ? 7 : 24);
-  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : spec.kind === 'gan_loss' ? 3 : spec.kind === 'ft_memory' ? 1 : 0);
-  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : spec.kind === 'ft_memory' ? 1 : 15);
+  const [a, setA] = useState(spec.kind === 'fc_vs_conv' ? 28 : spec.kind === 'lora' ? 4096 : spec.kind === 'memory' ? 7 : spec.kind === 'split' ? 1000 : spec.kind === 'ngram_space' ? 10000 : spec.kind === 'attn_cost' ? 512 : spec.kind === 'vit_tokens' ? 224 : spec.kind === 'gan_loss' ? -3 : spec.kind === 'ft_memory' ? 7 : spec.kind === 'rag_budget' ? 8192 : spec.kind === 'index_size' ? 10 : 24);
+  const [b, setB] = useState(spec.kind === 'fc_vs_conv' ? 100 : spec.kind === 'lora' ? 8 : spec.kind === 'split' ? 70 : spec.kind === 'ngram_space' ? 2 : spec.kind === 'attn_cost' ? 64 : spec.kind === 'vit_tokens' ? 16 : spec.kind === 'gan_loss' ? 3 : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 4 : spec.kind === 'index_size' ? 20 : 0);
+  const [c3, setC3] = useState(spec.kind === 'ngram_space' ? 1000 : spec.kind === 'vit_tokens' ? (spec.channels ?? 3) : spec.kind === 'ft_memory' ? 1 : spec.kind === 'rag_budget' ? 300 : spec.kind === 'index_size' ? 384 : 15);
   let body = null;
   if (spec.kind === 'fc_vs_conv') {
     const cin = spec.channels || 1;
@@ -161,6 +161,40 @@ function Calc({ spec, fig }) {
           <div className="out"><span className="wg-k">Total (without activations)</span><span className="vz-big">{gb(R.total)}</span><span className="wg-note">{m === 'full' ? '16 bytes per parameter' : `${(R.total / (a * 1e9)).toFixed(2)} bytes per parameter`}</span></div>
         </div>
         <p className="wg-note">Activations (the memory used by a forward pass: grows with batch size and sequence length) come on top. The 16 bytes of full fine-tuning are 2 (16-bit weights) + 2 (gradients) + 4 (32-bit master copy) + 8 (Adam's two moments). {spec.note || ''}</p>
+      </>
+    );
+  } else if (spec.kind === 'rag_budget') {
+    const R = ragBudget({ W: a, k: b, chunk: c3, overhead: spec.overhead ?? 150 });
+    const reserve = spec.reserve ?? 300;
+    const ok = R.left >= reserve;
+    body = (
+      <>
+        <Slider label="Context window of the model (tokens)" min={1024} max={32768} step={1024} value={a} onChange={setA} show={(q) => q.toLocaleString('en-US')} />
+        <Slider label="Passages retrieved (k)" min={1} max={20} step={1} value={b} onChange={setB} />
+        <Slider label="Tokens per passage (chunk size)" min={50} max={1000} step={50} value={c3} onChange={setC3} />
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(4,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Instructions + question</span><span className="vz-big">{(spec.overhead ?? 150).toLocaleString('en-US')}</span><span className="wg-note">fixed overhead (assumed)</span></div>
+          <div><span className="wg-k">Retrieved context</span><span className="vz-big">{R.context.toLocaleString('en-US')}</span><span className="wg-note">{b} × {c3} tokens</span></div>
+          <div><span className="wg-k">Left for the answer</span><span className="vz-big">{R.left.toLocaleString('en-US')}</span><span className="wg-note">window − prompt</span></div>
+          <div className="out"><span className="wg-k">Does it fit?</span><span className="vz-big">{ok ? 'Yes' : 'No'}</span><span className="wg-note">{ok ? `at least ${reserve} tokens left for the reply` : `needs ${reserve} tokens for the reply`}</span></div>
+        </div>
+        <p className="wg-note">Prompt tokens = overhead + k × chunk size. Attention cost also grows with prompt length (Week 7), and long prompts can bury the useful passage, so retrieving more is not always better. The overhead and the reply reserve are assumptions for the demonstration.</p>
+      </>
+    );
+  } else if (spec.kind === 'index_size') {
+    const R = indexSize({ docs: a * 1000, chunksPer: b, dim: c3 });
+    const bytesTxt = (x) => (x >= 1e9 ? (x / 1e9).toFixed(2) + ' GB' : (x / 1e6).toFixed(1) + ' MB');
+    body = (
+      <>
+        <Slider label="Documents (thousands)" min={1} max={1000} step={1} value={a} onChange={setA} show={(q) => `${q.toLocaleString('en-US')} thousand`} />
+        <Slider label="Chunks per document" min={1} max={100} step={1} value={b} onChange={setB} />
+        <div className="wg-row" style={{ gap: 8, margin: '6px 0 10px' }}>{[384, 768, 1536].map((d) => <button key={d} type="button" className={'wg-chip' + (c3 === d ? ' on' : '')} aria-pressed={c3 === d} onClick={() => setC3(d)}>{d} numbers per vector</button>)}</div>
+        <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+          <div><span className="wg-k">Vectors in the index</span><span className="vz-big">{R.vectors.toLocaleString('en-US')}</span><span className="wg-note">documents × chunks</span></div>
+          <div className="out"><span className="wg-k">Memory (32-bit floats)</span><span className="vz-big">{bytesTxt(R.bytes)}</span><span className="wg-note">vectors × {c3} × 4 bytes</span></div>
+          <div><span className="wg-k">One exact search</span><span className="vz-big">{human(R.flops)}</span><span className="wg-note">multiply-adds: vectors × {c3}</span></div>
+        </div>
+        <p className="wg-note">Exact (brute-force) search compares the question with every vector. Large systems use approximate nearest-neighbour indexes to avoid that, and sometimes store 16-bit or 8-bit numbers. Typical embedding sizes: 384 (small models) to 1,536 (large ones).</p>
       </>
     );
   } else if (spec.kind === 'gan_loss') {
@@ -2397,6 +2431,81 @@ function PrefPair({ spec, fig }) {
   );
 }
 
+// ---------------------------------------------------------------- chunker (cut a document into overlapping chunks)
+function Chunker({ spec, fig }) {
+  const words = useMemo(() => spec.text.trim().split(/\s+/), [spec]);
+  const L = words.length;
+  const [size, setSize] = useState(spec.size ?? 20);
+  const [ov, setOv] = useState(spec.overlap ?? 4);
+  const o = Math.min(ov, size - 1);
+  const chunks = useMemo(() => chunkWords(words, size, o), [words, size, o]);
+  const aw = spec.answer.trim().split(/\s+/);
+  let a0 = -1;
+  for (let i = 0; i + aw.length <= L; i++) if (aw.every((w, j) => words[i + j] === w)) { a0 = i; break; }
+  const a1 = a0 + aw.length;
+  const intact = a0 >= 0 && spanIntact(chunks, a0, a1);
+  const home = intact ? chunks.findIndex(([s, e]) => s <= a0 && e >= a1) : -1;
+  const hues = ['var(--accent-soft-bg)', 'var(--surface2)', 'var(--amber-soft-bg, #fdf1d8)'];
+  const wordChunks = words.map((_, i) => chunks.map(([s, e], k) => (i >= s && i < e ? k : -1)).filter((k) => k >= 0));
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <Slider label="Chunk size (words)" min={4} max={Math.max(8, L)} step={1} value={size} onChange={(v) => setSize(v)} show={(q) => `${q} words`} />
+      <Slider label="Overlap (words shared with the next chunk)" min={0} max={Math.max(0, size - 1)} step={1} value={o} onChange={setOv} show={(q) => `${q} words`} />
+      <p className="wg-p" style={{ lineHeight: 2.1 }} aria-label="The document with each word shaded by its chunk">
+        {words.map((w, i) => {
+          const ks = wordChunks[i];
+          const inAns = i >= a0 && i < a1;
+          return <span key={i} title={`chunk ${ks.map((k) => k + 1).join(' and ')}`} style={{ background: hues[ks[0] % 3], borderBottom: ks.length > 1 ? '3px double var(--accent)' : '3px solid transparent', outline: inAns ? '1.5px solid var(--text2)' : 'none', borderRadius: 4, padding: '1px 3px', margin: '0 1px', fontWeight: inAns ? 700 : 400 }}>{w} </span>;
+        })}
+      </p>
+      <div className="vz-cmp" style={{ gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Words in the document</span><span className="vz-big">{L}</span><span className="wg-note">to be cut into chunks</span></div>
+        <div className="out"><span className="wg-k">Chunks</span><span className="vz-big">{chunks.length}</span><span className="wg-note">{L <= size ? 'the whole text fits in one chunk' : `⌈(${L} − ${o}) ÷ (${size} − ${o})⌉ = ⌈${f2((L - o) / (size - o), 2)}⌉`}</span></div>
+        <div><span className="wg-k">Words embedded in total</span><span className="vz-big">{chunks.reduce((q, [s, e]) => q + (e - s), 0)}</span><span className="wg-note">{f2(chunks.reduce((q, [s, e]) => q + (e - s), 0) / L, 2)}× the document (overlap repeats words)</span></div>
+      </div>
+      <p className="vz-calc" aria-live="polite" style={{ marginTop: 10 }}>{spec.question ? <><strong>Question:</strong> {spec.question} </> : null}→ <strong>{intact ? `The answer (outlined words) sits whole inside chunk ${home + 1}, so retrieval can find it.` : 'The answer (outlined words) is cut between chunks: no single chunk holds all of it.'}</strong></p>
+      <p className="wg-note">{spec.note || 'Words stand in for tokens to keep the arithmetic readable; real systems count tokens, and often cut at sentence or paragraph boundaries first. Words with a double underline are repeated in two chunks.'}</p>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- rankmetrics (precision, recall and reciprocal rank of a ranked list)
+function RankMetrics({ spec, fig }) {
+  const [qi, setQi] = useState(0);
+  const q = spec.queries[qi];
+  const [k, setK] = useState(spec.k ?? 3);
+  const kk = Math.min(k, q.results.length);
+  const m = rankMetrics(q.results.map((r) => r.rel), kk, q.totalRelevant);
+  const f = (x) => Number(x.toFixed(3)).toString();
+  return (
+    <div className="wg">
+      <Title fig={fig}>{spec.title}</Title>
+      {spec.intro ? <p className="wg-p">{spec.intro}</p> : null}
+      <div className="wg-row" role="group" aria-label="Choose the question" style={{ marginBottom: 8 }}>
+        {spec.queries.map((x, i) => <button key={i} type="button" className={'wg-chip' + (i === qi ? ' on' : '')} aria-pressed={i === qi} onClick={() => setQi(i)}>{x.label}</button>)}
+      </div>
+      <p className="wg-p"><strong>Question:</strong> {q.question} <em>({q.totalRelevant} passage{q.totalRelevant === 1 ? '' : 's'} in the whole collection can answer it)</em></p>
+      <Slider label="Passages passed to the model (k)" min={1} max={q.results.length} step={1} value={kk} onChange={setK} />
+      <ol className="vz-rank">
+        {q.results.map((r, i) => (
+          <li key={i} className={i < kk ? 'top' : ''} style={{ opacity: i < kk ? 1 : 0.55 }}>
+            <div className="vz-rank-h"><strong>Rank {i + 1}</strong><span>{r.rel ? '✓ relevant' : '✗ not relevant'}</span></div>
+            <p className="wg-note" style={{ margin: '4px 0 0' }}>{r.text}</p>
+          </li>
+        ))}
+      </ol>
+      <div className="vz-cmp" style={{ marginTop: 10, gridTemplateColumns: 'repeat(3,minmax(0,1fr))' }}>
+        <div><span className="wg-k">Precision@{kk}</span><span className="vz-big">{f(m.precision)}</span><span className="wg-note">{m.hits} relevant ÷ {kk} retrieved</span></div>
+        <div><span className="wg-k">Recall@{kk}</span><span className="vz-big">{f(m.recall)}</span><span className="wg-note">{m.hits} found ÷ {q.totalRelevant} that exist</span></div>
+        <div className="out"><span className="wg-k">Reciprocal rank</span><span className="vz-big">{f(m.rr)}</span><span className="wg-note">{m.rr ? `1 ÷ ${Math.round(1 / m.rr)} (first relevant at rank ${Math.round(1 / m.rr)})` : 'no relevant passage in the top ' + kk}</span></div>
+      </div>
+      <p className="wg-note">{spec.note || 'The passages and their labels are made up for the demonstration. Raising k can only raise recall, but it usually lowers precision: more noise reaches the model.'}</p>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- klreward (reward versus staying close to the original model)
 function KlReward({ spec, fig }) {
   const ref = spec.answers.map((a) => a.ref);
@@ -2478,4 +2587,4 @@ function LowRank({ spec, fig }) {
   );
 }
 
-export const VIZ = { prefpair: PrefPair, klreward: KlReward, lowrank: LowRank, schedule: Schedule, sampler1d: Sampler1d, unet: Unet, ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };
+export const VIZ = { chunker: Chunker, rankmetrics: RankMetrics, prefpair: PrefPair, klreward: KlReward, lowrank: LowRank, schedule: Schedule, sampler1d: Sampler1d, unet: Unet, ganlab: GanLab, upsample: Upsample, clipsim: ClipSim, patchshuffle: PatchShuffle, fusion: Fusion, llmfamily: LlmFamily, moe: Moe, scalinglaw: ScalingLaw, emergent: Emergent, tfblock: TfBlock, causalmask: CausalMask, shiftloss: ShiftLoss, seqmemory: SeqMemory, lstmcell: LstmCell, hardsoft: HardSoft, vocabtrade: VocabTrade, vecsim: VecSim, convgrad: ConvGrad, filters: Filters, pool: Pool, cnnstack: CnnStack, backprop: Backprop, gradflow: GradFlow, fold: Fold, network: Network, fit: Fit, trainer: Trainer, mlp: Mlp, nested: Nested, sampling: Sampling, chain: Chain, logbars: LogBars, attention: Attention, equation: Equation, pipeline: Pipeline, calc: Calc, curve: Curve, descent: Descent, neuron: Neuron, conv: Conv, bpe: BPE, ngram: NGram, scatter: Scatter, heatmap: Heatmap, posenc: PosEnc, patch: Patch, diffusion: Diffusion, retrieval: Retrieval };

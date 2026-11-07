@@ -132,7 +132,7 @@ function check(file) {
         if ((s.steps || []).length < 3) at('needs ≥3 steps');
         (s.steps || []).forEach((st, k) => { if (!isStr(st.title) || !isStr(st.body, 30)) at(`step ${k + 1} needs title and body`); (st.active || []).forEach((a) => !ids.includes(a) && at(`step ${k + 1} activates unknown node "${a}"`)); if (!(st.active || []).length) at(`step ${k + 1} needs an active list`); });
       },
-      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens', 'gan_loss', 'ft_memory'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost, vit_tokens, gan_loss or ft_memory'); },
+      calc: () => { if (!['fc_vs_conv', 'lora', 'memory', 'scaling', 'split', 'ngram_space', 'attn_cost', 'vit_tokens', 'gan_loss', 'ft_memory', 'rag_budget', 'index_size'].includes(s.kind)) at('kind must be fc_vs_conv, lora, memory, scaling, split, ngram_space, attn_cost, vit_tokens, gan_loss, ft_memory, rag_budget or index_size'); },
       network: () => {
         const L = s.layers;
         if (!Array.isArray(L) || L.length < 3 || L.some((n) => !(n >= 1 && n <= 5))) return at('layers must be ≥3 numbers, each 1..5');
@@ -374,6 +374,32 @@ function check(file) {
           const U = M.unetShapes({ size, inCh: s.inCh ?? 1, base: c.base ?? s.base ?? 16, levels: c.levels ?? L, timeDim: c.timeDim ?? s.timeDim ?? 32 });
           if (c.total != null && U.total !== c.total) at(`check ${k + 1}: total expected ${c.total}, computed ${U.total}`);
           if (c.layer && c.params != null) { const r = U.rows.find((q) => q.name.startsWith(c.layer)); if (!r) at(`check ${k + 1}: no layer starting "${c.layer}"`); else if (r.params !== c.params) at(`check ${k + 1}: ${c.layer} params expected ${c.params}, computed ${r.params}`); }
+        });
+      },
+      chunker: () => {
+        if (!isStr(s.text, 120) || !isStr(s.answer, 5)) return at('chunker needs text (≥ 120 characters) and answer (a phrase that appears in the text)');
+        const words = s.text.trim().split(/\s+/), aw = s.answer.trim().split(/\s+/);
+        let a0 = -1; for (let i = 0; i + aw.length <= words.length; i++) if (aw.every((w, j) => words[i + j] === w)) { a0 = i; break; }
+        if (a0 < 0) return at('answer must appear word for word in the text');
+        if (words.length < 30) at('the text should have at least 30 words');
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "size": 20, "overlap": 4, "chunks": 4, "intact": true }]');
+        (s.checks || []).forEach((c, k) => {
+          const ch = M.chunkWords(words, c.size, c.overlap);
+          if (c.chunks != null && ch.length !== c.chunks) at(`check ${k + 1}: chunks expected ${c.chunks}, computed ${ch.length}`);
+          if (c.intact != null && M.spanIntact(ch, a0, a0 + aw.length) !== c.intact) at(`check ${k + 1}: intact expected ${c.intact}, computed ${!c.intact}`);
+        });
+      },
+      rankmetrics: () => {
+        if (!Array.isArray(s.queries) || s.queries.length < 2) return at('queries needs ≥2 entries');
+        s.queries.forEach((q, i) => {
+          if (!isStr(q.label) || !isStr(q.question) || !Array.isArray(q.results) || q.results.length < 5 || q.results.some((r) => !isStr(r.text) || typeof r.rel !== 'boolean')) at(`query ${i + 1} needs label, question and ≥5 results {text, rel: true|false}`);
+          else if (!(q.totalRelevant >= q.results.filter((r) => r.rel).length)) at(`query ${i + 1}: totalRelevant must be ≥ the relevant results listed`);
+        });
+        if (!Array.isArray(s.checks) || !s.checks.length) at('checks required: [{ "query": 0, "k": 3, "precision": 0.667, "recall": 1, "rr": 1 }]');
+        (s.checks || []).forEach((c, k) => {
+          const q = s.queries[c.query]; if (!q) return at(`check ${k + 1}: no query ${c.query}`);
+          const m = M.rankMetrics(q.results.map((r) => r.rel), c.k, q.totalRelevant);
+          for (const key of ['precision', 'recall', 'rr']) if (c[key] != null && Math.abs(m[key] - c[key]) > 0.002) at(`check ${k + 1}: ${key} expected ${c[key]}, computed ${m[key].toFixed(4)}`);
         });
       },
       prefpair: () => {

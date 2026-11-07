@@ -312,6 +312,18 @@ Layers may also be `{ "type": "reshape", "shape": [4,4,512] }` (a no-parameter r
 ### `calc` kind `ft_memory`
 `{ "type": "calc", "kind": "ft_memory", "title": "…" }`: a slider for the model size N (billions of parameters), three buttons (full fine-tuning, LoRA with a 16-bit base, QLoRA with a 4-bit base) and, for the two adapter methods, a slider for the trainable share; shows weights, gradients, Adam state and the total. Full fine-tuning in mixed precision with Adam is 16 bytes per parameter (2 weights + 2 gradients + 4 master copy + 8 Adam moments); adapters: base weights (2 bytes, or 0.5 for 4-bit) plus 14 bytes per trained number. A 7 B model: full 112 GB, LoRA at 1% trainable 15.0 GB, QLoRA at 1% 4.5 GB (without activations).
 
+### `chunker` (cut a document into overlapping chunks)
+`{ "type": "chunker", "title": "…", "intro": "…", "text": "a 40–80 word document", "answer": "a phrase that appears word for word in the text", "question": "…", "size": 20, "overlap": 4, "note": "…", "checks": [ { "size": 20, "overlap": 4, "chunks": 4, "intact": true } ] }`. Two sliders (chunk size and overlap, in words); the text is shown with each word shaded by its chunk (a double underline marks words repeated in two chunks) and the answer phrase outlined. Shows the number of chunks `⌈(L − overlap) ÷ (size − overlap)⌉`, the words embedded in total, and whether the answer sits whole inside one chunk or is cut in two (a lesson in why chunking matters). `checks` (`size`, `overlap`, `chunks`, `intact`) are recomputed; write at least one check where the answer is cut.
+
+### `rankmetrics` (precision, recall and reciprocal rank of a ranked list)
+`{ "type": "rankmetrics", "title": "…", "intro": "…", "k": 3, "queries": [ { "label": "Question A", "question": "…", "totalRelevant": 2, "results": [ { "text": "…", "rel": true }, … ≥5, in ranked order ] }, … ≥2 ], "note": "…", "checks": [ { "query": 0, "k": 3, "precision": 0.667, "recall": 1, "rr": 1 } ] }`. Tabs choose a question; a slider sets k; the figure marks the top-k results and computes precision@k (relevant ÷ k), recall@k (relevant found ÷ `totalRelevant`) and the reciprocal rank of the first relevant result. `checks` are recomputed. Passages and labels are authored: flag them as illustrative.
+
+### `calc` kind `rag_budget`
+`{ "type": "calc", "kind": "rag_budget", "title": "…", "overhead": 150, "reserve": 300 }`: sliders for the context window, the number of retrieved passages k and the tokens per passage; shows overhead (instructions + question), retrieved context k × chunk, what is left for the answer and whether the prompt fits with `reserve` tokens to spare.
+
+### `calc` kind `index_size`
+`{ "type": "calc", "kind": "index_size", "title": "…" }`: sliders for documents (thousands) and chunks per document, buttons for 384/768/1536 numbers per vector; shows the number of vectors, the memory of a 32-bit index (vectors × dimension × 4 bytes) and the multiply-adds of one exact search.
+
 ### `calc` kind `split`
 `{ "type": "calc", "kind": "split", "title": "…" }`: sliders for dataset size, training and validation share; shows train / validation / test counts.
 ### `posenc` (sinusoidal positional encoding, computed live): `{ "type": "posenc", "title": "…", "dModel": 16, "positions": 24 }`
