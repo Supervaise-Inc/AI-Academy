@@ -282,9 +282,9 @@ function template(v) {
           <div style={{ padding: '8px 10px 22px' }}>
             <div
               style={{
-                fontSize: '10.5px',
+                fontSize: '13px',
                 fontWeight: '700',
-                letterSpacing: '.12em',
+                letterSpacing: '.06em',
                 textTransform: 'uppercase',
                 color: '#7C857A',
                 lineHeight: '1.3',
@@ -327,9 +327,9 @@ function template(v) {
           <div
             style={{
               padding: '16px 10px 4px',
-              fontSize: '10.5px',
+              fontSize: '13px',
               fontWeight: '700',
-              letterSpacing: '.12em',
+              letterSpacing: '.06em',
               textTransform: 'uppercase',
               color: '#7C857A',
               lineHeight: '1.3',
@@ -362,7 +362,7 @@ function template(v) {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  fontSize: '12px',
+                  fontSize: '13px',
                   fontWeight: '800',
                   color: '#FFFFFF',
                 }}
@@ -371,7 +371,7 @@ function template(v) {
               </div>
               <div style={{ minWidth: '0' }}>
                 <div style={{ fontSize: '13px', fontWeight: '700', color: '#FFFFFF', lineHeight: '1.3' }}>{v.userName}</div>
-                <div style={{ fontSize: '11.5px', color: '#9BA3AF', lineHeight: '1.4' }}>{'Student'}</div>
+                <div style={{ fontSize: '13px', color: '#9BA3AF', lineHeight: '1.4' }}>{'Student'}</div>
               </div>
             </div>
             <DcLink className="navlink" href="Landing.dc.html" onClick={v.signOut} style={{ color: '#7C857A' }}>

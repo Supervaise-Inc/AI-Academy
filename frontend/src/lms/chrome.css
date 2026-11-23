@@ -23,7 +23,7 @@
 .lshell .setval { color: var(--text3); text-align: right; }
 .lshell .sf-cols { display: flex; flex-wrap: wrap; gap: 26px 44px; }
 .lshell .sf-col { display: flex; flex-direction: column; gap: 7px; min-width: 132px; }
-.lshell .sf-col h4 { margin: 0 0 3px; font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--text3); }
+.lshell .sf-col h4 { margin: 0 0 3px; font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text3); }
 .lshell .sf-col a { color: var(--text2); transition: color .25s ease; }
 .lshell .sf-col a:hover { color: var(--accent-strong); }
 .lshell .sf-power { display: inline-flex; align-items: center; justify-content: flex-end; gap: 10px; }
@@ -58,3 +58,4 @@
 /* The AI Academy footer logo is always NVIDIA green. */
 .lshell .sf-brand svg polygon, .lshell .sf-brand svg circle, .lshell .sf-brand svg rect { fill: #76b900; }
 .lshell[data-theme="light"] .sf-brand svg polygon, .lshell[data-theme="light"] .sf-brand svg circle, .lshell[data-theme="light"] .sf-brand svg rect { fill: #659b00; }
+.lshell table, .lshell .lms-grade, .lshell .lms-mono, .lshell .badge { font-variant-numeric: tabular-nums; }

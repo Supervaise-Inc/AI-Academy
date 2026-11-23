@@ -1,0 +1,19 @@
+/*
+  One font system for the whole app.
+
+  Reading and interface text: Source Sans 3 (a formal, highly legible sans-serif designed for long reading and
+  for screens, with Greek and Latin-extended letters for the maths and for Filipino text). Code, numbers in
+  tables and figures: JetBrains Mono. Both are self-hosted (the @fontsource-variable packages, imported in
+  main.jsx), so the app looks the same offline, for example on the school's DGX Spark.
+
+  Use the tokens, never a font name, in new CSS:
+    font-family: var(--font-sans);   everything the student reads, headings and interface alike
+    font-family: var(--font-mono);   code, numbers that must line up, terminal-style output
+*/
+:root {
+  --font-sans: 'Source Sans 3 Variable', 'Source Sans 3', 'Noto Sans', 'Segoe UI', system-ui, -apple-system, Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  /* Older names, kept so that existing rules keep working while they are moved to the tokens above. */
+  --ff-read: var(--font-sans);
+  --ff-ui: var(--font-sans);
+}

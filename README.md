@@ -231,7 +231,7 @@ The design file is a set of `.dc.html` artboards (kept in `design-source/`). `to
 
 Treat `frontend/src/pages/*` as the source from now on and edit it directly. Re-running `cd tools && npm install && node convert.mjs` regenerates and overwrites those files, so only do that if you are changing the design and are happy to redo any hand edits.
 
-Fonts load from Google Fonts (`index.html`). To self-host them for an offline or restricted network, download the four families (Plus Jakarta Sans, Rubik, JetBrains Mono, Source Serif 4) into `frontend/public/fonts`, then replace the Google link in `frontend/index.html`. Update the `font-src` / `style-src` entries in `backend/src/app.js` to match.
+Fonts are self-hosted, so the app looks the same offline (for example on the school's DGX Spark): **Source Sans 3** for all reading and interface text and **JetBrains Mono** for code and numbers that must line up. They come from the `@fontsource-variable/source-sans-3` and `@fontsource-variable/jetbrains-mono` packages, imported in `frontend/src/main.jsx` and bundled by Vite (nothing is fetched from Google). The CSS tokens `--font-sans` and `--font-mono` are defined once in `frontend/src/fonts.css`: use them in new CSS instead of a font name. To change the font, install another `@fontsource-variable/*` package, import it in `main.jsx` and change the two stacks in `fonts.css`.
 
 ## Troubleshooting
 

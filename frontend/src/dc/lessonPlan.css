@@ -21,7 +21,7 @@
   .wp-prose .chk strong,.wp-prose .prose strong{font-weight:600}
   .lh-purpose .mk{color:inherit}
   .wp-empty{padding:28px;border-radius:16px;border:1px solid var(--card-border);background:var(--card-bg);max-width:var(--measure)}
-  .wp-empty h2{margin:0 0 8px;font-family:var(--ff-read);font-size:var(--fs-h2)}
+  .wp-empty h2{margin:0 0 8px;font-family:var(--font-sans);font-size:var(--fs-h2)}
   .wp-empty p{margin:0;color:var(--text2)}
 
   /* ---- hook figure (animated opener) ---- */
@@ -29,7 +29,7 @@
   .hk-card{min-height:196px;padding:14px 16px;border-radius:12px;background:var(--card-bg);border:1px solid var(--card-border);display:flex;flex-direction:column;gap:8px;min-width:0}
   .hk-card.out{border-color:var(--accent-soft-border)}
   .hk-lab{font-size:12.5px;font-weight:500;color:var(--text3)}
-  .hk-txt{font-family:var(--ff-read);font-size:var(--fs-sec-lede);line-height:1.45;color:var(--text);overflow-wrap:anywhere}
+  .hk-txt{font-family:var(--font-sans);font-size:var(--fs-sec-lede);line-height:1.45;color:var(--text);overflow-wrap:anywhere}
   .hk-txt.strong{color:var(--text)}
   .hk-caret{display:inline-block;width:2px;height:1.05em;margin-left:2px;vertical-align:-2px;background:var(--accent);animation:hkBlink 1s steps(2,start) infinite}
   @keyframes hkBlink{to{visibility:hidden}}
@@ -53,9 +53,9 @@
   @media (prefers-reduced-motion: reduce){.hk-caret,.hk-dots i{animation:none}}
 
   /* ---- interactive lesson blocks (viz / quiz) ---- */
-  .wp-prose .wg{margin:22px 0 30px;padding:20px 22px;border-radius:16px;background:var(--card-bg);border:1px solid var(--card-border);box-shadow:var(--elev);font-family:'Plus Jakarta Sans',system-ui,sans-serif}
+  .wp-prose .wg{margin:22px 0 30px;padding:20px 22px;border-radius:16px;background:var(--card-bg);border:1px solid var(--card-border);box-shadow:var(--elev);font-family:var(--font-sans)}
   .wp-prose .wg-err{border-color:var(--red-border);background:var(--red-soft-bg);color:var(--red-text)}
-  .wp-prose .wg-t{font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent-soft-text);margin-bottom:10px}
+  .wp-prose .wg-t{font-size:12.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-soft-text);margin-bottom:10px}
   .wp-prose .wg-p{margin:0 0 12px;font-size:15px;line-height:1.6;color:var(--text2)}
   .wp-prose .wg-p strong{color:var(--text)}
   .wp-prose .wg-note{margin:12px 0 0;font-size:13px;line-height:1.5;color:var(--text3)}
@@ -88,7 +88,7 @@
   .wp-prose .wg-box{flex:1 1 150px;min-width:130px;padding:12px 14px;border-radius:12px;border:1px solid var(--divider);background:var(--surface2);display:flex;flex-direction:column;gap:6px}
   .wp-prose .wg-box.model{border-style:dashed;border-color:var(--accent-soft-border);text-align:center;justify-content:center}
   .wp-prose .wg-box.out{border-color:var(--accent-soft-border);background:var(--accent-soft-bg)}
-  .wp-prose .wg-k{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text3)}
+  .wp-prose .wg-k{font-size:12.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text3)}
   .wp-prose .wg-v{font-size:14.5px;line-height:1.45;color:var(--text);overflow-wrap:anywhere}
   .wp-prose .wg-arrow{flex:0 0 36px;width:36px;align-self:center;color:var(--accent-strong)}
   @media (max-width:760px){.wp-prose .wg-arrow{transform:rotate(90deg);margin:0 auto}}
@@ -99,18 +99,18 @@
   .wp-prose .wg-node:hover{border-color:var(--accent-soft-border)}
   .wp-prose .wg-node.past{border-color:var(--accent-soft-border)}
   .wp-prose .wg-node.on{background:var(--accent-soft-bg);border-color:var(--accent);color:var(--text)}
-  .wp-prose .wg-yr{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--accent-soft-text)}
+  .wp-prose .wg-yr{font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--accent-soft-text)}
   .wp-prose .wg-nt{font-size:12.5px;font-weight:600;line-height:1.3}
   .wp-prose .wg-detail{display:flex;gap:16px;align-items:flex-start;padding:14px 16px;border-radius:12px;background:var(--surface2);border:1px solid var(--divider)}
-  .wp-prose .wg-detail-y{font-family:'JetBrains Mono',monospace;font-size:22px;font-weight:700;color:var(--accent-soft-text);min-width:64px}
+  .wp-prose .wg-detail-y{font-family:var(--font-mono);font-size:22px;font-weight:700;color:var(--accent-soft-text);min-width:64px}
   .wp-prose .wg-detail-t{font-weight:700;margin-bottom:4px;color:var(--text)}
 
   .wp-prose .wg-slide{display:flex;align-items:center;gap:16px;margin:4px 0 6px;font-size:14px;color:var(--text2)}
   .wp-prose .wg-slide input{flex:1;accent-color:var(--accent);min-height:28px}
-  .wp-prose .wg-slide strong{font-family:'JetBrains Mono',monospace;color:var(--text)}
+  .wp-prose .wg-slide strong{font-family:var(--font-mono);color:var(--text)}
   .wp-prose .wg-bars{list-style:none;margin:10px 0 14px;padding:0;display:flex;flex-direction:column;gap:8px}
   .wp-prose .wg-bars li{display:grid;grid-template-columns:84px minmax(0,1fr) 52px 34px;gap:10px;align-items:center;font-size:13.5px}
-  .wp-prose .wg-bar-l{font-family:'JetBrains Mono',monospace;color:var(--text)}
+  .wp-prose .wg-bar-l{font-family:var(--font-mono);color:var(--text)}
   .wp-prose .wg-bar-track{height:14px;border-radius:999px;background:var(--track);overflow:hidden}
   .wp-prose .wg-bar-fill{display:block;height:100%;border-radius:999px;background:var(--accent);transition:width .35s cubic-bezier(.16,1,.3,1)}
   .wp-prose .wg-bar-p{text-align:right;color:var(--text2);font-variant-numeric:tabular-nums}
@@ -130,7 +130,7 @@
   .wp-prose .wg-opt.wrong{border-color:var(--red-border);background:var(--red-soft-bg)}
   .wp-prose .wg-score{display:flex;gap:18px;align-items:center;padding:14px 16px;border-radius:12px;background:var(--red-soft-bg);border:1px solid var(--red-border);margin-bottom:14px}
   .wp-prose .wg-score.ok{background:var(--accent-soft-bg);border-color:var(--accent-soft-border)}
-  .wp-prose .wg-score-n{font-family:'JetBrains Mono',monospace;font-size:30px;font-weight:700;color:var(--text)}
+  .wp-prose .wg-score-n{font-family:var(--font-mono);font-size:30px;font-weight:700;color:var(--text)}
   .wp-prose .wg-review{margin:0;padding-left:1.3em;display:flex;flex-direction:column;gap:12px}
   .wp-prose .wg-review li::marker{font-weight:700;color:var(--text3)}
   .wp-prose .wg-rq{font-weight:600;color:var(--text)}
@@ -154,31 +154,31 @@
   .wp-prose .vz-chain.v .vz-node:not(:last-child)::after{content:"↓";right:auto;left:50%;top:auto;bottom:-17px;transform:translateX(-50%)}
   .wp-prose .vz-node.on{border-style:solid;border-color:var(--accent);background:var(--accent-soft-bg);color:var(--text)}
   .wp-prose .vz-node-l{font-weight:600;font-size:14px}
-  .wp-prose .vz-node-s{font-size:12px;color:var(--text3)}
+  .wp-prose .vz-node-s{font-size:12.5px;color:var(--text3)}
   .wp-prose .vz-node.on .vz-node-s{color:var(--text2)}
-  .wp-prose .vz-ex{margin:8px 0 0;padding:8px 12px;border-radius:8px;background:var(--card-bg);border:1px solid var(--divider);font-size:13.5px;color:var(--text);font-family:'JetBrains Mono',monospace;overflow-wrap:anywhere}
+  .wp-prose .vz-ex{margin:8px 0 0;padding:8px 12px;border-radius:8px;background:var(--card-bg);border:1px solid var(--divider);font-size:13.5px;color:var(--text);font-family:var(--font-mono);overflow-wrap:anywhere}
   .wp-prose .vz-cmp{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:12px 0}
   .wp-prose .vz-cmp>div{display:flex;flex-direction:column;gap:4px;padding:14px 16px;border-radius:12px;background:var(--surface2);border:1px solid var(--divider)}
   .wp-prose .vz-cmp>div.out{background:var(--accent-soft-bg);border-color:var(--accent-soft-border)}
-  .wp-prose .vz-big{font-family:'JetBrains Mono',monospace;font-size:26px;font-weight:700;color:var(--text)}
-  @media (max-width:640px){.wp-prose .vz-cmp{grid-template-columns:minmax(0,1fr)}}
+  .wp-prose .vz-big{font-family:var(--font-mono);font-size:26px;font-weight:700;color:var(--text)}
+  @media (max-width:640px){.wp-prose .vz-cmp{grid-template-columns:minmax(0,1fr) !important}}
   .wp-prose .wg-bar-fill.warn{background:var(--amber)}
   .wp-prose .vz-plot{display:block;width:100%;height:auto;margin:8px 0;overflow:visible}
   .wp-prose .vz-grid{stroke:var(--divider);stroke-width:1}
-  .wp-prose .vz-tick{fill:var(--text3);font-size:11px;font-family:'JetBrains Mono',monospace}
-  .wp-prose .vz-lab{fill:var(--text);font-size:11.5px;font-weight:600;pointer-events:none}
+  .wp-prose .vz-tick{fill:var(--text3);font-size:13px;font-family:var(--font-sans);font-variant-numeric:tabular-nums}
+  .wp-prose .vz-lab{fill:var(--text);font-size:12.5px;font-weight:600;pointer-events:none}
   .wp-prose .vz-legend{gap:6px 18px;margin:4px 0 0}
   .wp-prose .vz-key{display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--text2)}
   .wp-prose .vz-key i{width:14px;height:4px;border-radius:2px;display:inline-block}
   .wp-prose .vz-two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
   @media (max-width:760px){.wp-prose .vz-two{grid-template-columns:minmax(0,1fr)}}
   .wp-prose .vz-sq{display:block;width:100%;max-width:340px;height:auto}
-  .wp-prose .vz-calc{font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.6;color:var(--text);overflow-wrap:anywhere;white-space:pre-line}
+  .wp-prose .vz-calc{font-family:var(--font-mono);font-size:13px;line-height:1.6;color:var(--text);overflow-wrap:anywhere;white-space:pre-line}
   .wp-prose .vz-conv{display:flex;flex-wrap:wrap;align-items:center;gap:14px 12px;margin-top:6px}
   .wp-prose .vz-conv>div{display:flex;flex-direction:column;gap:6px}
   .wp-prose .vz-op{font-size:22px;color:var(--text3);font-weight:600}
   .wp-prose .vz-grid-m{display:grid;gap:3px}
-  .wp-prose .vz-cell{all:unset;box-sizing:border-box;min-width:0;height:34px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:var(--surface2);border:1px solid var(--surface2-border);font-family:'JetBrains Mono',monospace;font-size:12.5px;color:var(--text);font-weight:600}
+  .wp-prose .vz-cell{all:unset;box-sizing:border-box;min-width:0;height:34px;display:flex;align-items:center;justify-content:center;border-radius:6px;background:var(--surface2);border:1px solid var(--surface2-border);font-family:var(--font-mono);font-size:12.5px;color:var(--text);font-weight:600}
   .wp-prose button.vz-cell:not(:disabled){cursor:pointer}
   .wp-prose button.vz-cell:not(:disabled):hover{border-color:var(--accent-soft-border)}
   .wp-prose .vz-cell:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
@@ -189,9 +189,9 @@
   .wp-prose .vz-words{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
   .wp-prose .vz-words li{display:grid;grid-template-columns:130px minmax(0,1fr);gap:12px;align-items:center;margin:0}
   .wp-prose .vz-wc{font-size:13.5px;color:var(--text2)}
-  .wp-prose .vz-wc em{font-style:normal;color:var(--text3);font-size:12px}
+  .wp-prose .vz-wc em{font-style:normal;color:var(--text3);font-size:12.5px}
   .wp-prose .vz-toks{display:flex;flex-wrap:wrap;gap:4px}
-  .wp-prose .vz-tok{font-family:'JetBrains Mono',monospace;font-size:13px;padding:3px 8px;border-radius:6px;background:var(--surface2);border:1px solid var(--surface2-border);color:var(--text)}
+  .wp-prose .vz-tok{font-family:var(--font-mono);font-size:13px;padding:3px 8px;border-radius:6px;background:var(--surface2);border:1px solid var(--surface2-border);color:var(--text)}
   .wp-prose .vz-tok.new{background:var(--accent-soft-bg);border-color:var(--accent);color:var(--text)}
   .wp-prose .vz-try{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:12px 0 0;font-size:14px;color:var(--text2)}
   .wp-prose .vz-try input,.wp-prose .vz-try select{min-height:40px;padding:0 12px;border-radius:8px;border:1px solid var(--card-border);background:var(--bg);color:var(--text);font:inherit;font-size:14px}
@@ -201,31 +201,31 @@
   .wp-prose .vz-gen li{margin:0;padding:6px 12px;border-radius:8px;background:var(--surface2);font-size:14.5px;color:var(--text)}
   .wp-prose .vz-near{margin:0;padding-left:1.3em;font-size:14.5px}
   .wp-prose .vz-near li{margin:3px 0}
-  .wp-prose .vz-near span{color:var(--text3);font-family:'JetBrains Mono',monospace;font-size:12.5px;margin-left:6px}
+  .wp-prose .vz-near span{color:var(--text3);font-family:var(--font-mono);font-size:12.5px;margin-left:6px}
   .wp-prose .vz-hm-wrap{overflow-x:auto}
   .wp-prose .vz-hm{border-collapse:separate;border-spacing:2px;font-size:12.5px;width:auto;min-width:0}
-  .wp-prose .vz-hm th{padding:2px 4px;font-weight:600;color:var(--text2);text-align:center;border:0;white-space:nowrap;text-transform:none;letter-spacing:0;font-size:12px}
+  .wp-prose .vz-hm th{padding:2px 4px;font-weight:600;color:var(--text2);text-align:center;border:0;white-space:nowrap;text-transform:none;letter-spacing:0;font-size:12.5px}
   .wp-prose .vz-hm td{padding:0;border:0}
   .wp-prose .vz-hm tr.hi .vz-hmc{outline:2px solid var(--text)}
-  .wp-prose .vz-rowbtn{all:unset;cursor:pointer;padding:2px 8px;border-radius:6px;color:var(--text2);font-size:12px;font-weight:600}
+  .wp-prose .vz-rowbtn{all:unset;cursor:pointer;padding:2px 8px;border-radius:6px;color:var(--text2);font-size:12.5px;font-weight:600}
   .wp-prose .vz-rowbtn:hover{color:var(--text)}
   .wp-prose .vz-rowbtn:focus-visible{outline:2px solid var(--accent)}
-  .wp-prose .vz-hmc{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;justify-content:center;width:34px;height:30px;border-radius:5px;font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text);background:color-mix(in srgb,var(--accent) calc(var(--v) * 100%),var(--surface2))}
+  .wp-prose .vz-hmc{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;justify-content:center;width:34px;height:30px;border-radius:5px;font-size:11px;font-family:var(--font-mono);color:var(--text);background:color-mix(in srgb,var(--accent) calc(var(--v) * 100%),var(--surface2))}
   .wp-prose .vz-hmc:hover{box-shadow:0 0 0 2px var(--text3)}
   .wp-prose .vz-hmc:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
   .wp-prose .vz-att{display:block;width:100%;min-width:620px;height:auto}
-  .wp-prose .vz-vn{font:600 9.5px 'JetBrains Mono',monospace;fill:var(--text)}
-  .wp-prose .vz-rl{font:600 12px Inter,system-ui,sans-serif;fill:var(--text3)}
-  .wp-prose .vz-sc{font:600 11px 'JetBrains Mono',monospace;fill:var(--text2)}
-  .wp-prose .vz-al{font:600 11.5px 'JetBrains Mono',monospace;fill:var(--text)}
-  .wp-prose .vz-tk{font:600 14px Inter,system-ui,sans-serif;fill:var(--text)}
-  .wp-prose .vz-eq{font:700 22px Inter,system-ui,sans-serif;fill:var(--text2)}
+  .wp-prose .vz-vn{font:600 9.5px var(--font-mono);fill:var(--text)}
+  .wp-prose .vz-rl{font:600 12px var(--font-sans);fill:var(--text3)}
+  .wp-prose .vz-sc{font:600 11px var(--font-mono);fill:var(--text2)}
+  .wp-prose .vz-al{font:600 13px var(--font-sans);font-variant-numeric:tabular-nums;fill:var(--text)}
+  .wp-prose .vz-tk{font:600 14px var(--font-sans);fill:var(--text)}
+  .wp-prose .vz-eq{font:700 22px var(--font-sans);fill:var(--text2)}
   .wp-prose .vz-check{display:inline-flex;align-items:center;gap:6px;margin-left:6px;font-size:13.5px;color:var(--text2);cursor:pointer}
   .wp-prose .vz-att-t{border-collapse:separate;border-spacing:2px;font-size:13px;margin:10px 0 0;width:auto}
   .wp-prose .vz-att-t th{padding:3px 8px;font-weight:600;color:var(--text2);text-align:left;border:0;text-transform:none;letter-spacing:0;font-size:12.5px;white-space:nowrap}
-  .wp-prose .vz-att-t td{padding:3px 10px;border:0;border-radius:5px;background:var(--surface2);font-family:'JetBrains Mono',monospace;text-align:center}
+  .wp-prose .vz-att-t td{padding:3px 10px;border:0;border-radius:5px;background:var(--surface2);font-family:var(--font-mono);text-align:center}
   .wp-prose .vz-att-t td.hi{background:var(--accent-soft-bg);color:var(--accent-soft-text);font-weight:700}
-  .wp-prose .vz-formula{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;padding:16px 18px;border-radius:12px;background:var(--surface2);border:1px solid var(--divider);font:italic 500 22px/1.6 'Source Serif 4',Georgia,serif;color:var(--text)}
+  .wp-prose .vz-formula{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;padding:16px 18px;border-radius:12px;background:var(--surface2);border:1px solid var(--divider);font:italic 500 23px/1.6 var(--font-sans),'Cambria Math','STIX Two Math',serif;color:var(--text)}
   .wp-prose .vz-term{all:unset;box-sizing:border-box;cursor:pointer;padding:2px 8px;border-radius:7px;border-bottom:2px dotted var(--text3);font:inherit}
   .wp-prose .vz-term:hover{background:var(--accent-ghost-bg)}
   .wp-prose .vz-term.on{background:var(--accent-soft-bg);border-bottom-color:var(--accent);color:var(--accent-soft-text)}
@@ -234,7 +234,7 @@
   .wp-prose .vz-part strong{color:var(--text)}
   .wp-prose .vz-steps{margin-top:14px}
   .wp-prose .vz-step-b{padding:10px 14px;border-radius:10px;border:1px solid var(--divider)}
-  .wp-prose .vz-step-b code{display:block;font:600 14px/1.6 'JetBrains Mono',monospace;color:var(--text);white-space:pre-wrap}
+  .wp-prose .vz-step-b code{display:block;font:600 14px/1.6 var(--font-mono);color:var(--text);white-space:pre-wrap}
   .wp-prose .vz-pe{display:grid;gap:1px;margin:10px 0 0;max-width:560px}
   .wp-prose .vz-pe-c{all:unset;display:block;height:11px;cursor:pointer}
   .wp-prose .vz-pe-c.sel{outline:1.5px solid var(--text);outline-offset:-1px}
@@ -245,7 +245,7 @@
   .wp-prose .vz-patch{all:unset;box-sizing:border-box;position:relative;cursor:pointer;border:2px solid var(--surface2-border);border-radius:6px;padding:2px;background:var(--card-bg)}
   .wp-prose .vz-patch.sel{border-color:var(--accent)}
   .wp-prose .vz-patch:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-  .wp-prose .vz-patch b{position:absolute;top:2px;left:4px;font-size:10px;font-family:'JetBrains Mono',monospace;color:var(--text);background:var(--card-bg);border-radius:3px;padding:0 3px;opacity:.85}
+  .wp-prose .vz-patch b{position:absolute;top:2px;left:4px;font-size:11px;font-family:var(--font-mono);color:var(--text);background:var(--card-bg);border-radius:3px;padding:0 3px;opacity:.85}
   .wp-prose .vz-px{display:grid;gap:0}
   .wp-prose .vz-px i{display:block;aspect-ratio:1}
   .wp-prose .vz-dimg{display:grid;gap:0;max-width:300px;border-radius:8px;overflow:hidden;border:1px solid var(--divider)}
@@ -254,16 +254,16 @@
   .wp-prose .vz-rank li{margin:0;padding:10px 12px;border-radius:10px;border:1px solid var(--divider);background:var(--surface2)}
   .wp-prose .vz-rank li.top{border-color:var(--accent-soft-border);background:var(--accent-soft-bg)}
   .wp-prose .vz-rank-h{display:flex;justify-content:space-between;gap:12px;font-size:14px;margin-bottom:6px}
-  .wp-prose .vz-rank-h span{font-family:'JetBrains Mono',monospace;color:var(--text2);font-size:12.5px}
-  .wp-prose .vz-prompt{margin:0;padding:12px 14px;border-radius:10px;background:var(--surface2);border:1px solid var(--surface2-border);font-family:'JetBrains Mono',monospace;font-size:12.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
+  .wp-prose .vz-rank-h span{font-family:var(--font-mono);color:var(--text2);font-size:12.5px}
+  .wp-prose .vz-prompt{margin:0;padding:12px 14px;border-radius:10px;background:var(--surface2);border:1px solid var(--surface2-border);font-family:var(--font-mono);font-size:12.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}
 
   /* hook scenes added for other weeks */
   .hk-toks{display:flex;flex-wrap:wrap;gap:6px}
-  .hk-tokc{font-family:'JetBrains Mono',monospace;font-size:15px;padding:6px 10px;border-radius:8px;background:var(--accent-soft-bg);border:1px solid var(--accent-soft-border);color:var(--text);animation:hkPop .35s ease both}
+  .hk-tokc{font-family:var(--font-mono);font-size:15px;padding:6px 10px;border-radius:8px;background:var(--accent-soft-bg);border:1px solid var(--accent-soft-border);color:var(--text);animation:hkPop .35s ease both}
   @keyframes hkPop{from{opacity:0;transform:scale(.8)}to{opacity:1;transform:none}}
   .hook .hk-bars{display:flex;flex-direction:column;gap:6px}
   .hk-bar{display:grid;grid-template-columns:78px minmax(0,1fr) 40px;gap:8px;align-items:center;font-size:13px;color:var(--text)}
-  .hk-bar b{font-family:'JetBrains Mono',monospace;font-weight:500}
+  .hk-bar b{font-family:var(--font-mono);font-weight:500}
   .hk-bar span.t{height:10px;border-radius:999px;background:var(--track);overflow:hidden;display:block}
   .hk-bar span.t i{display:block;height:100%;background:var(--accent);border-radius:999px}
   @media (prefers-reduced-motion: reduce){.hk-tokc{animation:none}}
@@ -271,7 +271,7 @@
   /* ---- easier to read: a slightly larger type scale for lesson plans ---- */
   .lp-root{--fs-body:18.5px;--fs-body-ui:17.5px;--fs-detail:16.5px;--fs-sec-lede:20px;--fs-h3:20.5px;--fs-lede:clamp(20px,1.7vw,23px);--fs-h2:clamp(26px,2.2vw,31px);--lh-body:1.7}
   /* same reading width as the built-in Week 7 lesson: text runs as wide as the figures (60rem, or the page if narrower) */
-  .lp-root{--measure:60rem}
+  .lp-root{--measure:100%}
   .lw .wp-prose :is(.lsteps,.exercise){max-width:var(--measure)}
   .lp-root .rail a{font-size:14px}
   .lp-root .hk-lab,.lp-root .hook-k{font-size:14px}
@@ -293,7 +293,7 @@
   .lp-root .wp-prose .wg-why{font-size:15px}
   .lp-root .wp-prose .wg-card-n{font-size:16.5px}
   .lp-root .wp-prose .wg-card .wg-btn{font-size:14px}
-  .lp-root .wp-prose .wg-k{font-size:12px}
+  .lp-root .wp-prose .wg-k{font-size:12.5px}
   .lp-root .wp-prose .wg-v{font-size:16px}
   .lp-root .wp-prose .wg-detail-t{font-size:17px}
   .lp-root .wp-prose .wg-nt{font-size:14px}
@@ -315,7 +315,7 @@
   /* lab steps: big numbered badges, bold step titles */
   .wp-prose .lsteps{padding-left:0;list-style:none}
   .wp-prose .lsteps > li{position:relative;list-style:none;padding:2px 0 2px 52px;margin:0 0 var(--s4);min-height:36px;counter-increment:step;color:var(--text);font-size:var(--fs-body-ui);line-height:1.6}
-  .wp-prose .lsteps > li::before{content:counter(step);position:absolute;left:0;top:0;width:38px;height:38px;border-radius:999px;background:var(--accent);color:var(--accent-cta-text);display:flex;align-items:center;justify-content:center;font-family:'Plus Jakarta Sans',system-ui,sans-serif;font-size:18px;font-weight:800;line-height:1;box-shadow:0 0 0 4px var(--accent-soft-bg)}
+  .wp-prose .lsteps > li::before{content:counter(step);position:absolute;left:0;top:0;width:38px;height:38px;border-radius:999px;background:var(--accent);color:var(--accent-cta-text);display:flex;align-items:center;justify-content:center;font-family:var(--font-sans);font-size:18px;font-weight:700;line-height:1;box-shadow:0 0 0 4px var(--accent-soft-bg)}
   .wp-prose .lsteps > li > em:first-child{font-style:normal;font-weight:700;color:var(--text);font-size:1.12em}
   .wp-prose .lsteps + .codebox,.wp-prose .lsteps ~ .codebox{margin-left:52px}
   .lw .wp-prose .lsteps ~ .codebox{width:calc(100% - 52px);max-width:calc(100% - 52px)}
@@ -325,7 +325,7 @@
   .wp-prose .exercise{position:relative;max-width:var(--measure);margin:var(--s3) 0 var(--s4);padding:14px 18px 14px 20px;border-left:5px solid var(--amber);border-radius:0 12px 12px 0;background:var(--amber-soft-bg);color:var(--text);font-style:normal}
   .wp-prose p.exercise{margin-left:52px;max-width:calc(var(--measure) - 52px)}
   .wp-prose .lsteps ~ p.exercise{margin-left:52px}
-  .wp-prose .ex-badge{display:inline-flex;align-items:center;margin:0 10px 4px 0;padding:3px 12px;border-radius:999px;background:var(--amber);color:#1a1200;font-family:'Plus Jakarta Sans',system-ui,sans-serif;font-size:13.5px;font-weight:800;letter-spacing:.02em;line-height:1.4;vertical-align:1px}
+  .wp-prose .ex-badge{display:inline-flex;align-items:center;margin:0 10px 4px 0;padding:3px 12px;border-radius:999px;background:var(--amber);color:#1a1200;font-family:var(--font-sans);font-size:13.5px;font-weight:700;letter-spacing:.02em;line-height:1.4;vertical-align:1px}
   .wp-prose .exercise code,.wp-prose .exercise .icode{background:var(--card-bg)}
   @media (max-width:760px){.lw .wp-prose .lsteps ~ .codebox{width:100%;max-width:100%}.wp-prose .lsteps > li{padding-left:46px}.wp-prose .lsteps + .codebox,.wp-prose .lsteps ~ .codebox,.wp-prose .lsteps ~ p.prose:not(.exercise),.wp-prose p.exercise,.wp-prose .lsteps ~ p.exercise{margin-left:0;max-width:none}}
 
@@ -336,7 +336,7 @@
   .wp-prose .nb-p{margin:0;font-size:var(--fs-detail);line-height:1.55;color:var(--text2)}
   .wp-prose .nb-p.small{flex-basis:100%;font-size:14.5px}
   .wp-prose .nb-actions{display:flex;flex-wrap:wrap;gap:10px}
-  .wp-prose .nb-btn{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 22px;border-radius:10px;background:var(--accent-cta-bg);color:var(--accent-cta-text);font-weight:800;font-size:15.5px;text-decoration:none;transition:transform .2s ease,box-shadow .2s ease}
+  .wp-prose .nb-btn{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 22px;border-radius:10px;background:var(--accent-cta-bg);color:var(--accent-cta-text);font-weight:700;font-size:15.5px;text-decoration:none;transition:transform .2s ease,box-shadow .2s ease}
   .wp-prose .nb-btn:hover{transform:translateY(-1px);box-shadow:0 6px 18px var(--accent-glow-soft);color:var(--accent-cta-text)}
   .wp-prose .nb-btn.ghost{background:var(--card-bg);color:var(--text);border:1px solid var(--card-border)}
   .wp-prose .nb-btn.ghost:hover{color:var(--text);box-shadow:none}
@@ -351,9 +351,9 @@
   .wp-prose .vz-chain-w{list-style:none;margin:12px 0;padding:0;display:flex;flex-wrap:wrap;gap:10px}
   .wp-prose .vz-chain-w li{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:4px;min-width:84px;padding:8px 10px;border-radius:10px;background:var(--surface2);border:1px solid var(--divider);margin:0}
   .wp-prose .vz-chain-bar{display:block;width:26px;border-radius:5px 5px 0 0;background:var(--accent)}
-  .wp-prose .vz-chain-t{font-family:'JetBrains Mono',monospace;font-size:14.5px;color:var(--text);font-weight:600}
-  .wp-prose .vz-chain-p{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--accent-soft-text);font-weight:700}
-  .wp-prose .vz-chain-r{font-size:11.5px;color:var(--text3);white-space:nowrap}
+  .wp-prose .vz-chain-t{font-family:var(--font-mono);font-size:14.5px;color:var(--text);font-weight:600}
+  .wp-prose .vz-chain-p{font-family:var(--font-mono);font-size:13px;color:var(--accent-soft-text);font-weight:700}
+  .wp-prose .vz-chain-r{font-size:12.5px;color:var(--text3);white-space:nowrap}
   .wp-prose .vz-lb{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
   .wp-prose .vz-lb li{margin:0}
   .wp-prose .vz-lb-b{all:unset;box-sizing:border-box;cursor:pointer;width:100%;display:grid;grid-template-columns:170px minmax(0,1fr) 80px;gap:12px;align-items:center;padding:6px 10px;border-radius:10px;border:1px solid transparent}
@@ -362,7 +362,7 @@
   .wp-prose .vz-lb-b:focus-visible{outline:2px solid var(--accent)}
   .wp-prose .vz-lb-l{font-size:14.5px;color:var(--text);font-weight:600}
   .wp-prose .vz-lb-l em{font-style:normal;color:var(--text3);font-weight:500;font-size:12.5px}
-  .wp-prose .vz-lb-v{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text2);text-align:right}
+  .wp-prose .vz-lb-v{font-family:var(--font-mono);font-size:13px;color:var(--text2);text-align:right}
   @media (max-width:640px){.wp-prose .vz-lb-b{grid-template-columns:110px minmax(0,1fr) 64px}}
 
   /* network / fit / trainer / mlp / split */
@@ -374,7 +374,7 @@
   .wp-prose .vz-split .te{background:var(--cyan-soft-bg)}
   .wp-prose .vz-mlp{width:100%;border-collapse:collapse;font-size:var(--fs-detail);margin:10px 0}
   .wp-prose .vz-mlp th{text-align:left;font-size:12.5px;font-weight:600;color:var(--text3);padding:6px 10px;border-bottom:1px solid var(--divider)}
-  .wp-prose .vz-mlp td{padding:6px 10px;border-bottom:1px solid var(--divider);color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:13.5px}
+  .wp-prose .vz-mlp td{padding:6px 10px;border-bottom:1px solid var(--divider);color:var(--text2);font-family:var(--font-mono);font-size:13.5px}
   .wp-prose .vz-mlp td:first-child{font-family:inherit}
 
   /* Week 4 figures */
@@ -389,7 +389,7 @@
   .wp-prose .wg-rules{margin:0 0 12px;padding-left:20px;font-size:15px;line-height:1.6;color:var(--text2)}
   .wp-prose .wg-rules li{margin:6px 0}
   .wp-prose .wg-examhead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:4px 0 10px;font-size:13.5px;color:var(--text3)}
-  .wp-prose .wg-clock{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--text);padding:4px 12px;border-radius:8px;background:var(--surface2);border:1px solid var(--surface2-border)}
+  .wp-prose .wg-clock{font-family:var(--font-mono);font-size:20px;font-weight:700;color:var(--text);padding:4px 12px;border-radius:8px;background:var(--surface2);border:1px solid var(--surface2-border)}
   .wp-prose .wg-clock.low{color:var(--red);border-color:var(--red-border);background:var(--red-soft-bg)}
   .wp-prose .wg-nav{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
   .wp-prose .wg-nb{all:unset;box-sizing:border-box;min-width:34px;height:34px;display:flex;align-items:center;justify-content:center;border-radius:8px;border:1px solid var(--surface2-border);background:var(--surface2);font-size:13px;font-weight:700;color:var(--text3);cursor:pointer;position:relative}
@@ -415,7 +415,7 @@
 
   /* Week 9 figures */
   .wp-prose .vz-maskgrid{display:grid;gap:3px;align-items:center;max-width:420px}
-  .wp-prose .vz-maskgrid b{font-size:11.5px;font-weight:600;color:var(--text3);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wp-prose .vz-maskgrid b{font-size:12.5px;font-weight:600;color:var(--text3);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .wp-prose .vz-maskgrid i{display:block;height:26px;border-radius:5px;background:var(--surface2);border:1px solid var(--surface2-border)}
   .wp-prose .vz-maskgrid i.on{background:var(--accent-soft-bg);border-color:var(--accent)}
 

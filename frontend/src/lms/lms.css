@@ -47,12 +47,12 @@
 }
 .edu-hint {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text2);
 }
 .edu-error {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--red-text);
 }
@@ -73,18 +73,12 @@
   border-radius: 9px;
   background: var(--surface2);
   color: var(--text);
-  font:
-    500 15px/1.4 Plus Jakarta Sans,
-    system-ui,
-    sans-serif;
+  font: 500 15px/1.4 var(--font-sans);
 }
 .edu-textarea {
   min-height: 140px;
   resize: vertical;
-  font-family:
-    JetBrains Mono,
-    ui-monospace,
-    monospace;
+  font-family: var(--font-mono);
   font-size: 14px;
 }
 .edu-input:focus-visible,
@@ -139,7 +133,7 @@ fieldset.edu-set {
 }
 .edu-live {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text2);
 }
 .edu-live[data-valid="false"] {
@@ -157,13 +151,13 @@ fieldset.edu-set {
 .edu-preview > h3 {
   margin: 0 0 8px;
   color: var(--text2);
-  font-size: 13px;
+  font-size: 14px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 .edu-sub {
   display: block;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text3);
 }
 .edu-banner-ok {
@@ -216,12 +210,8 @@ fieldset.edu-set {
   min-height: 100vh;
   background: var(--bg);
   color: var(--text);
-  font-family:
-    Plus Jakarta Sans,
-    system-ui,
-    -apple-system,
-    sans-serif;
-  line-height: 1.7;
+  font-family: var(--font-sans);
+  line-height: 1.6;
   transition:
     background-color 0.3s ease,
     color 0.3s ease;
@@ -284,9 +274,7 @@ fieldset.edu-set {
   border: 0;
 }
 .lshell .mono {
-  font-family:
-    JetBrains Mono,
-    monospace;
+  font-family: var(--font-mono);
 }
 .lshell .sidebar {
   position: sticky;
@@ -312,9 +300,9 @@ fieldset.edu-set {
 }
 .lshell .sb-k,
 .lshell .sb-glabel {
-  font-size: 10.5px;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #9ba3af;
   line-height: 1.3;
@@ -410,21 +398,21 @@ fieldset.edu-set {
   border-radius: 999px;
   background: linear-gradient(135deg, #76b900, #5b51d8);
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 800;
 }
 .lshell .sb-who {
   min-width: 0;
 }
 .lshell .sb-name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
   color: #fff;
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
 .lshell .sb-role {
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: #9ba3af;
   line-height: 1.4;
 }
@@ -432,14 +420,14 @@ fieldset.edu-set {
   color: #7c857a;
 }
 .lshell .cm {
-  --ff-read: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --ff-read: var(--font-sans);
   --fs-title: clamp(28px, 3.6vw, 40px);
   --fs-lede: clamp(19px, 1.6vw, 22px);
   --fs-h2: clamp(24px, 2vw, 28px);
-  --fs-h3: 18.5px;
+  --fs-h3: 20px;
   --fs-body: 16px;
-  --fs-detail: 15px;
-  --fs-small: 13px;
+  --fs-detail: 16px;
+  --fs-small: 14px;
   --s1: 8px;
   --s2: 12px;
   --s3: 16px;
@@ -473,7 +461,7 @@ fieldset.edu-set {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text3);
 }
 .lshell .ctx-i {
@@ -533,10 +521,8 @@ fieldset.edu-set {
   background: var(--surface2);
   border: 1px solid var(--surface2-border);
   color: var(--text3);
-  font-family:
-    JetBrains Mono,
-    monospace;
-  font-size: 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
   font-weight: 700;
   line-height: 1;
 }
@@ -574,7 +560,7 @@ fieldset.edu-set {
   box-shadow:
     0 0 0 1px var(--divider),
     0 28px 70px #00000061;
-  font-size: 12.5px;
+  font-size: 13.5px;
   line-height: 1.45;
 }
 .lshell .hkpop[hidden] {
@@ -584,7 +570,7 @@ fieldset.edu-set {
   margin-bottom: 11px;
   padding-bottom: 9px;
   border-bottom: 1px solid var(--divider);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 500;
   color: var(--text3);
 }
@@ -618,14 +604,14 @@ fieldset.edu-set {
   display: block;
   margin-top: 2px;
   color: var(--text3);
-  font-size: 11.5px;
+  font-size: 12.5px;
 }
 .lshell .hkpop-f {
   display: block;
   margin-top: 13px;
   padding-top: 11px;
   border-top: 1px solid var(--divider);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
 }
 .lshell .setrow {
@@ -665,7 +651,7 @@ fieldset.edu-set {
   border-radius: 999px;
   background: transparent;
   color: var(--text2);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1.3;
   transition:
@@ -680,7 +666,7 @@ fieldset.edu-set {
   margin: 0 0 var(--s2);
   font-size: var(--fs-small);
   font-weight: 500;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text2);
 }
@@ -699,9 +685,9 @@ fieldset.edu-set {
   margin: 0 0 var(--s2);
   font-family: var(--ff-read);
   font-size: var(--fs-title);
-  font-weight: 800;
-  line-height: 1.08;
-  letter-spacing: -0.02em;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
   color: var(--text);
   overflow-wrap: break-word;
 }
@@ -775,7 +761,7 @@ fieldset.edu-set {
   margin: 0 0 var(--s2);
   font-size: var(--fs-small);
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--tone-bright, #b6f23a);
 }
@@ -918,7 +904,7 @@ fieldset.edu-set {
   font-size: var(--fs-h2);
   font-weight: 700;
   line-height: 1.2;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   color: var(--text);
 }
 .lshell .sect-n {
@@ -1022,11 +1008,9 @@ fieldset.edu-set {
   color: var(--text);
 }
 .lshell .lms-mono {
-  font-family:
-    JetBrains Mono,
-    monospace;
+  font-family: var(--font-mono);
   font-weight: 500;
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 0.02em;
   color: var(--text3);
 }
@@ -1053,7 +1037,7 @@ fieldset.edu-set {
   border: 1px solid var(--surface2-border);
   background: var(--surface2);
   color: var(--text2);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 500;
   line-height: 1.5;
   white-space: nowrap;
@@ -1120,7 +1104,7 @@ fieldset.edu-set {
   border-radius: 9px;
   background: var(--accent-cta-bg);
   color: var(--accent-cta-text);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
 }
 .lshell a.solidbtn,
@@ -1139,7 +1123,7 @@ fieldset.edu-set {
   background: var(--surface2);
   border-color: var(--surface2-border);
   color: var(--text);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 .lshell a.ghostbtn,
@@ -1160,7 +1144,7 @@ fieldset.edu-set {
   background: var(--surface2);
   border-color: var(--surface2-border);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-weight: 700;
 }
 .lshell .chipbtn[aria-pressed="true"] {
@@ -1186,7 +1170,7 @@ fieldset.edu-set {
 }
 .lshell .edc-lab {
   margin: 0 0 4px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text2);
 }
@@ -1199,10 +1183,7 @@ fieldset.edu-set {
   border-radius: 9px;
   background: var(--surface2);
   color: var(--text);
-  font:
-    500 15px/1.4 Plus Jakarta Sans,
-    system-ui,
-    sans-serif;
+  font: 500 15px/1.4 var(--font-sans);
 }
 .lshell .edc-select:disabled,
 .lshell .edc-input:disabled {
@@ -1216,7 +1197,7 @@ fieldset.edu-set {
 }
 .lshell .edc-hint {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text2);
 }
 .lshell .edc-note {
@@ -1320,7 +1301,7 @@ fieldset.edu-set {
   border-bottom: 1px solid var(--divider);
 }
 .lshell .edc-table thead th {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text2);
   white-space: nowrap;
@@ -1374,7 +1355,7 @@ fieldset.edu-set {
   font-size: 22px;
 }
 .lshell .lms-md h3 {
-  font-size: 18.5px;
+  font-size: 20px;
 }
 .lshell .lms-md h4,
 .lshell .lms-md h5 {
@@ -1393,10 +1374,8 @@ fieldset.edu-set {
   padding: 1px 6px;
   border-radius: 6px;
   background: var(--surface2);
-  font-family:
-    JetBrains Mono,
-    monospace;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: 14px;
 }
 .lshell .lms-md pre {
   margin: 0 0 12px;
@@ -1425,7 +1404,7 @@ fieldset.edu-set {
 }
 .lshell .lms-notices-meta {
   color: var(--text3);
-  font-size: 12px;
+  font-size: 13px;
 }
 .lshell .hkpop p {
   margin: 0 0 6px;
@@ -1434,7 +1413,7 @@ fieldset.edu-set {
   margin-top: 56px;
   padding-top: 24px;
   border-top: 1px solid var(--divider);
-  font-size: 12.5px;
+  font-size: 13.5px;
   line-height: 1.6;
 }
 .lshell .sf-top {
@@ -1460,7 +1439,7 @@ fieldset.edu-set {
 .lshell .sf-bt b {
   display: block;
   color: var(--text);
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 800;
   letter-spacing: 0.01em;
 }
@@ -1468,7 +1447,7 @@ fieldset.edu-set {
   display: block;
   margin-top: 2px;
   color: var(--text3);
-  font-size: 12px;
+  font-size: 13px;
 }
 .lshell .sf-bot {
   display: grid;
@@ -1478,7 +1457,7 @@ fieldset.edu-set {
   padding-top: 16px;
   border-top: 1px solid var(--divider);
   color: var(--text3);
-  font-size: 12px;
+  font-size: 13px;
 }
 .lshell .sf-soc {
   display: flex;
@@ -1702,10 +1681,7 @@ fieldset.edu-set {
     border: 1px solid rgba(255, 255, 255, 0.16);
     background: #ffffff0f;
     color: #fff;
-    font:
-      700 14px/1.3 Plus Jakarta Sans,
-      system-ui,
-      sans-serif;
+    font: 700 14px/1.3 var(--font-sans);
     cursor: pointer;
     text-align: left;
   }

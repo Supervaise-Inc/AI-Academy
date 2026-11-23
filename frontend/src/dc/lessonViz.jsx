@@ -2854,7 +2854,7 @@ function NumFmt({ spec, fig }) {
                   <td><strong>{name}</strong></td>
                   <td><span style={{ background: 'var(--amber)', padding: '0 4px', borderRadius: 3 }}>1</span> <span style={{ background: 'var(--accent-soft-bg)', padding: '0 4px', borderRadius: 3 }}>{e}</span> <span style={{ background: 'var(--surface2)', padding: '0 4px', borderRadius: 3 }}>{m}</span> = {1 + e + m}</td>
                   <td>{I.max.toExponential(3)}</td><td>{I.minNormal.toExponential(2)}</td><td>2<sup>−{m}</sup> = {I.eps.toExponential(2)}</td>
-                  <td style={{ fontFamily: 'var(--mono, monospace)' }}>{ok ? fmt(r) : '–'}</td>
+                  <td style={{ fontFamily: 'var(--font-mono)' }}>{ok ? fmt(r) : '–'}</td>
                   <td>{ok && Number.isFinite(err) ? (err === 0 ? 'exact' : err.toExponential(2)) : ok && !Number.isFinite(r) ? 'lost' : '–'}</td>
                 </tr>
               );

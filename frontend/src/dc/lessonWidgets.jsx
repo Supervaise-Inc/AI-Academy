@@ -624,7 +624,7 @@ function ConvArt({ grid, p }) {
       <div style={{ display: 'grid', gridTemplateColumns: `repeat(${out[0].length}, 26px)`, gap: 2 }}>
         {out.map((r, i) => r.map((v, j) => {
           const idx = i * out[0].length + j;
-          return <span key={i + '-' + j} style={{ height: 26, borderRadius: 4, fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'JetBrains Mono, monospace', background: idx <= k ? 'var(--accent-soft-bg)' : 'var(--surface2)', border: '1px solid var(--surface2-border)', color: 'var(--text)' }}>{idx <= k ? v : ''}</span>;
+          return <span key={i + '-' + j} style={{ height: 26, borderRadius: 4, fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'var(--font-mono)', background: idx <= k ? 'var(--accent-soft-bg)' : 'var(--surface2)', border: '1px solid var(--surface2-border)', color: 'var(--text)' }}>{idx <= k ? v : ''}</span>;
         }))}
       </div>
     </div>
