@@ -237,7 +237,7 @@
   .cm .rm-mil li{font-size:14px;line-height:1.5}
   .cm .rm-k{font-family:var(--font-sans);font-size:28px;font-weight:700;letter-spacing:0}
   .cm .rm-l{font-size:14px;line-height:1.45;color:var(--text2)}
-  .cm .rm-note{font-size:14px;line-height:1.65;color:var(--text2);max-width:var(--measure)}
+  .cm .rm-note{max-width:none;width:100%;margin:var(--s4) 0 0;padding:18px 22px;border-radius:14px;background:var(--surface2);border:1px solid var(--surface2-border);border-left:4px solid var(--accent);font-size:16px;line-height:1.65;color:var(--text2)}
   @media (max-width:900px){.ov-two{grid-template-columns:minmax(0,1fr)!important}}
   @media (max-width:640px){.cm{padding-left:20px!important;padding-right:20px!important}.cm .lift{flex-wrap:wrap}.cm .lift>div:first-child{flex:1 1 220px}.cm .lift>div:nth-child(2){text-align:left!important}}
   /* ---- click-to-toggle header panels ---- */
