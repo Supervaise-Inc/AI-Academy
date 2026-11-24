@@ -143,6 +143,7 @@ class Component extends DCLogic {
       showBlurb: reduce,
       showLock: reduce,
       panel: null,
+      theme: (() => { try { return localStorage.getItem('lf-theme') === 'light' ? 'light' : 'dark'; } catch (e) { return 'dark'; } })(),
       text: reduce ? DEMO : '',
       step: -1,
       sample: 0,
@@ -152,6 +153,11 @@ class Component extends DCLogic {
       lit: reduce ? allTrue(NODE_KEYS) : {},
       guideH: 0,
       fillH: 0,
+    };
+    this.toggleTheme = () => {
+      const next = this.state.theme === 'light' ? 'dark' : 'light';
+      try { localStorage.setItem('lf-theme', next); } catch (e) {}
+      this.setState({ theme: next });
     };
     this.openLogin = () => this.openPanel('login');
     this.openSignup = () => this.openPanel('signup');
@@ -183,7 +189,16 @@ class Component extends DCLogic {
       }
     };
   }
+  componentDidUpdate() {
+    this._syncBody();
+  }
+  _syncBody() {
+    try {
+      document.body.style.background = this.state.theme === 'light' ? '#F6F8FB' : '';
+    } catch (e) {}
+  }
   componentDidMount() {
+    this._syncBody();
     try {
       document.addEventListener('keydown', this._key);
     } catch (e) {}
@@ -201,6 +216,7 @@ class Component extends DCLogic {
     this._timers.push(setTimeout(() => this.setState({ showLock: true }), LOCK_AT));
   }
   componentWillUnmount() {
+    try { document.body.style.background = ''; } catch (e) {}
     this._timers.forEach((id) => clearTimeout(id));
     if (this._stepTimer) clearInterval(this._stepTimer);
     clearInterval(this._typeTimer);
@@ -327,6 +343,9 @@ class Component extends DCLogic {
       lockClass: this.state.showLock ? 'show' : '',
       isLogin: this.state.panel === 'login',
       isSignup: this.state.panel === 'signup',
+      theme: this.state.theme,
+      toggleTheme: this.toggleTheme,
+      logo: this.state.theme === 'light' ? '/assets/nvidia-light.png' : '/assets/nvidia-dark.png',
       openLogin: this.openLogin,
       openSignup: this.openSignup,
       closePanel: this.closePanel,
@@ -377,7 +396,7 @@ class Component extends DCLogic {
 function template(v) {
   return (
     <>
-      <div className="lf-page">
+      <div className="lf-page" data-theme={v.theme}>
         <div className="stage" id="top">
           <div className="floor"></div>
           <div className="waves">
@@ -834,6 +853,19 @@ function template(v) {
               </span>
             </DcLink>
             <nav className="navauth" aria-label="Account">
+              <button
+                type="button"
+                className="themebtn"
+                onClick={v.toggleTheme}
+                aria-label={v.theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme'}
+                title={v.theme === 'light' ? 'Dark theme' : 'Light theme'}
+              >
+                {v.theme === 'light' ? (
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" /></svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+                )}
+              </button>{' '}
               <button type="button" className="btn ghost sm" onClick={v.openLogin}>
                 {'Log In'}
               </button>{' '}
@@ -855,7 +887,7 @@ function template(v) {
             <p className={`lockup ${v.lockClass}`}>
               <span className="lk-pre">{'In Partnership with'}</span>{' '}
               <span className="lk-brand">
-                <img className="lk-logo" src="/assets/nvidia-dark.png" alt="NVIDIA" />
+                <img className="lk-logo" src={v.logo} alt="NVIDIA" />
               </span>
             </p>
           </section>
@@ -1027,7 +1059,7 @@ function template(v) {
               </div>
               <div className="creds">
                 <div className={`cred rv ${v.on?.cred1}`} data-rv="cred1" style={{ '--d': '.1s' }}>
-                  <img className="cred-logo" src="/assets/nvidia-dark.png" alt="NVIDIA" />{' '}
+                  <img className="cred-logo" src={v.logo} alt="NVIDIA" />{' '}
                   <span className="kind">{'Level 1 · Associate'}</span>
                   <h3>{'NVIDIA-Certified Associate: Generative AI LLMs'}</h3>
                   <p>{'The programme target. Mock examination in Week 19.'}</p>
@@ -1037,7 +1069,7 @@ function template(v) {
                   <i></i>
                 </div>
                 <div className={`cred pro rv ${v.on?.cred2}`} data-rv="cred2" style={{ '--d': '.45s' }}>
-                  <img className="cred-logo" src="/assets/nvidia-dark.png" alt="NVIDIA" />{' '}
+                  <img className="cred-logo" src={v.logo} alt="NVIDIA" />{' '}
                   <span className="kind">{'Level 2 · Professional'}</span>
                   <h3>{'NVIDIA-Certified Professional: Generative AI LLMs'}</h3>
                   <p>{'The next step after the Associate.'}</p>
@@ -1120,7 +1152,7 @@ function template(v) {
             </span>{' '}
             <span className="sf-power">
               <span>{'Powered by'}</span>
-              <img className="sf-nv" src="/assets/nvidia-dark.png" alt="NVIDIA" />
+              <img className="sf-nv" src={v.logo} alt="NVIDIA" />
               <strong>{'DGX Spark'}</strong>
             </span>
           </footer>

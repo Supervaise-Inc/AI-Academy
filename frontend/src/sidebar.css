@@ -52,3 +52,51 @@
     zoom: 1.12;
   }
 }
+
+/*
+  One look for the sidebar on every page: the sizes and spacing of the Certification Center page.
+  The course pages and the LMS pages (Activities, Announcements, My grades) each had slightly different values
+  (line height, gap between links, group labels, the Sign out button), so the sidebar seemed to move when you
+  went from one page to another. These rules fix every value in one place.
+*/
+.sidebar {
+  gap: 4px;
+}
+.sidebar .navlink {
+  gap: 10px !important;
+  padding: 8px 14px !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  line-height: 1.7 !important;
+  min-height: 0 !important;
+  height: 39.5px !important; /* fixed, so every page gives the same row height (text height alone differed by half a pixel between pages) */
+  flex-shrink: 0 !important;
+  box-sizing: border-box !important;
+}
+/* LMS pages: the same list structure and group labels as the course pages */
+.lshell .sb-nav,
+.lshell .sb-group {
+  gap: 4px !important;
+}
+.lshell .sb-group {
+  margin-bottom: 0 !important;
+}
+.lshell .sb-glabel {
+  padding: 16px 10px 4px !important;
+  font-size: 13px !important;
+  line-height: 1.3 !important;
+  color: #7c857a !important;
+}
+.lshell .sb-k {
+  color: #7c857a !important;
+}
+/* the first label would repeat the word "Course" that the brand block already shows */
+.lshell .sb-nav > .sb-group:first-child > .sb-glabel {
+  display: none;
+}
+/* LMS pages: the course title had extra padding, which pushed the list down a few pixels */
+.lshell .sb-t,
+.lshell .sb-t:hover {
+  min-height: 0 !important;
+  padding: 0 !important;
+}

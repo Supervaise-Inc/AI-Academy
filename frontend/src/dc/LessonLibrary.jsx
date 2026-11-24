@@ -27,7 +27,7 @@ const statusOf = (o) =>
 const minutes = (m) => (m >= 60 ? Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '') : m + ' min');
 
 // The info board for one week.
-function Board({ o, onOpen }) {
+function Board({ o, onOpen, mode }) {
   const st = statusOf(o);
   const [tab, setTab] = useState('ideas');
   useEffect(() => setTab('ideas'), [o.week]);
@@ -101,19 +101,33 @@ function Board({ o, onOpen }) {
           )}
         </div>
         <div className="ll-actions">
-          <DcLink className="ll-go" href={'/lesson/' + o.week} onClick={onOpen}>
-            {o.exam ? 'Open revision lesson' : 'Open lesson'} <span aria-hidden="true">→</span>
-          </DcLink>
-          <DcLink className="ll-go ghost" href={'/prompt-workshop/' + o.week} onClick={onOpen}>
-            Workshop
-          </DcLink>
+          {mode === 'workshop' ? (
+            <>
+              <DcLink className="ll-go" href={'/prompt-workshop/' + o.week} onClick={onOpen}>
+                Open workshop <span aria-hidden="true">→</span>
+              </DcLink>
+              <DcLink className="ll-go ghost" href={'/lesson/' + o.week} onClick={onOpen}>
+                {o.exam ? 'Revision lesson' : 'Lesson'}
+              </DcLink>
+            </>
+          ) : (
+            <>
+              <DcLink className="ll-go" href={'/lesson/' + o.week} onClick={onOpen}>
+                {o.exam ? 'Open revision lesson' : 'Open lesson'} <span aria-hidden="true">→</span>
+              </DcLink>
+              <DcLink className="ll-go ghost" href={'/prompt-workshop/' + o.week} onClick={onOpen}>
+                Workshop
+              </DcLink>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-export default function LessonLibrary({ initialWeek, onClose }) {
+export default function LessonLibrary({ initialWeek, onClose, mode }) {
+  const ws = mode === 'workshop'; // opened from the Prompt Workshop: the main action opens that week's workshop
   const [view, setView] = useState('grid'); // 'grid' = all the cards, 'board' = one week's info board
   const [q, setQ] = useState('');
   const [term, setTerm] = useState('All');
@@ -177,18 +191,18 @@ export default function LessonLibrary({ initialWeek, onClose }) {
           <>
             <header className="ll-head">
               <div>
-                <div className="ll-eye">Lesson library</div>
+                <div className="ll-eye">{ws ? 'Prompt Workshop' : 'Lesson library'}</div>
                 <h2 id="ll-title" className="ll-title">
-                  Choose a weekly lesson
+                  {ws ? 'Choose a week' : 'Choose a weekly lesson'}
                 </h2>
-                <p className="ll-lede">Click a week to see what it covers.</p>
+                <p className="ll-lede">{ws ? 'Click a week to see what it covers, then open its workshop.' : 'Click a week to see what it covers.'}</p>
               </div>
               <button type="button" className="ll-close" onClick={onClose} aria-label="Close the lesson library">
                 <span aria-hidden="true">✕</span> Close
               </button>
             </header>
             <div className="ll-tools">
-              <input className="ll-search" type="search" placeholder="Search lessons or terms" aria-label="Search lessons" value={q} onChange={(e) => setQ(e.target.value)} />
+              <input className="ll-search" type="search" placeholder={ws ? 'Search weeks or terms' : 'Search lessons or terms'} aria-label={ws ? 'Search weeks' : 'Search lessons'} value={q} onChange={(e) => setQ(e.target.value)} />
               <div className="ll-filters" role="group" aria-label="Filter by term">
                 {TERMS.map((t) => (
                   <button key={t} type="button" className={'ll-f' + (term === t ? ' on' : '')} aria-pressed={term === t} onClick={() => setTerm(t)}>
@@ -242,7 +256,7 @@ export default function LessonLibrary({ initialWeek, onClose }) {
           <>
             <header className="ll-head ll-head-board">
               <button type="button" className="ll-back" onClick={() => setView('grid')} ref={focusRef}>
-                <span aria-hidden="true">←</span> All lessons
+                <span aria-hidden="true">←</span> {ws ? 'All weeks' : 'All lessons'}
               </button>
               <span id="ll-title" className="ll-lede ll-crumb">
                 Week {cur.week} of {TOTAL_WEEKS}
@@ -260,7 +274,7 @@ export default function LessonLibrary({ initialWeek, onClose }) {
               </button>
             </header>
             <div className="ll-body ll-board-view" ref={bodyRef}>
-              <Board o={cur} onOpen={onClose} />
+              <Board o={cur} onOpen={onClose} mode={mode} />
             </div>
           </>
         )}

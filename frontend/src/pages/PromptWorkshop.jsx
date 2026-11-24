@@ -11,6 +11,8 @@ import { apiUrl } from '../dc/session.js';
 import { WORKSHOPS, runRules } from '../data/workshops/index.js';
 import { CURRENT_WEEK, TOTAL_WEEKS, getWeek } from '../data/courseWeeks.js';
 import pageCss from './PromptWorkshop.css?inline';
+import libCss from '../dc/lessonLibrary.css?inline';
+import LessonLibrary from '../dc/LessonLibrary.jsx';
 
 const THEME_KEY = 'supervaise-theme';
 const THEME_EVENT = 'supervaise-theme-change';
@@ -18,6 +20,39 @@ const DARK_VARS =
   '--nv-dark:block;--nv-light:none;--bg:#090A0F;--text:#FFFFFF;--text2:#94A3B8;--text3:#6B7385;--card-bg:rgba(18,20,28,0.72);--card-border:rgba(255,255,255,0.08);--card-shadow:rgba(0,0,0,0.35);--card-shadow-hover:rgba(0,0,0,0.45);--elev:0 8px 24px rgba(0,0,0,0.35);--scrollbar:#1A1D28;--accent:#76B900;--accent-strong:#8FD400;--accent-bright:#B6F23A;--accent-cta-bg:#76B900;--accent-cta-text:#090A0F;--accent-soft-bg:rgba(118,185,0,0.14);--accent-soft-border:rgba(118,185,0,0.3);--accent-soft-text:#B6F23A;--accent-ghost-bg:rgba(118,185,0,0.08);--accent-ghost-border:rgba(118,185,0,0.25);--accent-glow:rgba(118,185,0,0.55);--accent-glow-soft:rgba(118,185,0,0.6);--accent-pulse:rgba(118,185,0,0.55);--accent-pulse-soft:rgba(118,185,0,0.12);--surface2:rgba(255,255,255,0.05);--surface2-border:rgba(255,255,255,0.08);--divider:rgba(255,255,255,0.08);--cyan:#00E5FF;--cyan-text:#67E8F9;--cyan-chip-bg:#00E5FF;--cyan-chip-text:#06202A;--cyan-glow:rgba(0,229,255,0.45);--cyan-soft-bg:rgba(0,229,255,0.07);--cyan-soft-border:rgba(0,229,255,0.22);--indigo:#8B83F0;--indigo-soft-bg:rgba(91,81,216,0.14);--indigo-soft-border:rgba(91,81,216,0.35);--amber:#FFA000;--amber-text:#FFB84D;--amber-soft-bg:rgba(255,160,0,0.14);--amber-soft-border:rgba(255,160,0,0.3);--amber-ghost-bg:rgba(255,160,0,0.08);--amber-ghost-border:rgba(255,160,0,0.25);--amber-pulse:rgba(255,160,0,0.5);--amber-pulse-soft:rgba(255,160,0,0.14);--red-soft-bg:rgba(239,68,68,0.14);--red-border:rgba(239,68,68,0.45);--red-text:#FCA5A5;--neutral-chip-bg:transparent;--neutral-chip-text:#A0A5B5;--neutral-chip-border:rgba(255,255,255,0.15);--mono-chip-bg:rgba(255,255,255,0.06);--mono-chip-text:#A0A5B5;--mono-chip-today-bg:rgba(255,160,0,0.14);--mono-chip-today-text:#FFB84D;--track:rgba(255,255,255,0.08);--footer-text:#6B7385;--footer-bg:rgba(255,255,255,0.04);--footer-border:rgba(255,255,255,0.08);--avatar-ring:rgba(118,185,0,0.6);--toggle-bg:rgba(255,255,255,0.05);--toggle-border:rgba(255,255,255,0.08);--spot1:rgba(118,185,0,0.22);--spot2:rgba(0,229,255,0.14);--spot3:rgba(91,81,216,0.16);';
 const LIGHT_VARS =
   '--nv-dark:none;--nv-light:block;--bg:#F8FAFC;--text:#0F172A;--text2:#475569;--text3:#64748B;--card-bg:#FFFFFF;--card-border:#E2E8F0;--card-shadow:rgba(15,23,42,0.06);--card-shadow-hover:rgba(15,23,42,0.1);--elev:0 4px 6px -1px rgba(0,0,0,0.05),0 2px 4px -2px rgba(0,0,0,0.05);--scrollbar:#CBD5E1;--accent:#659B00;--accent-strong:#4F7A00;--accent-bright:#3D5F00;--accent-cta-bg:#4F7A00;--accent-cta-text:#FFFFFF;--accent-soft-bg:rgba(101,155,0,0.12);--accent-soft-border:rgba(101,155,0,0.35);--accent-soft-text:#4F7A00;--accent-ghost-bg:rgba(101,155,0,0.08);--accent-ghost-border:rgba(101,155,0,0.3);--accent-glow:rgba(101,155,0,0.35);--accent-glow-soft:rgba(101,155,0,0.3);--accent-pulse:rgba(101,155,0,0.4);--accent-pulse-soft:rgba(101,155,0,0.1);--surface2:#F1F5F9;--surface2-border:#E2E8F0;--divider:#E2E8F0;--cyan:#0284C7;--cyan-text:#0369A1;--cyan-chip-bg:#0284C7;--cyan-chip-text:#FFFFFF;--cyan-glow:rgba(2,132,199,0.3);--cyan-soft-bg:rgba(2,132,199,0.08);--cyan-soft-border:rgba(2,132,199,0.28);--indigo:#4F46E5;--indigo-soft-bg:rgba(79,70,229,0.08);--indigo-soft-border:rgba(79,70,229,0.25);--amber:#D97706;--amber-text:#B45309;--amber-soft-bg:rgba(217,119,6,0.12);--amber-soft-border:rgba(217,119,6,0.32);--amber-ghost-bg:rgba(217,119,6,0.08);--amber-ghost-border:rgba(217,119,6,0.28);--amber-pulse:rgba(217,119,6,0.35);--amber-pulse-soft:rgba(217,119,6,0.12);--red-soft-bg:#FEF2F2;--red-border:#FECACA;--red-text:#B91C1C;--neutral-chip-bg:#F1F5F9;--neutral-chip-text:#475569;--neutral-chip-border:#E2E8F0;--mono-chip-bg:#F1F5F9;--mono-chip-text:#475569;--mono-chip-today-bg:rgba(217,119,6,0.12);--mono-chip-today-text:#B45309;--track:#E2E8F0;--footer-text:#64748B;--footer-bg:#F1F5F9;--footer-border:#E2E8F0;--avatar-ring:rgba(101,155,0,0.45);--toggle-bg:#F1F5F9;--toggle-border:#E2E8F0;--spot1:rgba(101,155,0,0.10);--spot2:rgba(2,132,199,0.07);--spot3:rgba(79,70,229,0.08);';
+// Each week's workshop banner has its own colour; the design and the text stay the same. The colour is set through the three
+// variables the banner already uses (--hc main colour, --hc2 second colour, --hl light highlight). The 20 weeks get 20 evenly
+// spaced hues in a shuffled order, so every week is different and neighbouring weeks are far apart on the colour wheel; the
+// lightness is lowered for bright hues so the white banner text keeps enough contrast.
+function hslToRgb(h, s, l) {
+  h = ((h % 360) + 360) % 360 / 360;
+  const f = (n) => {
+    const k = (n + h * 12) % 12;
+    return l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+  };
+  return [f(0), f(8), f(4)].map((x) => Math.round(x * 255));
+}
+function luminance([r, g, b]) {
+  const c = [r, g, b].map((v) => {
+    v /= 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+}
+function bannerPalette(week) {
+  const hue = (200 + ((week * 7) % 20) * 18) % 360; // 20 evenly spaced hues, so every week is different; neighbouring weeks are 126 degrees apart
+  let l = 0.56;
+  let main = hslToRgb(hue, 0.72, l);
+  while (luminance(main) > 0.2 && l > 0.3) {
+    l -= 0.02;
+    main = hslToRgb(hue, 0.72, l);
+  }
+  const second = hslToRgb(hue + 70, 0.65, 0.5);
+  const light = hslToRgb(hue, 1, 0.8);
+  const hex = (c) => '#' + c.map((x) => x.toString(16).padStart(2, '0')).join('').toUpperCase();
+  return { '--hc': main.join(','), '--hc2': second.join(','), '--hl': hex(light) };
+}
+
 function readTheme() {
   try {
     const s = localStorage.getItem(THEME_KEY);
@@ -524,6 +559,7 @@ class Component extends DCLogic {
       notes: {},
       saved: {},
       hkOpen: '',
+      libOpen: false,
       nb: null,
     };
     this.toggleTheme = this.toggleTheme.bind(this);
@@ -667,6 +703,8 @@ class Component extends DCLogic {
       hkExT: ex('t'),
       hkScrim: cur ? 'block' : 'none',
       hkClose: () => this.setState({ hkOpen: '' }),
+      openLib: () => this.setState({ libOpen: true, hkOpen: '' }),
+      libNode: this.state.libOpen ? <LessonLibrary mode="workshop" initialWeek={this.state.week} onClose={() => this.setState({ libOpen: false })} /> : null,
       hkKey: (e) => {
         if (e && e.key === 'Escape') this.setState({ hkOpen: '' });
       },
@@ -733,6 +771,7 @@ class Component extends DCLogic {
       tabs,
       hdEyebrow: (meta0.exam ? 'Exam revision' : 'Laboratory') + ' · Week ' + week + (meta0.lab && !meta0.exam ? ' · ' + meta0.lab : ''),
       hdTitle: meta0.title,
+      hdStyle: bannerPalette(week),
       hdLede: meta0.lede,
       hdChips: meta0.chips,
       isExam: meta0.exam,
@@ -743,17 +782,6 @@ class Component extends DCLogic {
       nbHref: s.nb ? s.nb.colabUrl || apiUrl(s.nb.downloadUrl) : '#',
       nbLabel: s.nb && s.nb.colabUrl ? 'Open in Colab' : 'Download notebook',
       simLabel: lab.some((e) => e.kind === 'prompt' || e.legacy !== undefined) ? 'Simulated model · recorded output' : 'Recorded output',
-      weekPills: Array.from({ length: TOTAL_WEEKS }, (_, i) => {
-        const n = i + 1,
-          wk = getWeek(n);
-        return {
-          n,
-          href: '/prompt-workshop/' + n,
-          cls: 'wkp' + (n === week ? ' on' : '') + (wk.exam ? ' ex' : ''),
-          tip: 'Week ' + n + ': ' + wk.title,
-          cur: n === week ? 'page' : undefined,
-        };
-      }),
       exEyebrow:
         (ex.ext ? 'Extension' : ex.legacy !== undefined ? 'Prompt Lab · Exercise ' + ex.legacy : 'Exercise ' + (id + 1)) +
         ' · ' +
@@ -937,6 +965,15 @@ function template(v) {
         <div className="main cm" style={{}}>
           <div className="cm-w" style={{ maxWidth: '75rem' }}>
             <div className="utilbar">
+              <button type="button" className="lib-btn" onClick={v.openLib} aria-haspopup="dialog">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" width="16" height="16">
+                  <rect x="3.5" y="3.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.7" />
+                  <rect x="13.5" y="3.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.7" />
+                  <rect x="3.5" y="13.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.7" />
+                  <rect x="13.5" y="13.5" width="7" height="7" rx="1.6" stroke="currentColor" strokeWidth="1.7" />
+                </svg>
+                {'All weeks'}
+              </button>
               <div className="ctx">
                 <span className="ctx-i">{'A.Y. 2026/2027'}</span> <span className="ctx-s" aria-hidden="true"></span>{' '}
                 <span className="ctx-i">{'Second Semester'}</span> <span className="ctx-s" aria-hidden="true"></span>{' '}
@@ -1157,14 +1194,7 @@ function template(v) {
                 </div>
               </div>
             </div>
-            <nav className="wkbar" aria-label="Choose a week">
-              {(v.weekPills || []).map((p) => (
-                <DcLink key={p.n} className={p.cls} href={p.href} title={p.tip} aria-current={p.cur}>
-                  {p.n}
-                </DcLink>
-              ))}
-            </nav>
-            <header className="hx hx-violet pw-head">
+            <header className="hx pw-head" style={v.hdStyle}>
               <div className="hx-body">
                 <div className="pw-ht">
                   <div>
@@ -1737,13 +1767,14 @@ function template(v) {
             </footer>
           </div>
         </div>
+        {v.libNode}
       </div>
     </>
   );
 }
 
 Component.template = template;
-Component.css = pageCss;
+Component.css = pageCss + libCss;
 Component.pageKey = 'prompt-workshop';
 Component.persist = ['ex', 'drafts', 'note', 'saved'];
 
