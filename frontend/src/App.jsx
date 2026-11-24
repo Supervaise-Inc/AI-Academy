@@ -1,3 +1,4 @@
+import { CURRENT_WEEK } from './data/courseWeeks.js';
 import React, { Suspense, lazy, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import * as session from './dc/session.js';
@@ -103,7 +104,7 @@ export default function App() {
         <Route path="/dashboard" element={guard(<LazyPage name="Main" />)} />
         <Route path="/dashboard/:week" element={guard(<LazyPage name="Main" />)} />
         <Route path="/course-map" element={guard(<LazyPage name="CourseMap" />)} />
-        <Route path="/lesson" element={guard(<LazyPage name="Lesson" />)} />
+        <Route path="/lesson" element={<Navigate to={`/lesson/${CURRENT_WEEK}`} replace />} />
         <Route path="/lesson/:week" element={guard(<LazyPage name="Lesson" />)} />
         <Route path="/prompt-workshop" element={guard(<LazyPage name="PromptWorkshop" />)} />
         <Route path="/prompt-workshop/:week" element={guard(<LazyPage name="PromptWorkshop" />)} />

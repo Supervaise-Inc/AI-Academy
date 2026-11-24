@@ -235,8 +235,8 @@
   .mn.sel .mn-dot{outline:2px solid var(--lane);outline-offset:4px}
   .mn.sel .mn-l{color:var(--text);font-weight:600}
   .mdet{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:24px;align-items:center;padding:24px 28px}
-  .md-l{display:flex;flex-direction:column;align-items:flex-start;gap:10px}
-  .md-wk{display:flex;flex-direction:column;line-height:1}
+  .md-l{display:flex;flex-direction:column;align-items:center;gap:10px}
+  .md-wk{display:flex;flex-direction:column;line-height:1;align-items:center;text-align:center}
   .md-w{font-size:var(--fs-small);color:var(--text3);margin-bottom:4px}
   .md-n{font-family:var(--font-sans);font-size:56px;font-weight:700;color:var(--accent-soft-text)}
   .md-o{margin:0 0 var(--s3);padding-left:1.1em;color:var(--text2);font-size:var(--fs-detail);line-height:1.55}

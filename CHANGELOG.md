@@ -6,6 +6,8 @@ Add new entries under **Unreleased** as you work, then rename that heading to a 
 ## [Unreleased]
 
 ### Added
+- **Clearer spacing and heading hierarchy in lessons.** Every new section now starts after a divider and about 120px of space, with an accent bar above its heading. Section headings (h2) are larger and heavier, sub-headings (h3) have a left rule and more space above than below, small labels are accent-coloured capitals, and paragraphs and figures have more room (`dc/lessonPlan.css`).
+- **`/lesson` opens the current week's lesson.** The bare `/lesson` address (and the sidebar's Lesson Workspace link) now goes to `/lesson/7`, following the current week set in `courseWeeks.js`, instead of opening the lesson library. The library is still one click away from the lesson page.
 - **Larger text and icons on the home landing page.** All text is about 20% bigger, and the logo, theme button, social icons, scroll cue and NVIDIA logos grew with it.
 - **Light / dark theme on the home landing page.** A sun/moon button in the top bar (next to Log In) switches the landing page between the dark theme and a white one, including the sign-in panel and the NVIDIA logos. The choice is remembered in the browser (`lf-theme`).
 - **Sidebar identical on every page.** All pages now use the Certification Center sidebar's spacing, row height, text sizes, group labels and profile position (`frontend/src/sidebar.css`), so it no longer shifts when you move between pages.

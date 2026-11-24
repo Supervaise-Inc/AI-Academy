@@ -433,3 +433,31 @@
 
   /* Week 14 figures */
   .wp-prose .vz-pref{padding:10px 12px;margin:10px 0;border:1px solid var(--divider);border-radius:10px;background:var(--surface2)}
+
+  /* ---- clearer separation and reading hierarchy ----
+     Level 1  page title (.lh-title)
+     Level 2  section heading (.sec-h): big, heavy, with an accent bar, and a rule plus wide space before every new section
+     Level 3  sub-heading (.h3): medium, bold, with a left rule, and more space above than below
+     Level 4  small labels (figure titles, "Key takeaway" labels): small caps in the accent colour
+     Body     comfortable paragraph spacing */
+  .lw{--fs-h2:clamp(30px,2.8vw,38px);--fs-h3:22px;--fw-h2:800;--fw-h3:700}
+  .lp-root{--fs-h2:clamp(30px,2.8vw,38px);--fs-h3:22px}
+  .lw .sec{margin:0;padding:var(--s6) 0 var(--s6);border-top:1px solid var(--divider)}
+  .lw .sec:last-child{padding-bottom:var(--s5)}
+  .lw .sec-h{position:relative;margin:0 0 var(--s4);padding-top:20px;line-height:1.15;letter-spacing:-.005em}
+  .lw .sec-h::before{content:"";position:absolute;top:0;left:0;width:48px;height:4px;border-radius:99px;background:var(--accent)}
+  .lw .sec-h.is-label{padding-top:0;margin:0 0 var(--s2);font-size:14px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--accent-soft-text)}
+  .lw .sec-h.is-label::before{display:none}
+  .lw .sec-sub{margin:0 0 var(--s4);font-size:var(--fs-body-ui);line-height:1.55}
+  .lw .h3{margin:var(--s5) 0 var(--s2);padding-left:14px;border-left:3px solid var(--accent-soft-border);line-height:1.3}
+  .lw .sec-h + .h3,.lw .sec-sub + .h3,.lw .lede + .h3{margin-top:var(--s4)}
+  .lw .h3 + .prose,.lw .h3 + .plist{margin-top:0}
+  .lw .prose{margin:0 0 20px}
+  .lw .lede{margin-bottom:var(--s4)}
+  .lw .fig-t{font-weight:700}
+  .wp-prose .wg{margin:var(--s4) 0 var(--s5)}
+  @media (max-width:640px){
+    .lw .sec{padding:var(--s5) 0}
+    .lw{--fs-h2:28px;--fs-h3:20px}
+    .lp-root{--fs-h2:28px;--fs-h3:20px}
+  }
